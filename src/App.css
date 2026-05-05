@@ -398,3 +398,150 @@ html, body, #root {
 .insp-detail-name { color: #a6adc8; }
 .insp-detail-type { color: #6c7086; font-style: italic; }
 .insp-detail-conn { color: #6c7086; font-size: 10.5px; word-break: break-all; }
+
+.insp-selection-hdr { border-top: 1px solid #313244; }
+
+/* ── Actions panel ───────────────────────────────────── */
+
+.insp-actions {
+  border-bottom: 1px solid #313244;
+  padding-bottom: 10px;
+}
+
+.action-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 0 14px;
+}
+
+.action-btn {
+  background: #252535;
+  border: 1px solid #45475a;
+  color: #a6adc8;
+  padding: 5px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.action-btn:hover:not(:disabled) {
+  background: #313244;
+  border-color: #6c7086;
+  color: #cdd6f4;
+}
+.action-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Modal ───────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: #1e1e2e;
+  border: 1px solid #45475a;
+  border-radius: 10px;
+  padding: 20px 22px 16px;
+  width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+}
+
+.modal-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #cdd6f4;
+  margin-bottom: 14px;
+  letter-spacing: 0.2px;
+}
+
+.modal-field {
+  margin-bottom: 11px;
+}
+
+.modal-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6c7086;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+
+.modal-input {
+  width: 100%;
+  background: #12121e;
+  border: 1px solid #45475a;
+  color: #cdd6f4;
+  border-radius: 5px;
+  padding: 6px 9px;
+  font-size: 12.5px;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.1s;
+}
+.modal-input:focus { border-color: #89b4fa; }
+.modal-select { cursor: pointer; }
+
+.modal-hint {
+  font-size: 10px;
+  color: #45475a;
+  margin-top: 3px;
+  font-style: italic;
+}
+
+.modal-error {
+  font-size: 11.5px;
+  color: #f38ba8;
+  margin-bottom: 10px;
+  background: #3b0a12;
+  border: 1px solid #f38ba833;
+  border-radius: 5px;
+  padding: 6px 9px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.modal-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
+}
+.modal-btn-cancel {
+  background: #313244;
+  border-color: #45475a;
+  color: #a6adc8;
+}
+.modal-btn-cancel:hover { background: #45475a; color: #cdd6f4; }
+.modal-btn-ok {
+  background: #1e3a5f;
+  border-color: #3b82f6;
+  color: #bfdbfe;
+}
+.modal-btn-ok:hover { background: #2952a3; border-color: #60a5fa; }
