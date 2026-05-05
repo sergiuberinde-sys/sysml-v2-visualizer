@@ -214,7 +214,12 @@ export default function App() {
       </div>
 
       {/* ── Column 4: Inspector ───────────────── */}
-      <InspectorPanel selection={selection} result={result} />
+      <InspectorPanel
+        selection={selection}
+        result={result}
+        source={source}
+        onSourceChange={setSource}
+      />
 
     </div>
   );

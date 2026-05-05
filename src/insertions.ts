@@ -1,0 +1,123 @@
+// Pure text insertion utilities. All functions return a new source string.
+// Line numbers in ParseResult are 1-based; array indices are 0-based.
+
+import type { ParseResult, SysMLNode } from './types';
+
+// Returns 0-based index of the first `}` line after openLineNum (1-based).
+// openLineNum as a 0-based index IS the line after the opening (e.g. opening at
+// ls[openLineNum-1] → first body line at ls[openLineNum]).
+function findCloseIdx(ls: string[], openLineNum: number): number {
+  for (let i = openLineNum; i < ls.length; i++) {
+    if (/^\}/.test(ls[i].replace(/\/\/.*$/, '').trim())) return i;
+  }
+  return ls.length - 1;
+}
+
+// ── Interface ─────────────────────────────────────────────────────────────────
+
+export function insertInterface(source: string, result: ParseResult, name: string): string {
+  const ls = source.split('\n');
+  const ifaces = result.nodes.filter(n => n.kind === 'interfaceDef');
+  const pkg    = result.nodes.find(n => n.kind === 'package');
+  // splice(N, 0, x) inserts BEFORE ls[N], i.e. AFTER line N (1-based)
+  const idx = ifaces.length > 0
+    ? Math.max(...ifaces.map(n => n.line))
+    : (pkg ? pkg.line : 0);
+  ls.splice(idx, 0, `interface def ${name};`);
+  return ls.join('\n');
+}
+
+// ── Part definition ───────────────────────────────────────────────────────────
+
+export function insertPartDef(source: string, result: ParseResult, name: string): string {
+  const ls = source.split('\n');
+  type PD = Extract<SysMLNode, { kind: 'partDef' }>;
+  const typeParts = result.nodes
+    .filter((n): n is PD => n.kind === 'partDef' && !n.body.some(b => b.kind === 'partAlias'))
+    .sort((a, b) => a.line - b.line);
+  const ifaces = result.nodes.filter(n => n.kind === 'interfaceDef');
+  const pkg    = result.nodes.find(n => n.kind === 'package');
+
+  let idx: number;
+  if (typeParts.length > 0) {
+    const last = typeParts[typeParts.length - 1];
+    // If the last type part has a block, jump past its closing }
+    idx = /{/.test(ls[last.line - 1])
+      ? findCloseIdx(ls, last.line) + 1
+      : last.line;
+  } else if (ifaces.length > 0) {
+    idx = Math.max(...ifaces.map(n => n.line));
+  } else {
+    idx = pkg ? pkg.line : 0;
+  }
+
+  ls.splice(idx, 0, `part def ${name} {`, `}`);
+  return ls.join('\n');
+}
+
+// ── Port ──────────────────────────────────────────────────────────────────────
+
+export function insertPort(
+  source: string,
+  result: ParseResult,
+  partName: string,
+  direction: 'in' | 'out',
+  portName: string,
+  portType: string,
+): string {
+  const ls = source.split('\n');
+  type PD = Extract<SysMLNode, { kind: 'partDef' }>;
+  const pd = result.nodes.find((n): n is PD => n.kind === 'partDef' && n.name === partName);
+  if (!pd) return source;
+  const closeIdx = findCloseIdx(ls, pd.line);
+  ls.splice(closeIdx, 0, `  port ${direction} ${portName} : ${portType};`);
+  return ls.join('\n');
+}
+
+// ── Connection ────────────────────────────────────────────────────────────────
+
+export function insertConnection(
+  source: string,
+  result: ParseResult,
+  systemPartName: string,
+  fromPart: string,
+  fromPort: string,
+  toPart: string,
+  toPort: string,
+): string {
+  const ls = source.split('\n');
+  type PD = Extract<SysMLNode, { kind: 'partDef' }>;
+  const pd = result.nodes.find((n): n is PD => n.kind === 'partDef' && n.name === systemPartName);
+  if (!pd) return source;
+  const closeIdx = findCloseIdx(ls, pd.line);
+  ls.splice(closeIdx, 0, `  connect ${fromPart}.${fromPort} to ${toPart}.${toPort};`);
+  return ls.join('\n');
+}
+
+// ── Occurrence ────────────────────────────────────────────────────────────────
+
+export function insertOccurrence(source: string, name: string): string {
+  const ls = source.split('\n');
+  while (ls.length > 0 && ls[ls.length - 1].trim() === '') ls.pop();
+  ls.push('', `occurrence def ${name} {`, `}`);
+  return ls.join('\n');
+}
+
+// ── Message ───────────────────────────────────────────────────────────────────
+
+export function insertMessage(
+  source: string,
+  result: ParseResult,
+  occName: string,
+  msgName: string,
+  from: string,
+  to: string,
+): string {
+  const ls = source.split('\n');
+  type OD = Extract<SysMLNode, { kind: 'occurrenceDef' }>;
+  const occ = result.nodes.find((n): n is OD => n.kind === 'occurrenceDef' && n.name === occName);
+  if (!occ) return source;
+  const closeIdx = findCloseIdx(ls, occ.line);
+  ls.splice(closeIdx, 0, `  message ${msgName} from ${from} to ${to};`);
+  return ls.join('\n');
+}
