@@ -299,15 +299,24 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
   // ── Inspector body ──────────────────────────────────────────────────────────
 
+  type BehDef  = Extract<SysMLNode, { kind: 'behaviorDef' }>;
+  type AInstN  = Extract<SysMLNode, { kind: 'actionInst' }>;
+
+  const behaviorDefs = result.nodes.filter((n): n is BehDef => n.kind === 'behaviorDef');
+
   const stereotypeMap: Record<NonNullable<SelectionState>['type'], string> = {
-    interface:  '«interface def»',
-    part:       '«part def»',
-    port:       'port',
-    systemPart: '«part def»',
-    instance:   'part instance',
-    occurrence: '«occurrence def»',
-    message:    'message',
-    connection: 'connection',
+    interface:    '«interface def»',
+    part:         '«part def»',
+    port:         'port',
+    systemPart:   '«part def»',
+    instance:     'part instance',
+    occurrence:   '«occurrence def»',
+    message:      'message',
+    connection:   'connection',
+    action:       '«action def»',
+    behavior:     '«behavior def»',
+    actionInst:   'action instance',
+    behaviorFlow: 'flow',
   };
 
   let inspBody: React.ReactNode = null;
@@ -430,6 +439,50 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           {from && <KV label="From" value={from} />}
           {to   && <KV label="To"   value={to} />}
           {selection.extra?.parent && <KV label="In" value={selection.extra.parent} />}
+        </div>
+      );
+
+    } else if (selection.type === 'behavior') {
+      const beh      = behaviorDefs.find(b => b.name === selection.name);
+      const actions  = beh?.body.filter((b): b is AInstN => b.kind === 'actionInst') ?? [];
+      const flows    = beh?.body.filter(b => b.kind === 'flow') ?? [];
+      inspBody = (
+        <>
+          <div className="insp-section">
+            <KV label="Actions" value={String(actions.length)} />
+            <KV label="Flows"   value={String(flows.length)} />
+          </div>
+          {actions.length > 0 && (
+            <div className="insp-section">
+              <div className="insp-section-label">Action Instances</div>
+              {actions.map(a => (
+                <div key={a.name} className="insp-detail-row">
+                  <span className="insp-detail-name">{a.name}</span>
+                  <span className="insp-detail-type"> : {a.actionType}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      );
+
+    } else if (selection.type === 'action') {
+      inspBody = null;
+
+    } else if (selection.type === 'actionInst') {
+      inspBody = (
+        <div className="insp-section">
+          {selection.extra?.actionType && <KV label="Type"        value={selection.extra.actionType} />}
+          {selection.extra?.behavior   && <KV label="Behavior"    value={selection.extra.behavior} />}
+        </div>
+      );
+
+    } else if (selection.type === 'behaviorFlow') {
+      inspBody = (
+        <div className="insp-section">
+          {selection.extra?.from     && <KV label="From"     value={selection.extra.from} />}
+          {selection.extra?.to       && <KV label="To"       value={selection.extra.to} />}
+          {selection.extra?.behavior && <KV label="Behavior" value={selection.extra.behavior} />}
         </div>
       );
     }

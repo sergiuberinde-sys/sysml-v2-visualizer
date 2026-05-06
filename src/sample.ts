@@ -59,4 +59,28 @@ occurrence def CANComms {
   message sensorBroadcast from WheelSpeedSensor to CANBus;
   message canResponse     from CANBus to BrakeController;
 }
+
+// ── Action Definitions ────────────────────────────
+action def ReadWheelSpeed;
+action def ComputeBrakeTorque;
+action def ApplyBrakePressure;
+action def DetectFault;
+
+// ── Behavior: Brake Control Logic ────────────────
+behavior def BrakeControlLogic {
+  action readSpeed     : ReadWheelSpeed;
+  action computeTorque : ComputeBrakeTorque;
+  action applyPressure : ApplyBrakePressure;
+
+  flow readSpeed     -> computeTorque;
+  flow computeTorque -> applyPressure;
+}
+
+// ── Behavior: Fault Detection ────────────────────
+behavior def FaultDetection {
+  action readSpeed   : ReadWheelSpeed;
+  action detectFault : DetectFault;
+
+  flow readSpeed -> detectFault;
+}
 `;

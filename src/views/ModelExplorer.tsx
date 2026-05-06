@@ -1,23 +1,28 @@
 import { useState } from 'react';
 import type { ParseResult, SysMLNode, SelectionState } from '../types';
 
-type ViewTab = 'structure' | 'sequence' | 'json';
+type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior';
 
 interface Props {
   result: ParseResult;
   selectedOccurrence: string;
+  selectedBehavior: string;
   selection: SelectionState;
   onSelectScenario: (name: string) => void;
+  onSelectBehavior: (name: string) => void;
   onSelect: (s: SelectionState) => void;
   onNavigate: (tab: ViewTab) => void;
 }
 
-type IfaceDef  = Extract<SysMLNode, { kind: 'interfaceDef' }>;
-type PartDef   = Extract<SysMLNode, { kind: 'partDef' }>;
-type OccDef    = Extract<SysMLNode, { kind: 'occurrenceDef' }>;
-type PortNode  = Extract<SysMLNode, { kind: 'port' }>;
-type AliasNode = Extract<SysMLNode, { kind: 'partAlias' }>;
-type ConnNode  = Extract<SysMLNode, { kind: 'connection' }>;
+type IfaceDef    = Extract<SysMLNode, { kind: 'interfaceDef' }>;
+type PartDef     = Extract<SysMLNode, { kind: 'partDef' }>;
+type OccDef      = Extract<SysMLNode, { kind: 'occurrenceDef' }>;
+type PortNode    = Extract<SysMLNode, { kind: 'port' }>;
+type AliasNode   = Extract<SysMLNode, { kind: 'partAlias' }>;
+type ConnNode    = Extract<SysMLNode, { kind: 'connection' }>;
+type ActionDef   = Extract<SysMLNode, { kind: 'actionDef' }>;
+type BehaviorDef = Extract<SysMLNode, { kind: 'behaviorDef' }>;
+type ActionInst  = Extract<SysMLNode, { kind: 'actionInst' }>;
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -52,10 +57,11 @@ function SubItem({ icon, text, dim, onClick, selected }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ModelExplorer({
-  result, selectedOccurrence, selection, onSelectScenario, onSelect, onNavigate,
+  result, selectedOccurrence, selectedBehavior, selection,
+  onSelectScenario, onSelectBehavior, onSelect, onNavigate,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(
-    new Set(['interfaces', 'partTypes', 'system', 'scenarios']),
+    new Set(['interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors']),
   );
 
   function toggle(id: string) {
@@ -79,7 +85,11 @@ export default function ModelExplorer({
   const legacyStructOccs = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias'));
   const scenarios        = allOccs.filter(o => o.body.some(b => b.kind === 'message'));
 
-  const isEmpty = ifaceDefs.length === 0 && allPartDefs.length === 0 && allOccs.length === 0;
+  const actionDefs  = result.nodes.filter((n): n is ActionDef   => n.kind === 'actionDef');
+  const behaviorDefs = result.nodes.filter((n): n is BehaviorDef => n.kind === 'behaviorDef');
+
+  const isEmpty = ifaceDefs.length === 0 && allPartDefs.length === 0 && allOccs.length === 0
+    && actionDefs.length === 0 && behaviorDefs.length === 0;
 
   const sel = (id: string) => selection?.id === id;
 
@@ -302,6 +312,83 @@ export default function ModelExplorer({
                     <span className="expl-icon expl-icon-scenario">{isActive ? '◉' : '○'}</span>
                     <span className="expl-name">{occ.name}</span>
                     <span className="expl-tag expl-tag-scenario">{msgCount}m</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Action Definitions ── */}
+          {actionDefs.length > 0 && (
+            <div className="expl-section">
+              <SectionHeader
+                label="Actions" count={actionDefs.length}
+                open={open.has('actions')} onToggle={() => toggle('actions')}
+              />
+              {open.has('actions') && actionDefs.map(n => (
+                <div key={n.name}
+                  className={`expl-item expl-item-action${sel('adef-' + n.name) ? ' expl-selected' : ''}`}
+                  title={`action def ${n.name}  (line ${n.line})`}
+                  onClick={() => onSelect({ id: `adef-${n.name}`, type: 'action', name: n.name })}>
+                  <span className="expl-icon expl-icon-action">▷</span>
+                  <span className="expl-name">{n.name}</span>
+                  <span className="expl-tag expl-tag-action">action</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Behaviors ── */}
+          {behaviorDefs.length > 0 && (
+            <div className="expl-section">
+              <SectionHeader
+                label="Behaviors" count={behaviorDefs.length}
+                open={open.has('behaviors')} onToggle={() => toggle('behaviors')}
+              />
+              {open.has('behaviors') && behaviorDefs.map(beh => {
+                const instCount = beh.body.filter(b => b.kind === 'actionInst').length;
+                const flowCount = beh.body.filter(b => b.kind === 'flow').length;
+                const subId     = `beh-${beh.name}`;
+                const isOpen    = open.has(subId);
+                const isActive  = beh.name === selectedBehavior;
+                return (
+                  <div key={beh.name}>
+                    <div
+                      className={`expl-item expl-item-behavior${isActive || sel('bhv-' + beh.name) ? ' expl-selected' : ''}`}
+                      title={`behavior def ${beh.name}  (line ${beh.line})`}
+                      onClick={() => {
+                        if (instCount) toggle(subId);
+                        onSelectBehavior(beh.name);
+                        onSelect({ id: `bhv-${beh.name}`, type: 'behavior', name: beh.name });
+                      }}>
+                      {instCount > 0
+                        ? <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
+                        : <span style={{ width: 12, display: 'inline-block' }} />}
+                      <span className="expl-icon expl-icon-behavior">⟳</span>
+                      <span className="expl-name">{beh.name}</span>
+                      <span className="expl-tag expl-tag-action">{instCount}a</span>
+                      {flowCount > 0 && (
+                        <span className="expl-tag expl-tag-flow" style={{ marginLeft: 2 }}>{flowCount}f</span>
+                      )}
+                    </div>
+                    {isOpen && beh.body
+                      .filter((b): b is ActionInst => b.kind === 'actionInst')
+                      .map(a => (
+                        <SubItem
+                          key={a.name}
+                          icon="▷"
+                          text={a.name}
+                          dim={`: ${a.actionType}`}
+                          selected={sel(`bact-${beh.name}-${a.name}`)}
+                          onClick={() => onSelect({
+                            id: `bact-${beh.name}-${a.name}`,
+                            type: 'actionInst',
+                            name: a.name,
+                            extra: { actionType: a.actionType, behavior: beh.name },
+                          })}
+                        />
+                      ))
+                    }
                   </div>
                 );
               })}

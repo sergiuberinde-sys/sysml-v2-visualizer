@@ -348,6 +348,13 @@ html, body, #root {
 .expl-item-scenario .expl-icon-scenario { color: #f97316; }
 .expl-item-scenario .expl-tag-scenario  { background: #2a1200; color: #fb923c; }
 
+.expl-item-action .expl-icon-action  { color: #38bdf8; }
+.expl-item-action .expl-tag-action   { background: #09213a; color: #7dd3fc; }
+
+.expl-item-behavior .expl-icon-behavior { color: #38bdf8; }
+.expl-item-behavior .expl-tag-action    { background: #09213a; color: #7dd3fc; }
+.expl-tag-flow                          { background: #09213a; color: #4a9fc0; }
+
 .expl-selected {
   background: #1a2a4a !important;
   color: #89b4fa !important;
@@ -756,3 +763,24 @@ html, body, #root {
 }
 .history-row:hover .history-row-summary,
 .history-row-current .history-row-summary { color: #7f849c; }
+
+/* ── Behavior view ───────────────────────────────────────── */
+
+.behavior-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #6b7280;
+  font-size: 13.5px;
+  text-align: center;
+  padding: 24px;
+  line-height: 1.6;
+}
+.behavior-placeholder code {
+  background: #313244;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #a6adc8;
+}
