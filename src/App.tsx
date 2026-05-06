@@ -10,21 +10,47 @@ import StructureView from './views/StructureView';
 import SequenceView from './views/SequenceView';
 import JsonView from './views/JsonView';
 import InspectorPanel from './views/InspectorPanel';
+import ProjectBar from './views/ProjectBar';
+import ProjectModal from './views/ProjectModal';
+import ActionModal from './views/ActionModal';
 import ErrorBoundary from './ErrorBoundary';
 import type { SysMLNode, SelectionState } from './types';
+import type { Project } from './projects';
+import {
+  saveProjects, persistActiveId,
+  setAutosave, generateId, makeTemplate,
+  getInitialProjectState,
+} from './projects';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'json';
 
+// ── Initial state derived from localStorage ──────────────────────────────────
+
+const init = getInitialProjectState(BRK_SAMPLE);
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
 export default function App() {
-  const [source, setSource]               = useState(BRK_SAMPLE);
+  // ── Core editor state ──────────────────────────────────────────────────────
+  const [source, setSource]               = useState(init.text);
   const [tab, setTab]                     = useState<ViewTab>('structure');
   const [selectedOccurrence, setSelected] = useState('');
   const [selection, setSelection]         = useState<SelectionState>(null);
 
+  // ── Project state ──────────────────────────────────────────────────────────
+  const [projects, setProjects]           = useState<Project[]>(init.projects);
+  const [activeProject, setActiveProject] = useState<Project | null>(init.active);
+  const [showLoadModal, setShowLoadModal] = useState(false);
+  const [newModalMode, setNewModalMode]   = useState<'new' | 'saveAs' | null>(null);
+
+  const isUnsaved = !activeProject || source !== activeProject.sysmlText;
+
+  // ── Monaco refs ────────────────────────────────────────────────────────────
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
 
+  // ── Parse ──────────────────────────────────────────────────────────────────
   const result = useMemo(() => parse(source), [source]);
 
   const behavioralOccurrences = useMemo(
@@ -35,6 +61,8 @@ export default function App() {
     [result],
   );
 
+  // ── Effects ────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     setSelected(cur => {
       if (behavioralOccurrences.length === 0)    return '';
@@ -43,14 +71,16 @@ export default function App() {
     });
   }, [behavioralOccurrences]);
 
-  // Sync parser diagnostics → Monaco squiggle markers
+  // Auto-save every keystroke (crash recovery for untitled sessions)
+  useEffect(() => { setAutosave(source); }, [source]);
+
+  // Sync parser diagnostics → Monaco markers
   useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     if (!editor || !monaco) return;
     const model = editor.getModel();
     if (!model) return;
-
     monaco.editor.setModelMarkers(
       model, 'sysml',
       result.diagnostics.map(d => ({
@@ -66,6 +96,123 @@ export default function App() {
       })),
     );
   }, [result.diagnostics]);
+
+  // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────
+
+  // Use a ref so the handler always sees latest state without stale closures
+  const saveRef = useRef<() => void>(() => {});
+  saveRef.current = handleSave;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function warnUnsaved(): boolean {
+    if (!isUnsaved) return true;
+    return window.confirm('You have unsaved changes. Continue anyway?');
+  }
+
+  function applyProjectSwitch(proj: Project) {
+    setSource(proj.sysmlText);
+    setActiveProject(proj);
+    persistActiveId(proj.id);
+    setSelection(null);
+  }
+
+  function doSaveToProject(proj: Project, text: string): Project {
+    const updated = { ...proj, sysmlText: text, updatedAt: Date.now() };
+    const list = projects.map(p => p.id === updated.id ? updated : p);
+    setProjects(list);
+    saveProjects(list);
+    setActiveProject(updated);
+    return updated;
+  }
+
+  // ── Project handlers ───────────────────────────────────────────────────────
+
+  function handleSave() {
+    if (!activeProject) { setNewModalMode('saveAs'); return; }
+    doSaveToProject(activeProject, source);
+  }
+
+  function handleNew() {
+    if (!warnUnsaved()) return;
+    setNewModalMode('new');
+  }
+
+  function handleLoad() { setShowLoadModal(true); }
+
+  function handleLoadProject(proj: Project) {
+    if (!warnUnsaved()) return;
+    applyProjectSwitch(proj);
+    setShowLoadModal(false);
+  }
+
+  function handleDeleteProject(id: string) {
+    const list = projects.filter(p => p.id !== id);
+    setProjects(list);
+    saveProjects(list);
+    if (activeProject?.id === id) {
+      setActiveProject(null);
+      persistActiveId(null);
+    }
+  }
+
+  function handleExport() {
+    const filename = (activeProject?.name ?? 'model').replace(/\s+/g, '-') + '.sysml';
+    const blob = new Blob([source], { type: 'text/plain;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleImport(text: string) {
+    if (!warnUnsaved()) return;
+    setSource(text);
+    // Keep active project but mark as unsaved — user can Save to store it
+    if (activeProject) {
+      // Only clear the project link so isUnsaved becomes true
+      setActiveProject({ ...activeProject });
+    }
+    setSelection(null);
+  }
+
+  // ── New/SaveAs modal submit ────────────────────────────────────────────────
+
+  function submitProjectName(vals: Record<string, string>): string | null {
+    const name = vals.name.trim();
+    if (!name) return 'Name cannot be empty.';
+    const text = newModalMode === 'new' ? makeTemplate(name) : source;
+    const proj: Project = {
+      id: generateId(), name, sysmlText: text,
+      createdAt: Date.now(), updatedAt: Date.now(),
+    };
+    const list = [...projects, proj];
+    setProjects(list);
+    saveProjects(list);
+    persistActiveId(proj.id);
+    if (newModalMode === 'new') setSource(text);
+    setActiveProject(proj);
+    setNewModalMode(null);
+    setSelection(null);
+    return null;
+  }
+
+  // ── Editor helpers ─────────────────────────────────────────────────────────
 
   function jumpToLine(lineNum: number) {
     const editor = editorRef.current;
@@ -92,134 +239,177 @@ export default function App() {
   const errCount  = result.diagnostics.filter(d => d.severity === 'error').length;
   const warnCount = result.diagnostics.filter(d => d.severity === 'warning').length;
 
+  // ── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="app-layout">
+    <div className="app-root">
 
-      {/* ── Column 1: Editor ──────────────────── */}
-      <div className="panel editor-panel">
-        <div className="panel-header">
-          <span>SysML v2 Source</span>
-          {result.diagnostics.length > 0 && (
-            <span className="diag-badge">
-              {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
-              {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
-            </span>
-          )}
-        </div>
-
-        <div className="editor-wrap">
-          <Editor
-            height="100%"
-            language="sysml"
-            value={source}
-            onChange={v => setSource(v ?? '')}
-            theme="sysml-dark"
-            beforeMount={handleBeforeMount}
-            onMount={handleEditorMount}
-            options={{
-              minimap:              { enabled: false },
-              fontSize:             13.5,
-              lineNumbers:          'on',
-              wordWrap:             'on',
-              scrollBeyondLastLine: false,
-              renderLineHighlight:  'line',
-              glyphMargin:          true,
-              overviewRulerBorder:  false,
-              folding:              true,
-              padding:              { top: 8 },
-            }}
-          />
-        </div>
-
-        {result.diagnostics.length > 0 && (
-          <div className="diagnostics-panel">
-            <div className="diag-panel-hdr">Problems — click to navigate</div>
-            {result.diagnostics.map((d, i) => (
-              <div
-                key={i}
-                className={`diag-row diag-${d.severity}`}
-                onClick={() => jumpToLine(d.line)}
-                title={`Line ${d.line}: ${d.message}`}
-              >
-                <span className="diag-sev-icon">{d.severity === 'error' ? '✖' : '⚠'}</span>
-                <span className="diag-loc">L{d.line}</span>
-                <span className="diag-msg">{d.message}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Column 2: Model Explorer ──────────── */}
-      <ModelExplorer
-        result={result}
-        selectedOccurrence={selectedOccurrence}
-        selection={selection}
-        onSelectScenario={name => { setSelected(name); setTab('sequence'); }}
-        onSelect={setSelection}
-        onNavigate={setTab}
+      {/* ── Project bar ───────────────────────────── */}
+      <ProjectBar
+        projectName={activeProject?.name ?? null}
+        isUnsaved={isUnsaved}
+        onSave={handleSave}
+        onNew={handleNew}
+        onLoad={handleLoad}
+        onExport={handleExport}
+        onImport={handleImport}
       />
 
-      {/* ── Column 3: Visualization ───────────── */}
-      <div className="panel viz-panel">
-        <div className="panel-header tabs">
-          <div className="tab-group">
-            {(['structure', 'sequence', 'json'] as ViewTab[]).map(t => (
-              <button
-                key={t}
-                className={`tab-btn${tab === t ? ' active' : ''}`}
-                onClick={() => setTab(t)}
-              >
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
+      {/* ── 4-column workspace ────────────────────── */}
+      <div className="app-layout">
+
+        {/* Column 1: Editor */}
+        <div className="panel editor-panel">
+          <div className="panel-header">
+            <span>SysML v2 Source</span>
+            {result.diagnostics.length > 0 && (
+              <span className="diag-badge">
+                {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
+                {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+              </span>
+            )}
           </div>
 
-          {tab === 'sequence' && behavioralOccurrences.length > 0 && (
-            <div className="occurrence-selector">
-              <label>Scenario</label>
-              <select
-                value={selectedOccurrence}
-                onChange={e => setSelected(e.target.value)}
-                className="occurrence-select"
-              >
-                {behavioralOccurrences.map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
+          <div className="editor-wrap">
+            <Editor
+              height="100%"
+              language="sysml"
+              value={source}
+              onChange={v => setSource(v ?? '')}
+              theme="sysml-dark"
+              beforeMount={handleBeforeMount}
+              onMount={handleEditorMount}
+              options={{
+                minimap:              { enabled: false },
+                fontSize:             13.5,
+                lineNumbers:          'on',
+                wordWrap:             'on',
+                scrollBeyondLastLine: false,
+                renderLineHighlight:  'line',
+                glyphMargin:          true,
+                overviewRulerBorder:  false,
+                folding:              true,
+                padding:              { top: 8 },
+              }}
+            />
+          </div>
+
+          {result.diagnostics.length > 0 && (
+            <div className="diagnostics-panel">
+              <div className="diag-panel-hdr">Problems — click to navigate</div>
+              {result.diagnostics.map((d, i) => (
+                <div
+                  key={i}
+                  className={`diag-row diag-${d.severity}`}
+                  onClick={() => jumpToLine(d.line)}
+                  title={`Line ${d.line}: ${d.message}`}
+                >
+                  <span className="diag-sev-icon">{d.severity === 'error' ? '✖' : '⚠'}</span>
+                  <span className="diag-loc">L{d.line}</span>
+                  <span className="diag-msg">{d.message}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
 
-        <div className="view-area">
-          <ErrorBoundary label="Structure view error">
-            {tab === 'structure' && (
-              <StructureView result={result} selection={selection} onSelect={setSelection} />
+        {/* Column 2: Model Explorer */}
+        <ModelExplorer
+          result={result}
+          selectedOccurrence={selectedOccurrence}
+          selection={selection}
+          onSelectScenario={name => { setSelected(name); setTab('sequence'); }}
+          onSelect={setSelection}
+          onNavigate={setTab}
+        />
+
+        {/* Column 3: Visualization */}
+        <div className="panel viz-panel">
+          <div className="panel-header tabs">
+            <div className="tab-group">
+              {(['structure', 'sequence', 'json'] as ViewTab[]).map(t => (
+                <button
+                  key={t}
+                  className={`tab-btn${tab === t ? ' active' : ''}`}
+                  onClick={() => setTab(t)}
+                >
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+            {tab === 'sequence' && behavioralOccurrences.length > 0 && (
+              <div className="occurrence-selector">
+                <label>Scenario</label>
+                <select
+                  value={selectedOccurrence}
+                  onChange={e => setSelected(e.target.value)}
+                  className="occurrence-select"
+                >
+                  {behavioralOccurrences.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
             )}
-          </ErrorBoundary>
-          <ErrorBoundary label="Sequence view error">
-            {tab === 'sequence' && (
-              <SequenceView
-                result={result}
-                occurrenceName={selectedOccurrence}
-                selection={selection}
-                onSelect={setSelection}
-              />
-            )}
-          </ErrorBoundary>
-          <ErrorBoundary label="JSON view error">
-            {tab === 'json' && <JsonView result={result} />}
-          </ErrorBoundary>
+          </div>
+          <div className="view-area">
+            <ErrorBoundary label="Structure view error">
+              {tab === 'structure' && (
+                <StructureView result={result} selection={selection} onSelect={setSelection} />
+              )}
+            </ErrorBoundary>
+            <ErrorBoundary label="Sequence view error">
+              {tab === 'sequence' && (
+                <SequenceView
+                  result={result}
+                  occurrenceName={selectedOccurrence}
+                  selection={selection}
+                  onSelect={setSelection}
+                />
+              )}
+            </ErrorBoundary>
+            <ErrorBoundary label="JSON view error">
+              {tab === 'json' && <JsonView result={result} />}
+            </ErrorBoundary>
+          </div>
         </div>
+
+        {/* Column 4: Inspector */}
+        <InspectorPanel
+          selection={selection}
+          result={result}
+          source={source}
+          onSourceChange={setSource}
+        />
+
       </div>
 
-      {/* ── Column 4: Inspector ───────────────── */}
-      <InspectorPanel
-        selection={selection}
-        result={result}
-        source={source}
-        onSourceChange={setSource}
-      />
+      {/* ── Modals ────────────────────────────────── */}
+
+      {showLoadModal && (
+        <ProjectModal
+          projects={projects}
+          activeProjectId={activeProject?.id ?? null}
+          onLoad={handleLoadProject}
+          onDelete={handleDeleteProject}
+          onClose={() => setShowLoadModal(false)}
+        />
+      )}
+
+      {newModalMode !== null && (
+        <ActionModal
+          title={newModalMode === 'new' ? 'New Project' : 'Save As'}
+          submitLabel={newModalMode === 'new' ? 'Create' : 'Save'}
+          fields={[{
+            key: 'name',
+            label: 'Project name',
+            type: 'text',
+            placeholder: 'e.g. Brake System',
+          }]}
+          onSubmit={submitProjectName}
+          onClose={() => setNewModalMode(null)}
+        />
+      )}
 
     </div>
   );

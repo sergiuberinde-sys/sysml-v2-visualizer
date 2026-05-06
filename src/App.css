@@ -8,16 +8,103 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* ── Root layout — 3 columns ─────────────────────────────── */
+/* ── Root shell ──────────────────────────────────────────── */
 
-.app-layout {
+.app-root {
   display: flex;
+  flex-direction: column;
   height: 100vh;
   width: 100vw;
+  overflow: hidden;
   background: #1e1e2e;
   font-family: system-ui, 'Segoe UI', sans-serif;
   font-size: 13px;
   color: #cdd6f4;
+}
+
+/* ── Project bar ─────────────────────────────────────────── */
+
+.project-bar {
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  background: #12121e;
+  border-bottom: 1px solid #313244;
+  flex-shrink: 0;
+  gap: 8px;
+  user-select: none;
+}
+
+.pbar-logo {
+  font-size: 12px;
+  font-weight: 800;
+  color: #cba6f7;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.pbar-sep {
+  width: 1px;
+  height: 18px;
+  background: #313244;
+  flex-shrink: 0;
+}
+
+.pbar-project-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #cdd6f4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+
+.pbar-status {
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pbar-saved   { color: #4ade80; }
+.pbar-unsaved { color: #f9e2af; }
+
+.pbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pbar-btn {
+  background: #252535;
+  border: 1px solid #45475a;
+  color: #a6adc8;
+  padding: 4px 11px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-family: inherit;
+  font-weight: 500;
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+  white-space: nowrap;
+}
+.pbar-btn:hover { background: #313244; color: #cdd6f4; border-color: #6c7086; }
+
+.pbar-divider {
+  width: 1px;
+  height: 18px;
+  background: #313244;
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+
+/* ── 4-column workspace ──────────────────────────────────── */
+
+.app-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  background: #1e1e2e;
 }
 
 .panel {
@@ -545,3 +632,66 @@ html, body, #root {
   color: #bfdbfe;
 }
 .modal-btn-ok:hover { background: #2952a3; border-color: #60a5fa; }
+
+/* ── Project modal ───────────────────────────────────────── */
+
+.project-modal-card { width: 420px; max-width: 92vw; }
+
+.project-list-empty {
+  font-size: 12px;
+  color: #45475a;
+  font-style: italic;
+  padding: 12px 0 4px;
+}
+
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 340px;
+  overflow-y: auto;
+  margin: 4px 0 8px;
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #12121e;
+  border: 1px solid #313244;
+  border-radius: 6px;
+  padding: 8px 10px;
+  transition: border-color 0.1s;
+}
+.project-row:hover       { border-color: #45475a; }
+.project-row-active      { border-color: #3b82f6 !important; background: #0f1e30; }
+
+.project-row-info { flex: 1; min-width: 0; }
+.project-row-name { font-size: 12.5px; font-weight: 600; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-row-date { font-size: 10.5px; color: #45475a; margin-top: 2px; }
+
+.project-row-btns { display: flex; gap: 5px; flex-shrink: 0; }
+
+.proj-btn {
+  padding: 4px 10px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-family: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.1s;
+}
+.proj-btn-load {
+  background: #1e3a5f;
+  border-color: #3b82f6;
+  color: #bfdbfe;
+}
+.proj-btn-load:hover { background: #2952a3; }
+.proj-btn-del {
+  background: #2a0a0a;
+  border-color: #7f1d1d;
+  color: #fca5a5;
+  padding: 4px 8px;
+}
+.proj-btn-del:hover { background: #450a0a; }
