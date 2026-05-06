@@ -10,6 +10,8 @@ import StructureView from './views/StructureView';
 import SequenceView from './views/SequenceView';
 import BehaviorView from './views/BehaviorView';
 import StateView from './views/StateView';
+import RequirementsView from './views/RequirementsView';
+import TraceabilityView from './views/TraceabilityView';
 import JsonView from './views/JsonView';
 import InspectorPanel from './views/InspectorPanel';
 import ProjectBar from './views/ProjectBar';
@@ -30,7 +32,17 @@ import {
 } from './history';
 import './App.css';
 
-type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'json';
+type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
+
+const TAB_LABELS: Record<ViewTab, string> = {
+  structure:    'Structure',
+  sequence:     'Sequence',
+  behavior:     'Behavior',
+  state:        'State',
+  requirements: 'Reqts',
+  traceability: 'Trace',
+  json:         'JSON',
+};
 
 // ── Initial state derived from localStorage ──────────────────────────────────
 
@@ -436,13 +448,13 @@ export default function App() {
         <div className="panel viz-panel">
           <div className="panel-header tabs">
             <div className="tab-group">
-              {(['structure', 'sequence', 'behavior', 'state', 'json'] as ViewTab[]).map(t => (
+              {(['structure', 'sequence', 'behavior', 'state', 'requirements', 'traceability', 'json'] as ViewTab[]).map(t => (
                 <button
                   key={t}
                   className={`tab-btn${tab === t ? ' active' : ''}`}
                   onClick={() => setTab(t)}
                 >
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                  {TAB_LABELS[t]}
                 </button>
               ))}
             </div>
@@ -523,6 +535,16 @@ export default function App() {
                   selection={selection}
                   onSelect={setSelection}
                 />
+              )}
+            </ErrorBoundary>
+            <ErrorBoundary label="Requirements view error">
+              {tab === 'requirements' && (
+                <RequirementsView result={result} selection={selection} onSelect={setSelection} />
+              )}
+            </ErrorBoundary>
+            <ErrorBoundary label="Traceability view error">
+              {tab === 'traceability' && (
+                <TraceabilityView result={result} selection={selection} onSelect={setSelection} />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="JSON view error">

@@ -766,6 +766,18 @@ html, body, #root {
 
 /* ── Behavior view ───────────────────────────────────────── */
 
+/* ── Requirements explorer items ────────────────────────── */
+
+.expl-item-requirement .expl-icon-req { color: #c084fc; }
+.expl-tag-req { background: #2d1b4e; color: #e9d5ff; }
+
+.expl-item-tracelink .expl-icon-link-satisfy { color: #4ade80; }
+.expl-item-tracelink .expl-icon-link-verify  { color: #f9e2af; }
+.expl-item-tracelink .expl-icon-link-trace   { color: #38bdf8; }
+.expl-tag-link-satisfy { background: #0d2e1a; color: #4ade80; }
+.expl-tag-link-verify  { background: #2e2410; color: #f9e2af; }
+.expl-tag-link-trace   { background: #09213a; color: #38bdf8; }
+
 /* ── State machine explorer items ────────────────────────── */
 
 .expl-item-statemachine .expl-icon-sm { color: #2dd4bf; }
@@ -793,3 +805,100 @@ html, body, #root {
   font-size: 12px;
   color: #a6adc8;
 }
+
+/* ── Requirements view ───────────────────────────────────── */
+
+.req-view {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.req-card {
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 9px;
+  padding: 13px 15px;
+  cursor: pointer;
+  transition: border-color 0.1s, background 0.1s;
+}
+.req-card:hover        { background: #1e1e2e; border-color: #45475a; }
+.req-card-selected     { border-color: #89b4fa !important; background: #12192e !important; box-shadow: 0 0 0 1px #89b4fa22; }
+
+.req-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  flex-wrap: wrap;
+}
+
+.req-id {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #2d1b4e;
+  color: #c084fc;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+}
+
+.req-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #e9d5ff;
+  flex: 1;
+}
+
+.req-priority {
+  font-size: 10.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.req-text {
+  font-size: 12px;
+  color: #9399b2;
+  line-height: 1.55;
+  margin-bottom: 8px;
+}
+
+.req-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.req-link-badge {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  border: 1px solid;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  background: #12121e;
+}
+
+/* ── Inspector: requirement text + link type ─────────────── */
+
+.insp-req-text {
+  font-size: 11.5px;
+  color: #9399b2;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.insp-link-type {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.insp-link-satisfy { background: #0d2e1a; color: #4ade80; }
+.insp-link-verify  { background: #2e2410; color: #f9e2af; }
+.insp-link-trace   { background: #09213a; color: #38bdf8; }

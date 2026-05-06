@@ -8,11 +8,14 @@ export const SYSML_TOKENS = {
     'message', 'from',
     'action', 'behavior', 'flow',
     'state', 'transition', 'initial', 'on',
+    'requirement', 'satisfy', 'satisfies', 'verify', 'verifies', 'trace', 'traces',
   ],
   tokenizer: {
     root: [
       [/\/\/.*$/, 'comment'],
+      [/"[^"]*"/, 'string'],
       [/->/, 'operator'],
+      [/=/, 'operator'],
       [/[{}();]/, 'delimiter'],
       [/:/, 'delimiter'],
       [/\./, 'delimiter'],
@@ -31,6 +34,7 @@ export const SYSML_THEME = {
   inherit: true,
   rules: [
     { token: 'keyword',    foreground: 'c792ea', fontStyle: 'bold'  },
+    { token: 'string',     foreground: 'a6e3a1'                     },
     { token: 'comment',    foreground: '546e7a', fontStyle: 'italic' },
     { token: 'identifier', foreground: 'cdd6f4'                      },
     { token: 'delimiter',  foreground: '89ddff'                      },

@@ -17,9 +17,11 @@ export type SysMLNode =
   | { kind: 'behaviorDef';   name: string; body: SysMLNode[];                                         line: number }
   | { kind: 'actionInst';    name: string; actionType: string;                                        line: number }
   | { kind: 'flow';          from: string; to: string;                                                line: number }
-  | { kind: 'stateDef';      name: string; body: SysMLNode[];                                         line: number }
-  | { kind: 'stateEntry';    name: string;                                                            line: number }
-  | { kind: 'transition';    from: string; to: string; event: string;                                 line: number };
+  | { kind: 'stateDef';       name: string; body: SysMLNode[];                                         line: number }
+  | { kind: 'stateEntry';     name: string;                                                            line: number }
+  | { kind: 'transition';     from: string; to: string; event: string;                                 line: number }
+  | { kind: 'requirementDef'; name: string; reqId: string; text: string; priority: string;             line: number }
+  | { kind: 'traceLink';      linkType: 'satisfy' | 'verify' | 'trace'; source: string; target: string; line: number };
 
 export interface ParseResult {
   nodes: SysMLNode[];
@@ -32,7 +34,8 @@ export type SelectionState = {
     | 'interface' | 'part' | 'port' | 'systemPart' | 'instance'
     | 'occurrence' | 'message' | 'connection'
     | 'action' | 'behavior' | 'actionInst' | 'behaviorFlow'
-    | 'stateMachine' | 'stateEntry' | 'stateTransition';
+    | 'stateMachine' | 'stateEntry' | 'stateTransition'
+    | 'requirement' | 'traceLink';
   name: string;
   extra?: Record<string, string>;
 } | null;

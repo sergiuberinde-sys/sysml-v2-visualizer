@@ -144,6 +144,28 @@ export function insertStateTransition(
   return ls.join('\n');
 }
 
+// ── Requirement ───────────────────────────────────────────────────────────────
+
+export function insertRequirementDef(source: string, name: string): string {
+  const ls = source.split('\n');
+  while (ls.length > 0 && ls[ls.length - 1].trim() === '') ls.pop();
+  ls.push('', `requirement def ${name} {`, `  id = "REQ-XXX";`, `  text = "";`, `  priority = "Medium";`, `}`);
+  return ls.join('\n');
+}
+
+export function insertTraceLink(
+  source: string,
+  linkType: 'satisfy' | 'verify' | 'trace',
+  sourceEl: string,
+  targetReq: string,
+): string {
+  const ls = source.split('\n');
+  while (ls.length > 0 && ls[ls.length - 1].trim() === '') ls.pop();
+  const verb = linkType === 'satisfy' ? 'satisfies' : linkType === 'verify' ? 'verifies' : 'traces';
+  ls.push(`${linkType} ${sourceEl} ${verb} ${targetReq};`);
+  return ls.join('\n');
+}
+
 // ── Message ───────────────────────────────────────────────────────────────────
 
 export function insertMessage(

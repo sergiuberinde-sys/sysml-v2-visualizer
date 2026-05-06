@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ParseResult, SysMLNode, SelectionState } from '../types';
 
-type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state';
+type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state' | 'requirements' | 'traceability';
 
 interface Props {
   result: ParseResult;
@@ -25,9 +25,11 @@ type ConnNode    = Extract<SysMLNode, { kind: 'connection' }>;
 type ActionDef   = Extract<SysMLNode, { kind: 'actionDef' }>;
 type BehaviorDef = Extract<SysMLNode, { kind: 'behaviorDef' }>;
 type ActionInst  = Extract<SysMLNode, { kind: 'actionInst' }>;
-type StateDef    = Extract<SysMLNode, { kind: 'stateDef' }>;
-type StateEntry  = Extract<SysMLNode, { kind: 'stateEntry' }>;
-type Transition  = Extract<SysMLNode, { kind: 'transition' }>;
+type StateDef      = Extract<SysMLNode, { kind: 'stateDef' }>;
+type StateEntry    = Extract<SysMLNode, { kind: 'stateEntry' }>;
+type Transition    = Extract<SysMLNode, { kind: 'transition' }>;
+type RequirementDef = Extract<SysMLNode, { kind: 'requirementDef' }>;
+type TraceLinkNode  = Extract<SysMLNode, { kind: 'traceLink' }>;
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -66,7 +68,7 @@ export default function ModelExplorer({
   onSelectScenario, onSelectBehavior, onSelectStateMachine, onSelect, onNavigate,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(
-    new Set(['interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors', 'stateMachines']),
+    new Set(['interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors', 'stateMachines', 'requirements', 'traceLinks']),
   );
 
   function toggle(id: string) {
@@ -90,12 +92,15 @@ export default function ModelExplorer({
   const legacyStructOccs = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias'));
   const scenarios        = allOccs.filter(o => o.body.some(b => b.kind === 'message'));
 
-  const actionDefs   = result.nodes.filter((n): n is ActionDef   => n.kind === 'actionDef');
-  const behaviorDefs = result.nodes.filter((n): n is BehaviorDef => n.kind === 'behaviorDef');
-  const stateDefs    = result.nodes.filter((n): n is StateDef    => n.kind === 'stateDef');
+  const actionDefs    = result.nodes.filter((n): n is ActionDef      => n.kind === 'actionDef');
+  const behaviorDefs  = result.nodes.filter((n): n is BehaviorDef    => n.kind === 'behaviorDef');
+  const stateDefs     = result.nodes.filter((n): n is StateDef       => n.kind === 'stateDef');
+  const reqDefs       = result.nodes.filter((n): n is RequirementDef => n.kind === 'requirementDef');
+  const traceLinks    = result.nodes.filter((n): n is TraceLinkNode  => n.kind === 'traceLink');
 
   const isEmpty = ifaceDefs.length === 0 && allPartDefs.length === 0 && allOccs.length === 0
-    && actionDefs.length === 0 && behaviorDefs.length === 0 && stateDefs.length === 0;
+    && actionDefs.length === 0 && behaviorDefs.length === 0 && stateDefs.length === 0
+    && reqDefs.length === 0;
 
   const sel = (id: string) => selection?.id === id;
 
@@ -475,6 +480,60 @@ export default function ModelExplorer({
                         })}
                       </>
                     )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── Requirements ── */}
+          {reqDefs.length > 0 && (
+            <div className="expl-section">
+              <SectionHeader
+                label="Requirements" count={reqDefs.length}
+                open={open.has('requirements')} onToggle={() => toggle('requirements')}
+              />
+              {open.has('requirements') && reqDefs.map(req => (
+                <div key={req.name}
+                  className={`expl-item expl-item-requirement${sel('req-' + req.name) ? ' expl-selected' : ''}`}
+                  title={`${req.reqId ? req.reqId + ' — ' : ''}${req.name}  (line ${req.line})`}
+                  onClick={() => {
+                    onSelect({ id: `req-${req.name}`, type: 'requirement', name: req.name,
+                      extra: { reqId: req.reqId, text: req.text, priority: req.priority } });
+                    onNavigate('requirements');
+                  }}>
+                  <span className="expl-icon expl-icon-req">◆</span>
+                  <span className="expl-name">{req.name}</span>
+                  {req.reqId && <span className="expl-tag expl-tag-req">{req.reqId}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Traceability Links ── */}
+          {traceLinks.length > 0 && (
+            <div className="expl-section">
+              <SectionHeader
+                label="Trace Links" count={traceLinks.length}
+                open={open.has('traceLinks')} onToggle={() => toggle('traceLinks')}
+              />
+              {open.has('traceLinks') && traceLinks.map((l, i) => {
+                const edgeId = `trlink-${l.source}-${l.target}-${i}`;
+                return (
+                  <div key={edgeId}
+                    className={`expl-item expl-item-tracelink${sel(edgeId) ? ' expl-selected' : ''}`}
+                    title={`${l.linkType}: ${l.source} → ${l.target}  (line ${l.line})`}
+                    onClick={() => {
+                      onSelect({
+                        id: edgeId, type: 'traceLink',
+                        name: `${l.source} ${l.linkType}s ${l.target}`,
+                        extra: { source: l.source, target: l.target, linkType: l.linkType },
+                      });
+                      onNavigate('traceability');
+                    }}>
+                    <span className={`expl-icon expl-icon-link-${l.linkType}`}>⇝</span>
+                    <span className="expl-name">{l.source} → {l.target}</span>
+                    <span className={`expl-tag expl-tag-link-${l.linkType}`}>{l.linkType}</span>
                   </div>
                 );
               })}
