@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import type { ParseResult, SysMLNode, SelectionState } from '../types';
 
-type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior';
+type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state';
 
 interface Props {
   result: ParseResult;
   selectedOccurrence: string;
   selectedBehavior: string;
+  selectedStateMachine: string;
   selection: SelectionState;
   onSelectScenario: (name: string) => void;
   onSelectBehavior: (name: string) => void;
+  onSelectStateMachine: (name: string) => void;
   onSelect: (s: SelectionState) => void;
   onNavigate: (tab: ViewTab) => void;
 }
@@ -23,6 +25,9 @@ type ConnNode    = Extract<SysMLNode, { kind: 'connection' }>;
 type ActionDef   = Extract<SysMLNode, { kind: 'actionDef' }>;
 type BehaviorDef = Extract<SysMLNode, { kind: 'behaviorDef' }>;
 type ActionInst  = Extract<SysMLNode, { kind: 'actionInst' }>;
+type StateDef    = Extract<SysMLNode, { kind: 'stateDef' }>;
+type StateEntry  = Extract<SysMLNode, { kind: 'stateEntry' }>;
+type Transition  = Extract<SysMLNode, { kind: 'transition' }>;
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -57,11 +62,11 @@ function SubItem({ icon, text, dim, onClick, selected }: {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function ModelExplorer({
-  result, selectedOccurrence, selectedBehavior, selection,
-  onSelectScenario, onSelectBehavior, onSelect, onNavigate,
+  result, selectedOccurrence, selectedBehavior, selectedStateMachine, selection,
+  onSelectScenario, onSelectBehavior, onSelectStateMachine, onSelect, onNavigate,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(
-    new Set(['interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors']),
+    new Set(['interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors', 'stateMachines']),
   );
 
   function toggle(id: string) {
@@ -85,11 +90,12 @@ export default function ModelExplorer({
   const legacyStructOccs = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias'));
   const scenarios        = allOccs.filter(o => o.body.some(b => b.kind === 'message'));
 
-  const actionDefs  = result.nodes.filter((n): n is ActionDef   => n.kind === 'actionDef');
+  const actionDefs   = result.nodes.filter((n): n is ActionDef   => n.kind === 'actionDef');
   const behaviorDefs = result.nodes.filter((n): n is BehaviorDef => n.kind === 'behaviorDef');
+  const stateDefs    = result.nodes.filter((n): n is StateDef    => n.kind === 'stateDef');
 
   const isEmpty = ifaceDefs.length === 0 && allPartDefs.length === 0 && allOccs.length === 0
-    && actionDefs.length === 0 && behaviorDefs.length === 0;
+    && actionDefs.length === 0 && behaviorDefs.length === 0 && stateDefs.length === 0;
 
   const sel = (id: string) => selection?.id === id;
 
@@ -389,6 +395,86 @@ export default function ModelExplorer({
                         />
                       ))
                     }
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── State Machines ── */}
+          {stateDefs.length > 0 && (
+            <div className="expl-section">
+              <SectionHeader
+                label="State Machines" count={stateDefs.length}
+                open={open.has('stateMachines')} onToggle={() => toggle('stateMachines')}
+              />
+              {open.has('stateMachines') && stateDefs.map(sm => {
+                const states      = sm.body.filter((b): b is StateEntry => b.kind === 'stateEntry');
+                const transitions = sm.body.filter((b): b is Transition => b.kind === 'transition')
+                  .filter(t => t.from !== '');
+                const subId       = `sm-${sm.name}`;
+                const isOpen      = open.has(subId);
+                const isActive    = sm.name === selectedStateMachine;
+                return (
+                  <div key={sm.name}>
+                    <div
+                      className={`expl-item expl-item-statemachine${isActive || sel('smdef-' + sm.name) ? ' expl-selected' : ''}`}
+                      title={`state def ${sm.name}  (line ${sm.line})`}
+                      onClick={() => {
+                        if (states.length || transitions.length) toggle(subId);
+                        onSelectStateMachine(sm.name);
+                        onSelect({ id: `smdef-${sm.name}`, type: 'stateMachine', name: sm.name });
+                      }}>
+                      {(states.length > 0 || transitions.length > 0)
+                        ? <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
+                        : <span style={{ width: 12, display: 'inline-block' }} />}
+                      <span className="expl-icon expl-icon-sm">⊙</span>
+                      <span className="expl-name">{sm.name}</span>
+                      <span className="expl-tag expl-tag-state">{states.length}s</span>
+                      {transitions.length > 0 && (
+                        <span className="expl-tag expl-tag-trans" style={{ marginLeft: 2 }}>{transitions.length}t</span>
+                      )}
+                    </div>
+                    {isOpen && (
+                      <>
+                        {states.map(s => (
+                          <SubItem
+                            key={s.name}
+                            icon="◎"
+                            text={s.name}
+                            selected={sel(`sstate-${sm.name}-${s.name}`)}
+                            onClick={() => {
+                              onSelectStateMachine(sm.name);
+                              onSelect({
+                                id: `sstate-${sm.name}-${s.name}`,
+                                type: 'stateEntry', name: s.name,
+                                extra: { stateMachine: sm.name },
+                              });
+                            }}
+                          />
+                        ))}
+                        {transitions.map((t, i) => {
+                          const edgeId = `strans-${sm.name}-${t.from}-${t.to}-${i}`;
+                          return (
+                            <SubItem
+                              key={edgeId}
+                              icon="→"
+                              text={`${t.from} → ${t.to}`}
+                              dim={t.event ? ` [${t.event}]` : undefined}
+                              selected={sel(edgeId)}
+                              onClick={() => {
+                                onSelectStateMachine(sm.name);
+                                onSelect({
+                                  id: edgeId, type: 'stateTransition',
+                                  name: t.event ? `${t.from} → ${t.to} [${t.event}]` : `${t.from} → ${t.to}`,
+                                  extra: { from: t.from, to: t.to, event: t.event, stateMachine: sm.name },
+                                });
+                              }}
+                            />
+                          );
+                        })}
+                      </>
+                    )}
                   </div>
                 );
               })}

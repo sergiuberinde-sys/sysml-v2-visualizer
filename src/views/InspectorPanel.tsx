@@ -4,6 +4,7 @@ import ActionModal, { type FieldDef } from './ActionModal';
 import {
   insertInterface, insertPartDef, insertPort,
   insertConnection, insertOccurrence, insertMessage,
+  insertStateDef, insertStateEntry, insertStateTransition,
 } from '../insertions';
 
 interface Props {
@@ -16,7 +17,9 @@ interface Props {
 // ── Modal discriminant ────────────────────────────────────────────────────────
 
 type ModalKind =
-  | 'interface' | 'partDef' | 'port' | 'connection' | 'occurrence' | 'message' | null;
+  | 'interface' | 'partDef' | 'port' | 'connection' | 'occurrence' | 'message'
+  | 'stateMachine' | 'stateEntry' | 'stateTransition'
+  | null;
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -70,9 +73,14 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
       .map(n => (n as { name: string }).name),
   );
 
-  const selectedPartName   = selection?.type === 'part'       ? selection.name : null;
-  const selectedSystemName = selection?.type === 'systemPart' ? selection.name : null;
-  const selectedOccName    = selection?.type === 'occurrence'  ? selection.name : null;
+  const selectedPartName   = selection?.type === 'part'         ? selection.name : null;
+  const selectedSystemName = selection?.type === 'systemPart'   ? selection.name : null;
+  const selectedOccName    = selection?.type === 'occurrence'   ? selection.name : null;
+  const selectedSMName     =
+    selection?.type === 'stateMachine' ? selection.name :
+    (selection?.type === 'stateEntry' || selection?.type === 'stateTransition')
+      ? (selection.extra?.stateMachine ?? null)
+    : null;
 
   // Interfaces for type hints
   const ifaceNames = result.nodes
@@ -174,6 +182,52 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     return null;
   }
 
+  function submitStateMachine(vals: Record<string, string>): string | null {
+    const name = vals.name.trim();
+    if (!name) return 'Name cannot be empty.';
+    if (!/^\w+$/.test(name)) return 'Name must be a single word.';
+    if (allTopNames.has(name)) return `"${name}" already exists.`;
+    onSourceChange(insertStateDef(source, name));
+    return null;
+  }
+
+  function submitStateEntry(vals: Record<string, string>): string | null {
+    if (!selectedSMName) return 'No state machine selected.';
+    const name = vals.name.trim();
+    if (!name) return 'Name cannot be empty.';
+    if (!/^\w+$/.test(name)) return 'Name must be a single word.';
+    const existing = smDefs.find(s => s.name === selectedSMName)
+      ?.body.filter((b): b is SEntry => b.kind === 'stateEntry').map(s => s.name) ?? [];
+    if (existing.includes(name)) return `State "${name}" already exists in ${selectedSMName}.`;
+    onSourceChange(insertStateEntry(source, result, selectedSMName, name));
+    return null;
+  }
+
+  function submitStateTransition(vals: Record<string, string>): string | null {
+    if (!selectedSMName) return 'No state machine selected.';
+    const from  = vals.from.trim();
+    const to    = vals.to.trim();
+    const event = vals.event.trim();
+    if (!from) return '"From" cannot be empty.';
+    if (!to)   return '"To" cannot be empty.';
+    if (!/^\w+$/.test(from)) return '"From" must be a single word.';
+    if (!/^\w+$/.test(to))   return '"To" must be a single word.';
+    const stateNames = new Set(
+      smDefs.find(s => s.name === selectedSMName)
+        ?.body.filter((b): b is SEntry => b.kind === 'stateEntry').map(s => s.name) ?? [],
+    );
+    if (stateNames.size > 0 && !stateNames.has(from)) return `"${from}" is not a state in ${selectedSMName}.`;
+    if (stateNames.size > 0 && !stateNames.has(to))   return `"${to}" is not a state in ${selectedSMName}.`;
+    onSourceChange(insertStateTransition(source, result, selectedSMName, from, to, event || undefined));
+    return null;
+  }
+
+  // ── SM-related derived data (used in field hints and inspBody) ─────────────
+
+  type SMDef  = Extract<SysMLNode, { kind: 'stateDef' }>;
+  type SEntry = Extract<SysMLNode, { kind: 'stateEntry' }>;
+  const smDefs = result.nodes.filter((n): n is SMDef => n.kind === 'stateDef');
+
   // ── Modal field definitions ─────────────────────────────────────────────────
 
   const portFields: FieldDef[] = [
@@ -207,15 +261,27 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     { key: 'toPort',   label: 'To port',   type: 'text', placeholder: 'e.g. pedalPosition' },
   ];
 
+  const smStateHint = selectedSMName
+    ? `States: ${(smDefs.find(s => s.name === selectedSMName)
+        ?.body.filter((b): b is SEntry => b.kind === 'stateEntry')
+        .map(s => s.name) ?? []).join(', ') || 'none'}`
+    : undefined;
+
+  const transFields: FieldDef[] = [
+    { key: 'from',  label: 'From state', type: 'text', placeholder: 'e.g. Ready',   hint: smStateHint },
+    { key: 'to',    label: 'To state',   type: 'text', placeholder: 'e.g. Braking' },
+    { key: 'event', label: 'Event (optional)', type: 'text', placeholder: 'e.g. pedalPressed' },
+  ];
+
   // ── Actions panel ───────────────────────────────────────────────────────────
 
   const actionsPanel = (
     <div className="insp-actions">
       <div className="insp-section-label" style={{ padding: '10px 14px 4px' }}>Add Element</div>
       <div className="action-btn-grid">
-        <ActionBtn label="Interface"  onClick={() => setModal('interface')} />
-        <ActionBtn label="Part Def"   onClick={() => setModal('partDef')} />
-        <ActionBtn label="Occurrence" onClick={() => setModal('occurrence')} />
+        <ActionBtn label="Interface"    onClick={() => setModal('interface')} />
+        <ActionBtn label="Part Def"     onClick={() => setModal('partDef')} />
+        <ActionBtn label="Occurrence"   onClick={() => setModal('occurrence')} />
         <ActionBtn
           label="Port"
           onClick={() => setModal('port')}
@@ -233,6 +299,19 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           onClick={() => setModal('message')}
           disabled={!selectedOccName}
           title={selectedOccName ? `Add message to ${selectedOccName}` : 'Select an occurrence first'}
+        />
+        <ActionBtn label="State Machine" onClick={() => setModal('stateMachine')} />
+        <ActionBtn
+          label="State"
+          onClick={() => setModal('stateEntry')}
+          disabled={!selectedSMName}
+          title={selectedSMName ? `Add state to ${selectedSMName}` : 'Select a state machine first'}
+        />
+        <ActionBtn
+          label="Transition"
+          onClick={() => setModal('stateTransition')}
+          disabled={!selectedSMName}
+          title={selectedSMName ? `Add transition to ${selectedSMName}` : 'Select a state machine first'}
         />
       </div>
     </div>
@@ -294,29 +373,56 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           onClose={() => setModal(null)}
         />
       )}
+      {modal === 'stateMachine' && (
+        <ActionModal
+          title="Add State Machine"
+          fields={[{ key: 'name', label: 'Name', type: 'text', placeholder: 'e.g. SystemSM' }]}
+          onSubmit={submitStateMachine}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'stateEntry' && selectedSMName && (
+        <ActionModal
+          title={`Add State to ${selectedSMName}`}
+          fields={[{ key: 'name', label: 'State name', type: 'text', placeholder: 'e.g. Ready' }]}
+          onSubmit={submitStateEntry}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'stateTransition' && selectedSMName && (
+        <ActionModal
+          title={`Add Transition to ${selectedSMName}`}
+          fields={transFields}
+          onSubmit={submitStateTransition}
+          onClose={() => setModal(null)}
+        />
+      )}
     </>
   );
 
   // ── Inspector body ──────────────────────────────────────────────────────────
 
-  type BehDef  = Extract<SysMLNode, { kind: 'behaviorDef' }>;
-  type AInstN  = Extract<SysMLNode, { kind: 'actionInst' }>;
+  type BehDef   = Extract<SysMLNode, { kind: 'behaviorDef' }>;
+  type AInstN   = Extract<SysMLNode, { kind: 'actionInst' }>;
 
   const behaviorDefs = result.nodes.filter((n): n is BehDef => n.kind === 'behaviorDef');
 
   const stereotypeMap: Record<NonNullable<SelectionState>['type'], string> = {
-    interface:    '«interface def»',
-    part:         '«part def»',
-    port:         'port',
-    systemPart:   '«part def»',
-    instance:     'part instance',
-    occurrence:   '«occurrence def»',
-    message:      'message',
-    connection:   'connection',
-    action:       '«action def»',
-    behavior:     '«behavior def»',
-    actionInst:   'action instance',
-    behaviorFlow: 'flow',
+    interface:       '«interface def»',
+    part:            '«part def»',
+    port:            'port',
+    systemPart:      '«part def»',
+    instance:        'part instance',
+    occurrence:      '«occurrence def»',
+    message:         'message',
+    connection:      'connection',
+    action:          '«action def»',
+    behavior:        '«behavior def»',
+    actionInst:      'action instance',
+    behaviorFlow:    'flow',
+    stateMachine:    '«state def»',
+    stateEntry:      'state',
+    stateTransition: 'transition',
   };
 
   let inspBody: React.ReactNode = null;
@@ -483,6 +589,46 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           {selection.extra?.from     && <KV label="From"     value={selection.extra.from} />}
           {selection.extra?.to       && <KV label="To"       value={selection.extra.to} />}
           {selection.extra?.behavior && <KV label="Behavior" value={selection.extra.behavior} />}
+        </div>
+      );
+
+    } else if (selection.type === 'stateMachine') {
+      const sm     = smDefs.find(s => s.name === selection.name);
+      const states = sm?.body.filter((b): b is SEntry => b.kind === 'stateEntry') ?? [];
+      const trans  = sm?.body.filter(b => b.kind === 'transition') ?? [];
+      inspBody = (
+        <>
+          <div className="insp-section">
+            <KV label="States"      value={String(states.length)} />
+            <KV label="Transitions" value={String(trans.length)} />
+          </div>
+          {states.length > 0 && (
+            <div className="insp-section">
+              <div className="insp-section-label">States</div>
+              {states.map(s => (
+                <div key={s.name} className="insp-detail-row">
+                  <span className="insp-detail-name">{s.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      );
+
+    } else if (selection.type === 'stateEntry') {
+      inspBody = (
+        <div className="insp-section">
+          {selection.extra?.stateMachine && <KV label="State machine" value={selection.extra.stateMachine} />}
+        </div>
+      );
+
+    } else if (selection.type === 'stateTransition') {
+      inspBody = (
+        <div className="insp-section">
+          {selection.extra?.from         && <KV label="From"          value={selection.extra.from} />}
+          {selection.extra?.to           && <KV label="To"            value={selection.extra.to} />}
+          {selection.extra?.event        && <KV label="Event"         value={selection.extra.event} />}
+          {selection.extra?.stateMachine && <KV label="State machine" value={selection.extra.stateMachine} />}
         </div>
       );
     }

@@ -7,6 +7,7 @@ export const SYSML_TOKENS = {
     'port', 'in', 'out', 'connect', 'to',
     'message', 'from',
     'action', 'behavior', 'flow',
+    'state', 'transition', 'initial', 'on',
   ],
   tokenizer: {
     root: [
