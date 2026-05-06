@@ -3,15 +3,22 @@ import { useRef } from 'react';
 interface Props {
   projectName: string | null;
   isUnsaved: boolean;
+  canRevert: boolean;
   onSave: () => void;
   onNew: () => void;
   onLoad: () => void;
   onExport: () => void;
   onImport: (text: string) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onHistory: () => void;
+  onRevert: () => void;
 }
 
 export default function ProjectBar({
-  projectName, isUnsaved, onSave, onNew, onLoad, onExport, onImport,
+  projectName, isUnsaved, canRevert,
+  onSave, onNew, onLoad, onExport, onImport,
+  onUndo, onRedo, onHistory, onRevert,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -39,9 +46,16 @@ export default function ProjectBar({
       <div style={{ flex: 1 }} />
 
       <div className="pbar-actions">
+        <Btn onClick={onUndo}  title="Undo (⌘Z)">↩ Undo</Btn>
+        <Btn onClick={onRedo}  title="Redo (⌘⇧Z)">↪ Redo</Btn>
+        <div className="pbar-divider" />
         <Btn onClick={onSave}  title="Save project (⌘S)">Save</Btn>
+        {canRevert && (
+          <Btn onClick={onRevert} title="Revert to last saved version">Revert</Btn>
+        )}
         <Btn onClick={onNew}   title="Create new project">New</Btn>
         <Btn onClick={onLoad}  title="Open a saved project">Load</Btn>
+        <Btn onClick={onHistory} title="Browse model history">History</Btn>
         <div className="pbar-divider" />
         <Btn onClick={onExport}                       title="Download as .sysml">Export</Btn>
         <Btn onClick={() => fileRef.current?.click()} title="Import .sysml / .txt file">Import</Btn>
