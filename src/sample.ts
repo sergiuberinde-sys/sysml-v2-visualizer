@@ -103,4 +103,30 @@ state def BrakeSystemStateMachine {
   transition Ready    -> Fault      on diagnosticFailure;
   transition Fault    -> Ready      on faultCleared;
 }
+
+// ── Requirements ──────────────────────────────────────────
+requirement def BrakeResponseTime {
+  id = "REQ-BBW-001";
+  text = "The brake controller shall command brake pressure within 50 ms of pedal input.";
+  priority = "High";
+}
+
+requirement def ABSActivation {
+  id = "REQ-BBW-002";
+  text = "The system shall activate ABS when wheel slip is detected.";
+  priority = "High";
+}
+
+requirement def SelfTestOnStartup {
+  id = "REQ-BBW-003";
+  text = "The system shall perform a self-test on power-on before entering the Ready state.";
+  priority = "Medium";
+}
+
+// ── Traceability ──────────────────────────────────────────
+satisfy BrakeController satisfies BrakeResponseTime;
+satisfy BrakeByWireSystem satisfies ABSActivation;
+verify BrakeSystemStateMachine verifies SelfTestOnStartup;
+trace BrakeControlLogic traces BrakeResponseTime;
+trace FaultDetection traces ABSActivation;
 `;

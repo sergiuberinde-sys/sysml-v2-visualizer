@@ -194,6 +194,42 @@ function validateBehaviors(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
   }
 }
 
+// ── requirement / traceability validation ─────────────────────────────────────
+
+function validateRequirements(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
+  type RD = Extract<SysMLNode, { kind: 'requirementDef' }>;
+  type TL = Extract<SysMLNode, { kind: 'traceLink' }>;
+
+  const reqs  = nodes.filter((n): n is RD => n.kind === 'requirementDef');
+  const links = nodes.filter((n): n is TL => n.kind === 'traceLink');
+
+  const allNames = new Set(nodes.filter(n => 'name' in n).map(n => (n as { name: string }).name));
+  const reqNames = new Set(reqs.map(r => r.name));
+  const seenIds  = new Map<string, number>();
+
+  for (const req of reqs) {
+    if (!req.reqId) {
+      diagnostics.push({ line: req.line, severity: 'warning', message: `Requirement "${req.name}" is missing an id field.` });
+    } else if (seenIds.has(req.reqId)) {
+      diagnostics.push({ line: req.line, severity: 'error', message: `Duplicate requirement id "${req.reqId}".` });
+    } else {
+      seenIds.set(req.reqId, req.line);
+    }
+    if (!req.text) {
+      diagnostics.push({ line: req.line, severity: 'warning', message: `Requirement "${req.name}" is missing a text field.` });
+    }
+  }
+
+  for (const link of links) {
+    if (!allNames.has(link.source)) {
+      diagnostics.push({ line: link.line, severity: 'warning', message: `Traceability: source "${link.source}" not found in the model.` });
+    }
+    if (!reqNames.has(link.target)) {
+      diagnostics.push({ line: link.line, severity: 'warning', message: `Traceability: target "${link.target}" is not a defined requirement.` });
+    }
+  }
+}
+
 // ── main parser ───────────────────────────────────────────────────────────────
 
 export function parse(source: string): ParseResult {
@@ -201,7 +237,11 @@ export function parse(source: string): ParseResult {
   const nodes: SysMLNode[] = [];
   const diagnostics: ParseDiagnostic[] = [];
 
-  type Frame = { kind: 'partDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef'; name: string; body: SysMLNode[]; startLine: number };
+  type Frame = {
+    kind: 'partDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef' | 'requirementDef';
+    name: string; body: SysMLNode[]; startLine: number;
+    reqId?: string; reqText?: string; reqPriority?: string;
+  };
   const stack: Frame[] = [];
 
   for (let i = 0; i < rawLines.length; i++) {
@@ -216,10 +256,27 @@ export function parse(source: string): ParseResult {
       const frame = stack.pop();
       if (frame) {
         const dest = stack.length > 0 ? stack[stack.length - 1].body : nodes;
-        dest.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
+        if (frame.kind === 'requirementDef') {
+          dest.push({ kind: 'requirementDef', name: frame.name, reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
+        } else {
+          dest.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
+        }
       } else {
         diagnostics.push({ line: lineNum, message: 'Unexpected }', severity: 'error' });
       }
+      continue;
+    }
+
+    // Field assignments inside requirementDef block
+    if (stack.length > 0 && stack[stack.length - 1].kind === 'requirementDef') {
+      const frame = stack[stack.length - 1];
+      let fm = line.match(/^id\s*=\s*"([^"]*)"/);
+      if (fm) { frame.reqId = fm[1]; continue; }
+      fm = line.match(/^text\s*=\s*"([^"]*)"/);
+      if (fm) { frame.reqText = fm[1]; continue; }
+      fm = line.match(/^priority\s*=\s*"([^"]*)"/);
+      if (fm) { frame.reqPriority = fm[1]; continue; }
+      diagnostics.push({ line: lineNum, message: `Unrecognized requirement field: "${line}"`, severity: 'warning' });
       continue;
     }
 
@@ -317,6 +374,26 @@ export function parse(source: string): ParseResult {
     m = line.match(/^transition\s+(\w+)\s*->\s*(\w+)/);
     if (m) { target.push({ kind: 'transition', from: m[1], to: m[2], event: '', line: lineNum }); continue; }
 
+    // requirement def Name {
+    m = line.match(/^requirement\s+def\s+(\w+)\s*\{/);
+    if (m) { stack.push({ kind: 'requirementDef', name: m[1], body: [], startLine: lineNum }); continue; }
+
+    // requirement def Name;
+    m = line.match(/^requirement\s+def\s+(\w+)\s*;?\s*$/);
+    if (m) { target.push({ kind: 'requirementDef', name: m[1], reqId: '', text: '', priority: '', line: lineNum }); continue; }
+
+    // satisfy Source satisfies Target;
+    m = line.match(/^satisfy\s+(\w+)\s+satisfies\s+(\w+)/);
+    if (m) { target.push({ kind: 'traceLink', linkType: 'satisfy', source: m[1], target: m[2], line: lineNum }); continue; }
+
+    // verify Source verifies Target;
+    m = line.match(/^verify\s+(\w+)\s+verifies\s+(\w+)/);
+    if (m) { target.push({ kind: 'traceLink', linkType: 'verify', source: m[1], target: m[2], line: lineNum }); continue; }
+
+    // trace Source traces Target;
+    m = line.match(/^trace\s+(\w+)\s+traces\s+(\w+)/);
+    if (m) { target.push({ kind: 'traceLink', linkType: 'trace', source: m[1], target: m[2], line: lineNum }); continue; }
+
     diagnostics.push({ line: lineNum, message: `Unrecognized statement: "${line}"`, severity: 'warning' });
   }
 
@@ -324,11 +401,16 @@ export function parse(source: string): ParseResult {
   while (stack.length > 0) {
     const frame = stack.pop()!;
     diagnostics.push({ line: frame.startLine, message: `Unclosed block: ${frame.kind} ${frame.name}`, severity: 'error' });
-    nodes.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
+    if (frame.kind === 'requirementDef') {
+      nodes.push({ kind: 'requirementDef', name: frame.name, reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
+    } else {
+      nodes.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
+    }
   }
 
   validateStateMachines(nodes, diagnostics);
   validateBehaviors(nodes, diagnostics);
+  validateRequirements(nodes, diagnostics);
   validate(nodes, diagnostics);
   return { nodes, diagnostics };
 }

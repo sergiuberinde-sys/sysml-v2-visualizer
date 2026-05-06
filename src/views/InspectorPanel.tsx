@@ -5,6 +5,7 @@ import {
   insertInterface, insertPartDef, insertPort,
   insertConnection, insertOccurrence, insertMessage,
   insertStateDef, insertStateEntry, insertStateTransition,
+  insertRequirementDef, insertTraceLink,
 } from '../insertions';
 
 interface Props {
@@ -19,6 +20,7 @@ interface Props {
 type ModalKind =
   | 'interface' | 'partDef' | 'port' | 'connection' | 'occurrence' | 'message'
   | 'stateMachine' | 'stateEntry' | 'stateTransition'
+  | 'requirement' | 'satisfyLink' | 'verifyLink' | 'traceLink'
   | null;
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -222,6 +224,27 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     return null;
   }
 
+  function submitRequirement(vals: Record<string, string>): string | null {
+    const name = vals.name.trim();
+    if (!name) return 'Name cannot be empty.';
+    if (!/^\w+$/.test(name)) return 'Name must be a single word.';
+    if (allTopNames.has(name)) return `"${name}" already exists.`;
+    onSourceChange(insertRequirementDef(source, name));
+    return null;
+  }
+
+  function submitTraceLinkModal(vals: Record<string, string>): string | null {
+    const sourceEl  = vals.source.trim();
+    const targetReq = vals.target.trim();
+    if (!sourceEl)  return 'Source element cannot be empty.';
+    if (!targetReq) return 'Target requirement cannot be empty.';
+    if (!/^\w+$/.test(sourceEl))  return 'Source must be a single word.';
+    if (!/^\w+$/.test(targetReq)) return 'Target must be a single word.';
+    const linkType = modal === 'satisfyLink' ? 'satisfy' : modal === 'verifyLink' ? 'verify' : 'trace';
+    onSourceChange(insertTraceLink(source, linkType as 'satisfy' | 'verify' | 'trace', sourceEl, targetReq));
+    return null;
+  }
+
   // ── SM-related derived data (used in field hints and inspBody) ─────────────
 
   type SMDef  = Extract<SysMLNode, { kind: 'stateDef' }>;
@@ -273,6 +296,22 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     { key: 'event', label: 'Event (optional)', type: 'text', placeholder: 'e.g. pedalPressed' },
   ];
 
+  type ReqDef = Extract<SysMLNode, { kind: 'requirementDef' }>;
+  const reqDefs    = result.nodes.filter((n): n is ReqDef => n.kind === 'requirementDef');
+  const reqNames   = reqDefs.map(r => r.name);
+  const reqNameHint = reqNames.length > 0 ? `Requirements: ${reqNames.join(', ')}` : undefined;
+
+  const SKIP_KINDS = new Set(['requirementDef', 'traceLink', 'package', 'port', 'partAlias', 'connection', 'message', 'actionInst', 'flow', 'stateEntry', 'transition']);
+  const allModelNames = result.nodes
+    .filter(n => 'name' in n && !SKIP_KINDS.has(n.kind))
+    .map(n => (n as { name: string }).name);
+  const srcHint = allModelNames.length > 0 ? `Elements: ${allModelNames.join(', ')}` : undefined;
+
+  const traceLinkFields: FieldDef[] = [
+    { key: 'source', label: 'Source element',    type: 'text', placeholder: 'e.g. BrakeController', hint: srcHint },
+    { key: 'target', label: 'Target requirement', type: 'text', placeholder: 'e.g. BrakeResponseTime', hint: reqNameHint },
+  ];
+
   // ── Actions panel ───────────────────────────────────────────────────────────
 
   const actionsPanel = (
@@ -313,6 +352,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           disabled={!selectedSMName}
           title={selectedSMName ? `Add transition to ${selectedSMName}` : 'Select a state machine first'}
         />
+        <ActionBtn label="Requirement" onClick={() => setModal('requirement')} />
+        <ActionBtn label="Satisfy Link" onClick={() => setModal('satisfyLink')} />
+        <ActionBtn label="Verify Link"  onClick={() => setModal('verifyLink')} />
+        <ActionBtn label="Trace Link"   onClick={() => setModal('traceLink')} />
       </div>
     </div>
   );
@@ -397,6 +440,22 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           onClose={() => setModal(null)}
         />
       )}
+      {modal === 'requirement' && (
+        <ActionModal
+          title="Add Requirement"
+          fields={[{ key: 'name', label: 'Name', type: 'text', placeholder: 'e.g. BrakeResponseTime' }]}
+          onSubmit={submitRequirement}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {(modal === 'satisfyLink' || modal === 'verifyLink' || modal === 'traceLink') && (
+        <ActionModal
+          title={modal === 'satisfyLink' ? 'Add Satisfy Link' : modal === 'verifyLink' ? 'Add Verify Link' : 'Add Trace Link'}
+          fields={traceLinkFields}
+          onSubmit={submitTraceLinkModal}
+          onClose={() => setModal(null)}
+        />
+      )}
     </>
   );
 
@@ -423,6 +482,8 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     stateMachine:    '«state def»',
     stateEntry:      'state',
     stateTransition: 'transition',
+    requirement:     '«requirement def»',
+    traceLink:       'trace link',
   };
 
   let inspBody: React.ReactNode = null;
@@ -629,6 +690,45 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           {selection.extra?.to           && <KV label="To"            value={selection.extra.to} />}
           {selection.extra?.event        && <KV label="Event"         value={selection.extra.event} />}
           {selection.extra?.stateMachine && <KV label="State machine" value={selection.extra.stateMachine} />}
+        </div>
+      );
+
+    } else if (selection.type === 'requirement') {
+      const req     = reqDefs.find(r => r.name === selection.name);
+      type TL       = Extract<SysMLNode, { kind: 'traceLink' }>;
+      const inLinks = result.nodes.filter((n): n is TL => n.kind === 'traceLink' && n.target === selection.name);
+      inspBody = (
+        <>
+          <div className="insp-section">
+            {(req?.reqId    || selection.extra?.reqId)    && <KV label="ID"       value={req?.reqId    ?? selection.extra?.reqId    ?? ''} />}
+            {(req?.priority || selection.extra?.priority) && <KV label="Priority" value={req?.priority ?? selection.extra?.priority ?? ''} />}
+          </div>
+          {(req?.text || selection.extra?.text) && (
+            <div className="insp-section">
+              <div className="insp-section-label">Text</div>
+              <div className="insp-req-text">{req?.text ?? selection.extra?.text}</div>
+            </div>
+          )}
+          {inLinks.length > 0 && (
+            <div className="insp-section">
+              <div className="insp-section-label">Traced By ({inLinks.length})</div>
+              {inLinks.map((l, i) => (
+                <div key={i} className="insp-detail-row">
+                  <span className={`insp-link-type insp-link-${l.linkType}`}>{l.linkType}</span>
+                  <span className="insp-detail-name"> {l.source}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      );
+
+    } else if (selection.type === 'traceLink') {
+      inspBody = (
+        <div className="insp-section">
+          {selection.extra?.linkType && <KV label="Type"   value={selection.extra.linkType} />}
+          {selection.extra?.source   && <KV label="Source" value={selection.extra.source} />}
+          {selection.extra?.target   && <KV label="Target" value={selection.extra.target} />}
         </div>
       );
     }
