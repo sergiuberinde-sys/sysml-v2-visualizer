@@ -13,6 +13,7 @@ import InspectorPanel from './views/InspectorPanel';
 import ProjectBar from './views/ProjectBar';
 import ProjectModal from './views/ProjectModal';
 import ActionModal from './views/ActionModal';
+import HistoryModal from './views/HistoryModal';
 import ErrorBoundary from './ErrorBoundary';
 import type { SysMLNode, SelectionState } from './types';
 import type { Project } from './projects';
@@ -21,6 +22,10 @@ import {
   setAutosave, generateId, makeTemplate,
   getInitialProjectState,
 } from './projects';
+import {
+  makeSnapshot, MAX_HISTORY, HISTORY_DEBOUNCE_MS,
+  type HistorySnapshot,
+} from './history';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'json';
@@ -43,6 +48,14 @@ export default function App() {
   const [activeProject, setActiveProject] = useState<Project | null>(init.active);
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [newModalMode, setNewModalMode]   = useState<'new' | 'saveAs' | null>(null);
+
+  // ── History state ──────────────────────────────────────────────────────────
+  const [history, setHistory]             = useState<HistorySnapshot[]>(() => [
+    makeSnapshot(init.text, parse(init.text)),
+  ]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const historyDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipHistoryPush = useRef(false);
 
   const isUnsaved = !activeProject || source !== activeProject.sysmlText;
 
@@ -73,6 +86,22 @@ export default function App() {
 
   // Auto-save every keystroke (crash recovery for untitled sessions)
   useEffect(() => { setAutosave(source); }, [source]);
+
+  // Debounced history snapshot — skipped during programmatic restores
+  useEffect(() => {
+    if (historyDebounce.current) clearTimeout(historyDebounce.current);
+    if (skipHistoryPush.current) {
+      skipHistoryPush.current = false;
+      return;
+    }
+    historyDebounce.current = setTimeout(() => {
+      setHistory(prev => {
+        if (prev.length > 0 && prev[prev.length - 1].text === source) return prev;
+        const next = [...prev, makeSnapshot(source, result)];
+        return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
+      });
+    }, HISTORY_DEBOUNCE_MS);
+  }, [source, result]);
 
   // Sync parser diagnostics → Monaco markers
   useEffect(() => {
@@ -105,9 +134,21 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const inEditor = !!(editorRef.current?.hasTextFocus());
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
         e.preventDefault();
         saveRef.current();
+      }
+      // Undo/redo when focus is outside Monaco (Monaco handles it natively when focused)
+      if (!inEditor) {
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'z') {
+          e.preventDefault();
+          editorRef.current?.trigger('global', 'undo', null);
+        }
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') {
+          e.preventDefault();
+          editorRef.current?.trigger('global', 'redo', null);
+        }
       }
     };
     window.addEventListener('keydown', onKey);
@@ -212,6 +253,31 @@ export default function App() {
     return null;
   }
 
+  // ── Undo / Redo ────────────────────────────────────────────────────────────
+
+  function handleUndo() { editorRef.current?.trigger('toolbar', 'undo', null); }
+  function handleRedo() { editorRef.current?.trigger('toolbar', 'redo', null); }
+
+  // ── History ────────────────────────────────────────────────────────────────
+
+  function handleHistoryRestore(snap: HistorySnapshot) {
+    if (!window.confirm('Restore this snapshot? The current text will be overwritten.')) return;
+    skipHistoryPush.current = true;
+    setSource(snap.text);
+    setSelection(null);
+    setShowHistoryModal(false);
+  }
+
+  // ── Revert ─────────────────────────────────────────────────────────────────
+
+  function handleRevert() {
+    if (!activeProject || source === activeProject.sysmlText) return;
+    if (!window.confirm(`Revert to last saved version of "${activeProject.name}"?`)) return;
+    skipHistoryPush.current = true;
+    setSource(activeProject.sysmlText);
+    setSelection(null);
+  }
+
   // ── Editor helpers ─────────────────────────────────────────────────────────
 
   function jumpToLine(lineNum: number) {
@@ -248,11 +314,16 @@ export default function App() {
       <ProjectBar
         projectName={activeProject?.name ?? null}
         isUnsaved={isUnsaved}
+        canRevert={isUnsaved && activeProject !== null}
         onSave={handleSave}
         onNew={handleNew}
         onLoad={handleLoad}
         onExport={handleExport}
         onImport={handleImport}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onHistory={() => setShowHistoryModal(true)}
+        onRevert={handleRevert}
       />
 
       {/* ── 4-column workspace ────────────────────── */}
@@ -408,6 +479,14 @@ export default function App() {
           }]}
           onSubmit={submitProjectName}
           onClose={() => setNewModalMode(null)}
+        />
+      )}
+
+      {showHistoryModal && (
+        <HistoryModal
+          history={history}
+          onRestore={handleHistoryRestore}
+          onClose={() => setShowHistoryModal(false)}
         />
       )}
 
