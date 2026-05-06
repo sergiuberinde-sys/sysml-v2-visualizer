@@ -88,6 +88,49 @@ function validate(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
   }
 }
 
+// ── behavior validation ───────────────────────────────────────────────────────
+
+function validateBehaviors(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
+  for (const node of nodes) {
+    if (node.kind !== 'behaviorDef') continue;
+
+    const seen = new Set<string>();
+    const actionNames = new Set<string>();
+
+    for (const child of node.body) {
+      if (child.kind === 'actionInst') {
+        if (seen.has(child.name)) {
+          diagnostics.push({
+            line: child.line,
+            message: `Duplicate action name "${child.name}" in behavior "${node.name}"`,
+            severity: 'warning',
+          });
+        }
+        seen.add(child.name);
+        actionNames.add(child.name);
+      }
+    }
+
+    for (const child of node.body) {
+      if (child.kind !== 'flow') continue;
+      if (!actionNames.has(child.from)) {
+        diagnostics.push({
+          line: child.line,
+          message: `Flow references unknown action "${child.from}"`,
+          severity: 'warning',
+        });
+      }
+      if (!actionNames.has(child.to)) {
+        diagnostics.push({
+          line: child.line,
+          message: `Flow references unknown action "${child.to}"`,
+          severity: 'warning',
+        });
+      }
+    }
+  }
+}
+
 // ── main parser ───────────────────────────────────────────────────────────────
 
 export function parse(source: string): ParseResult {
@@ -95,7 +138,7 @@ export function parse(source: string): ParseResult {
   const nodes: SysMLNode[] = [];
   const diagnostics: ParseDiagnostic[] = [];
 
-  type Frame = { kind: 'partDef' | 'occurrenceDef'; name: string; body: SysMLNode[]; startLine: number };
+  type Frame = { kind: 'partDef' | 'occurrenceDef' | 'behaviorDef'; name: string; body: SysMLNode[]; startLine: number };
   const stack: Frame[] = [];
 
   for (let i = 0; i < rawLines.length; i++) {
@@ -167,6 +210,26 @@ export function parse(source: string): ParseResult {
       continue;
     }
 
+    // action def Name;
+    m = line.match(/^action\s+def\s+(\w+)/);
+    if (m) { target.push({ kind: 'actionDef', name: m[1], line: lineNum }); continue; }
+
+    // behavior def Name {
+    m = line.match(/^behavior\s+def\s+(\w+)\s*\{/);
+    if (m) { stack.push({ kind: 'behaviorDef', name: m[1], body: [], startLine: lineNum }); continue; }
+
+    // behavior def Name;
+    m = line.match(/^behavior\s+def\s+(\w+)\s*;?\s*$/);
+    if (m) { target.push({ kind: 'behaviorDef', name: m[1], body: [], line: lineNum }); continue; }
+
+    // action name : Type;  (action instance inside behavior)
+    m = line.match(/^action\s+(\w+)\s*:\s*(\w+)/);
+    if (m) { target.push({ kind: 'actionInst', name: m[1], actionType: m[2], line: lineNum }); continue; }
+
+    // flow from -> to;
+    m = line.match(/^flow\s+(\w+)\s*->\s*(\w+)/);
+    if (m) { target.push({ kind: 'flow', from: m[1], to: m[2], line: lineNum }); continue; }
+
     diagnostics.push({ line: lineNum, message: `Unrecognized statement: "${line}"`, severity: 'warning' });
   }
 
@@ -177,6 +240,7 @@ export function parse(source: string): ParseResult {
     nodes.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
   }
 
+  validateBehaviors(nodes, diagnostics);
   validate(nodes, diagnostics);
   return { nodes, diagnostics };
 }

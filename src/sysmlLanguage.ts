@@ -6,10 +6,12 @@ export const SYSML_TOKENS = {
     'package', 'interface', 'part', 'def', 'occurrence',
     'port', 'in', 'out', 'connect', 'to',
     'message', 'from',
+    'action', 'behavior', 'flow',
   ],
   tokenizer: {
     root: [
       [/\/\/.*$/, 'comment'],
+      [/->/, 'operator'],
       [/[{}();]/, 'delimiter'],
       [/:/, 'delimiter'],
       [/\./, 'delimiter'],
@@ -31,6 +33,7 @@ export const SYSML_THEME = {
     { token: 'comment',    foreground: '546e7a', fontStyle: 'italic' },
     { token: 'identifier', foreground: 'cdd6f4'                      },
     { token: 'delimiter',  foreground: '89ddff'                      },
+    { token: 'operator',   foreground: '89ddff'                      },
   ],
   colors: {
     'editor.background':                  '#1e1e2e',

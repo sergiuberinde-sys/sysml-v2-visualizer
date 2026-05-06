@@ -8,6 +8,7 @@ import { SYSML_TOKENS, SYSML_THEME } from './sysmlLanguage';
 import ModelExplorer from './views/ModelExplorer';
 import StructureView from './views/StructureView';
 import SequenceView from './views/SequenceView';
+import BehaviorView from './views/BehaviorView';
 import JsonView from './views/JsonView';
 import InspectorPanel from './views/InspectorPanel';
 import ProjectBar from './views/ProjectBar';
@@ -28,7 +29,7 @@ import {
 } from './history';
 import './App.css';
 
-type ViewTab = 'structure' | 'sequence' | 'json';
+type ViewTab = 'structure' | 'sequence' | 'behavior' | 'json';
 
 // ── Initial state derived from localStorage ──────────────────────────────────
 
@@ -41,6 +42,7 @@ export default function App() {
   const [source, setSource]               = useState(init.text);
   const [tab, setTab]                     = useState<ViewTab>('structure');
   const [selectedOccurrence, setSelected] = useState('');
+  const [selectedBehavior, setSelectedBehavior] = useState('');
   const [selection, setSelection]         = useState<SelectionState>(null);
 
   // ── Project state ──────────────────────────────────────────────────────────
@@ -74,6 +76,13 @@ export default function App() {
     [result],
   );
 
+  const behaviorDefNames = useMemo(
+    () => result.nodes
+      .filter((n): n is Extract<SysMLNode, { kind: 'behaviorDef' }> => n.kind === 'behaviorDef')
+      .map(n => n.name),
+    [result],
+  );
+
   // ── Effects ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -83,6 +92,14 @@ export default function App() {
       return behavioralOccurrences[0];
     });
   }, [behavioralOccurrences]);
+
+  useEffect(() => {
+    setSelectedBehavior(cur => {
+      if (behaviorDefNames.length === 0)    return '';
+      if (behaviorDefNames.includes(cur))   return cur;
+      return behaviorDefNames[0];
+    });
+  }, [behaviorDefNames]);
 
   // Auto-save every keystroke (crash recovery for untitled sessions)
   useEffect(() => { setAutosave(source); }, [source]);
@@ -388,8 +405,10 @@ export default function App() {
         <ModelExplorer
           result={result}
           selectedOccurrence={selectedOccurrence}
+          selectedBehavior={selectedBehavior}
           selection={selection}
           onSelectScenario={name => { setSelected(name); setTab('sequence'); }}
+          onSelectBehavior={name => { setSelectedBehavior(name); setTab('behavior'); }}
           onSelect={setSelection}
           onNavigate={setTab}
         />
@@ -398,7 +417,7 @@ export default function App() {
         <div className="panel viz-panel">
           <div className="panel-header tabs">
             <div className="tab-group">
-              {(['structure', 'sequence', 'json'] as ViewTab[]).map(t => (
+              {(['structure', 'sequence', 'behavior', 'json'] as ViewTab[]).map(t => (
                 <button
                   key={t}
                   className={`tab-btn${tab === t ? ' active' : ''}`}
@@ -422,6 +441,20 @@ export default function App() {
                 </select>
               </div>
             )}
+            {tab === 'behavior' && behaviorDefNames.length > 0 && (
+              <div className="occurrence-selector">
+                <label>Behavior</label>
+                <select
+                  value={selectedBehavior}
+                  onChange={e => setSelectedBehavior(e.target.value)}
+                  className="occurrence-select"
+                >
+                  {behaviorDefNames.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="view-area">
             <ErrorBoundary label="Structure view error">
@@ -434,6 +467,16 @@ export default function App() {
                 <SequenceView
                   result={result}
                   occurrenceName={selectedOccurrence}
+                  selection={selection}
+                  onSelect={setSelection}
+                />
+              )}
+            </ErrorBoundary>
+            <ErrorBoundary label="Behavior view error">
+              {tab === 'behavior' && (
+                <BehaviorView
+                  result={result}
+                  behaviorName={selectedBehavior}
                   selection={selection}
                   onSelect={setSelection}
                 />
