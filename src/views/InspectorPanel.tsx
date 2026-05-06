@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import type { SelectionState, ParseResult, SysMLNode } from '../types';
+import type { SelectionState, ParseResult, SysMLNode, PackageDefNode } from '../types';
 import ActionModal, { type FieldDef } from './ActionModal';
 import {
   insertInterface, insertPartDef, insertPort,
   insertConnection, insertOccurrence, insertMessage,
   insertStateDef, insertStateEntry, insertStateTransition,
   insertRequirementDef, insertTraceLink,
+  insertPackage, insertElementIntoPackage,
 } from '../insertions';
 
 interface Props {
@@ -21,6 +22,7 @@ type ModalKind =
   | 'interface' | 'partDef' | 'port' | 'connection' | 'occurrence' | 'message'
   | 'stateMachine' | 'stateEntry' | 'stateTransition'
   | 'requirement' | 'satisfyLink' | 'verifyLink' | 'traceLink'
+  | 'addPackage' | 'addToPackage'
   | null;
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
@@ -82,6 +84,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     selection?.type === 'stateMachine' ? selection.name :
     (selection?.type === 'stateEntry' || selection?.type === 'stateTransition')
       ? (selection.extra?.stateMachine ?? null)
+    : null;
+
+  const selectedPackagePath = selection?.type === 'packageDef'
+    ? (selection.extra?.qualifiedName ?? selection.name)
     : null;
 
   // Interfaces for type hints
@@ -245,6 +251,35 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     return null;
   }
 
+  function submitAddPackage(vals: Record<string, string>): string | null {
+    const name = vals.name.trim();
+    if (!name) return 'Name cannot be empty.';
+    if (!/^\w+$/.test(name)) return 'Name must be a single word (letters, digits, _).';
+    if (allTopNames.has(name)) return `"${name}" already exists.`;
+    onSourceChange(insertPackage(source, name));
+    return null;
+  }
+
+  function submitAddToPackage(vals: Record<string, string>): string | null {
+    if (!selectedPackagePath) return 'No package selected.';
+    const name = vals.name.trim();
+    const kind = vals.kind;
+    if (!name) return 'Name cannot be empty.';
+    if (!/^\w+$/.test(name)) return 'Name must be a single word (letters, digits, _).';
+    let elementText: string;
+    if (kind === 'part def') {
+      elementText = `part def ${name};`;
+    } else if (kind === 'requirement def') {
+      elementText = `requirement def ${name} {\n  id = "REQ-XXX";\n  text = "";\n  priority = "Medium";\n}`;
+    } else if (kind === 'interface def') {
+      elementText = `interface def ${name};`;
+    } else {
+      elementText = `package ${name} {\n}`;
+    }
+    onSourceChange(insertElementIntoPackage(source, result, selectedPackagePath, elementText));
+    return null;
+  }
+
   // ── SM-related derived data (used in field hints and inspBody) ─────────────
 
   type SMDef  = Extract<SysMLNode, { kind: 'stateDef' }>;
@@ -356,6 +391,13 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
         <ActionBtn label="Satisfy Link" onClick={() => setModal('satisfyLink')} />
         <ActionBtn label="Verify Link"  onClick={() => setModal('verifyLink')} />
         <ActionBtn label="Trace Link"   onClick={() => setModal('traceLink')} />
+        <ActionBtn label="Package"      onClick={() => setModal('addPackage')} />
+        <ActionBtn
+          label="Add to Package"
+          onClick={() => setModal('addToPackage')}
+          disabled={!selectedPackagePath}
+          title={selectedPackagePath ? `Add element into ${selectedPackagePath}` : 'Select a package first'}
+        />
       </div>
     </div>
   );
@@ -456,6 +498,33 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           onClose={() => setModal(null)}
         />
       )}
+      {modal === 'addPackage' && (
+        <ActionModal
+          title="Add Package"
+          fields={[{ key: 'name', label: 'Package name', type: 'text', placeholder: 'e.g. Sensors' }]}
+          onSubmit={submitAddPackage}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal === 'addToPackage' && selectedPackagePath && (
+        <ActionModal
+          title={`Add Element to ${selectedPackagePath}`}
+          fields={[
+            {
+              key: 'kind', label: 'Element type', type: 'select',
+              options: [
+                { value: 'part def',       label: 'part def' },
+                { value: 'interface def',  label: 'interface def' },
+                { value: 'requirement def',label: 'requirement def' },
+                { value: 'package',        label: 'sub-package' },
+              ],
+            },
+            { key: 'name', label: 'Name', type: 'text', placeholder: 'e.g. PressureSensor' },
+          ]}
+          onSubmit={submitAddToPackage}
+          onClose={() => setModal(null)}
+        />
+      )}
     </>
   );
 
@@ -484,6 +553,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     stateTransition: 'transition',
     requirement:     '«requirement def»',
     traceLink:       'trace link',
+    packageDef:      '«package»',
   };
 
   let inspBody: React.ReactNode = null;
@@ -729,6 +799,28 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
           {selection.extra?.linkType && <KV label="Type"   value={selection.extra.linkType} />}
           {selection.extra?.source   && <KV label="Source" value={selection.extra.source} />}
           {selection.extra?.target   && <KV label="Target" value={selection.extra.target} />}
+        </div>
+      );
+
+    } else if (selection.type === 'packageDef') {
+      function findPkgNode(pkgs: PackageDefNode[], name: string, ns: string): PackageDefNode | undefined {
+        for (const p of pkgs) {
+          if (p.name === name && p.namespace === ns) return p;
+          const nested = p.body.filter((n): n is PackageDefNode => n.kind === 'packageDef');
+          const found  = findPkgNode(nested, name, ns);
+          if (found) return found;
+        }
+        return undefined;
+      }
+      const pkgNode = findPkgNode(result.packages, selection.name, selection.extra?.namespace ?? '');
+      const childPkgs  = pkgNode?.body.filter(n => n.kind === 'packageDef').length ?? 0;
+      const childElems = pkgNode?.body.filter(n => n.kind !== 'packageDef').length ?? 0;
+      const qualName   = selection.extra?.qualifiedName ?? selection.name;
+      inspBody = (
+        <div className="insp-section">
+          <KV label="Qualified name" value={qualName} />
+          {childPkgs  > 0 && <KV label="Sub-packages" value={String(childPkgs)} />}
+          {childElems > 0 && <KV label="Elements"     value={String(childElems)} />}
         </div>
       );
     }

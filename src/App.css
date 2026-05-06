@@ -902,3 +902,9 @@ html, body, #root {
 .insp-link-satisfy { background: #0d2e1a; color: #4ade80; }
 .insp-link-verify  { background: #2e2410; color: #f9e2af; }
 .insp-link-trace   { background: #09213a; color: #38bdf8; }
+
+/* ── Package tree items ──────────────────────────────────── */
+
+.expl-item-package .expl-icon-pkg { color: #cba6f7; }
+.expl-tag-pkg      { background: #1e1040; color: #cba6f7; }
+.expl-tag-pkg-elem { background: #1e1e2e; color: #7f849c; }
