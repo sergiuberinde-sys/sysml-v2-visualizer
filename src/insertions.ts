@@ -1,7 +1,7 @@
 // Pure text insertion utilities. All functions return a new source string.
 // Line numbers in ParseResult are 1-based; array indices are 0-based.
 
-import type { ParseResult, SysMLNode } from './types';
+import type { ParseResult, SysMLNode, PackageDefNode } from './types';
 
 // Returns 0-based index of the first `}` line after openLineNum (1-based).
 // openLineNum as a 0-based index IS the line after the opening (e.g. opening at
@@ -9,6 +9,20 @@ import type { ParseResult, SysMLNode } from './types';
 function findCloseIdx(ls: string[], openLineNum: number): number {
   for (let i = openLineNum; i < ls.length; i++) {
     if (/^\}/.test(ls[i].replace(/\/\/.*$/, '').trim())) return i;
+  }
+  return ls.length - 1;
+}
+
+// Returns 0-based index of the `}` that matches the `{` on openIdx (0-based).
+// Handles nesting by tracking brace depth.
+function findMatchingClose(ls: string[], openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < ls.length; i++) {
+    const text = ls[i].replace(/\/\/.*$/, '').trim();
+    for (const ch of text) {
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) return i; }
+    }
   }
   return ls.length - 1;
 }
@@ -163,6 +177,47 @@ export function insertTraceLink(
   while (ls.length > 0 && ls[ls.length - 1].trim() === '') ls.pop();
   const verb = linkType === 'satisfy' ? 'satisfies' : linkType === 'verify' ? 'verifies' : 'traces';
   ls.push(`${linkType} ${sourceEl} ${verb} ${targetReq};`);
+  return ls.join('\n');
+}
+
+// ── Message ───────────────────────────────────────────────────────────────────
+
+// ── Package ───────────────────────────────────────────────────────────────────
+
+export function insertPackage(source: string, name: string): string {
+  const ls = source.split('\n');
+  while (ls.length > 0 && ls[ls.length - 1].trim() === '') ls.pop();
+  ls.push('', `package ${name} {`, `}`);
+  return ls.join('\n');
+}
+
+export function insertElementIntoPackage(
+  source: string,
+  result: ParseResult,
+  packagePath: string,
+  elementText: string,
+): string {
+  const ls = source.split('\n');
+  const pathParts = packagePath.split('::').filter(Boolean);
+
+  function findPkg(pkgs: PackageDefNode[], path: string[]): PackageDefNode | undefined {
+    for (const pkg of pkgs) {
+      if (pkg.name === path[0]) {
+        if (path.length === 1) return pkg;
+        const children = pkg.body.filter((n): n is PackageDefNode => n.kind === 'packageDef');
+        return findPkg(children, path.slice(1));
+      }
+    }
+    return undefined;
+  }
+
+  const targetPkg = findPkg(result.packages, pathParts);
+  if (!targetPkg) return source;
+
+  const closeIdx = findMatchingClose(ls, targetPkg.line - 1);
+  const indent = '  '.repeat(pathParts.length);
+  const indentedLines = elementText.split('\n').map(l => indent + l);
+  ls.splice(closeIdx, 0, ...indentedLines);
   return ls.join('\n');
 }
 

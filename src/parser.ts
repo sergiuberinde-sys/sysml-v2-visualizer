@@ -1,4 +1,4 @@
-import type { SysMLNode, ParseDiagnostic, ParseResult } from './types';
+import type { SysMLNode, ParseDiagnostic, ParseResult, PackageDefNode } from './types';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -6,6 +6,21 @@ type PartDefNode      = Extract<SysMLNode, { kind: 'partDef' }>;
 type InterfaceDefNode = Extract<SysMLNode, { kind: 'interfaceDef' }>;
 type PortNode         = Extract<SysMLNode, { kind: 'port' }>;
 type ConnectionNode   = Extract<SysMLNode, { kind: 'connection' }>;
+
+// ── package tree → flat nodes + top-level packages ────────────────────────────
+
+function flattenPackages(topNodes: SysMLNode[]): { flatNodes: SysMLNode[]; packages: PackageDefNode[] } {
+  const packages = topNodes.filter((n): n is PackageDefNode => n.kind === 'packageDef');
+  const flatNodes: SysMLNode[] = [];
+  function walk(nodes: SysMLNode[]) {
+    for (const n of nodes) {
+      if (n.kind === 'packageDef') walk(n.body);
+      else flatNodes.push(n);
+    }
+  }
+  walk(topNodes);
+  return { flatNodes, packages };
+}
 
 // ── semantic validation ───────────────────────────────────────────────────────
 
@@ -25,7 +40,6 @@ function validate(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
   for (const node of nodes) {
     if (node.kind !== 'partDef') continue;
 
-    // Port types must reference a known interface
     for (const child of node.body) {
       if (child.kind === 'port' && ifaceNames.size > 0 && !ifaceNames.has(child.portType)) {
         diagnostics.push({
@@ -36,13 +50,11 @@ function validate(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
       }
     }
 
-    // Build instance map for this partDef's body
     const instanceTypes = new Map<string, string>();
     for (const child of node.body) {
       if (child.kind === 'partAlias') instanceTypes.set(child.name, child.type);
     }
 
-    // Build port name sets per type
     const portNamesOf = (typeName: string): Set<string> | undefined => {
       const def = partDefMap.get(typeName);
       if (!def) return undefined;
@@ -53,7 +65,6 @@ function validate(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
       );
     };
 
-    // Validate connections
     for (const child of node.body) {
       if (child.kind !== 'connection') continue;
       const conn = child as ConnectionNode;
@@ -194,6 +205,26 @@ function validateBehaviors(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
   }
 }
 
+// ── namespace validation ──────────────────────────────────────────────────────
+
+function validateNamespaces(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
+  const seen = new Map<string, number>();
+  for (const node of nodes) {
+    if (!('name' in node) || !('namespace' in node)) continue;
+    const n = node as { name: string; namespace: string; line: number };
+    const key = n.namespace ? `${n.namespace}::${n.name}` : n.name;
+    if (seen.has(key)) {
+      diagnostics.push({
+        line: n.line,
+        severity: 'error',
+        message: `Duplicate element name "${n.name}" in namespace "${n.namespace || '(root)'}"`,
+      });
+    } else {
+      seen.set(key, n.line);
+    }
+  }
+}
+
 // ── requirement / traceability validation ─────────────────────────────────────
 
 function validateRequirements(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
@@ -203,9 +234,21 @@ function validateRequirements(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]
   const reqs  = nodes.filter((n): n is RD => n.kind === 'requirementDef');
   const links = nodes.filter((n): n is TL => n.kind === 'traceLink');
 
-  const allNames = new Set(nodes.filter(n => 'name' in n).map(n => (n as { name: string }).name));
-  const reqNames = new Set(reqs.map(r => r.name));
-  const seenIds  = new Map<string, number>();
+  const allNames = new Set<string>();
+  const reqNames = new Set<string>();
+
+  for (const n of nodes) {
+    if (!('name' in n)) continue;
+    const node = n as { name: string; namespace?: string };
+    allNames.add(node.name);
+    if (node.namespace) allNames.add(`${node.namespace}::${node.name}`);
+    if (n.kind === 'requirementDef') {
+      reqNames.add(node.name);
+      if (node.namespace) reqNames.add(`${node.namespace}::${node.name}`);
+    }
+  }
+
+  const seenIds = new Map<string, number>();
 
   for (const req of reqs) {
     if (!req.reqId) {
@@ -237,8 +280,11 @@ export function parse(source: string): ParseResult {
   const nodes: SysMLNode[] = [];
   const diagnostics: ParseDiagnostic[] = [];
 
+  const namespaceStack: string[] = [];
+  const currentNs = () => namespaceStack.join('::');
+
   type Frame = {
-    kind: 'partDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef' | 'requirementDef';
+    kind: 'packageDef' | 'partDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef' | 'requirementDef';
     name: string; body: SysMLNode[]; startLine: number;
     reqId?: string; reqText?: string; reqPriority?: string;
   };
@@ -256,10 +302,13 @@ export function parse(source: string): ParseResult {
       const frame = stack.pop();
       if (frame) {
         const dest = stack.length > 0 ? stack[stack.length - 1].body : nodes;
-        if (frame.kind === 'requirementDef') {
-          dest.push({ kind: 'requirementDef', name: frame.name, reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
+        if (frame.kind === 'packageDef') {
+          namespaceStack.pop();
+          dest.push({ kind: 'packageDef', name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine });
+        } else if (frame.kind === 'requirementDef') {
+          dest.push({ kind: 'requirementDef', name: frame.name, namespace: currentNs(), reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
         } else {
-          dest.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
+          dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine } as SysMLNode);
         }
       } else {
         diagnostics.push({ line: lineNum, message: 'Unexpected }', severity: 'error' });
@@ -280,13 +329,21 @@ export function parse(source: string): ParseResult {
       continue;
     }
 
+    // package Name {
+    let m = line.match(/^package\s+(\w+)\s*\{/);
+    if (m) {
+      namespaceStack.push(m[1]);
+      stack.push({ kind: 'packageDef', name: m[1], body: [], startLine: lineNum });
+      continue;
+    }
+
     // package Name;
-    let m = line.match(/^package\s+(\w+)/);
+    m = line.match(/^package\s+(\w+)/);
     if (m) { target.push({ kind: 'package', name: m[1], line: lineNum }); continue; }
 
     // interface def Name;
     m = line.match(/^interface\s+def\s+(\w+)/);
-    if (m) { target.push({ kind: 'interfaceDef', name: m[1], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'interfaceDef', name: m[1], namespace: currentNs(), line: lineNum }); continue; }
 
     // part def Name {
     m = line.match(/^part\s+def\s+(\w+)\s*\{/);
@@ -294,7 +351,7 @@ export function parse(source: string): ParseResult {
 
     // part def Name;
     m = line.match(/^part\s+def\s+(\w+)\s*;?\s*$/);
-    if (m) { target.push({ kind: 'partDef', name: m[1], body: [], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'partDef', name: m[1], namespace: currentNs(), body: [], line: lineNum }); continue; }
 
     // occurrence def Name {
     m = line.match(/^occurrence\s+def\s+(\w+)\s*\{/);
@@ -302,7 +359,7 @@ export function parse(source: string): ParseResult {
 
     // occurrence def Name;
     m = line.match(/^occurrence\s+def\s+(\w+)\s*;?\s*$/);
-    if (m) { target.push({ kind: 'occurrenceDef', name: m[1], body: [], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'occurrenceDef', name: m[1], namespace: currentNs(), body: [], line: lineNum }); continue; }
 
     // port in|out name : Type;
     m = line.match(/^port\s+(in|out)\s+(\w+)\s*:\s*(\w+)/);
@@ -332,7 +389,7 @@ export function parse(source: string): ParseResult {
 
     // action def Name;
     m = line.match(/^action\s+def\s+(\w+)/);
-    if (m) { target.push({ kind: 'actionDef', name: m[1], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'actionDef', name: m[1], namespace: currentNs(), line: lineNum }); continue; }
 
     // behavior def Name {
     m = line.match(/^behavior\s+def\s+(\w+)\s*\{/);
@@ -340,7 +397,7 @@ export function parse(source: string): ParseResult {
 
     // behavior def Name;
     m = line.match(/^behavior\s+def\s+(\w+)\s*;?\s*$/);
-    if (m) { target.push({ kind: 'behaviorDef', name: m[1], body: [], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'behaviorDef', name: m[1], namespace: currentNs(), body: [], line: lineNum }); continue; }
 
     // action name : Type;  (action instance inside behavior)
     m = line.match(/^action\s+(\w+)\s*:\s*(\w+)/);
@@ -356,7 +413,7 @@ export function parse(source: string): ParseResult {
 
     // state def Name;
     m = line.match(/^state\s+def\s+(\w+)\s*;?\s*$/);
-    if (m) { target.push({ kind: 'stateDef', name: m[1], body: [], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'stateDef', name: m[1], namespace: currentNs(), body: [], line: lineNum }); continue; }
 
     // state Name;  (state entry inside state machine)
     m = line.match(/^state\s+(\w+)\s*;?\s*$/);
@@ -380,19 +437,19 @@ export function parse(source: string): ParseResult {
 
     // requirement def Name;
     m = line.match(/^requirement\s+def\s+(\w+)\s*;?\s*$/);
-    if (m) { target.push({ kind: 'requirementDef', name: m[1], reqId: '', text: '', priority: '', line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'requirementDef', name: m[1], namespace: currentNs(), reqId: '', text: '', priority: '', line: lineNum }); continue; }
 
     // satisfy Source satisfies Target;
     m = line.match(/^satisfy\s+(\w+)\s+satisfies\s+(\w+)/);
-    if (m) { target.push({ kind: 'traceLink', linkType: 'satisfy', source: m[1], target: m[2], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'traceLink', namespace: currentNs(), linkType: 'satisfy', source: m[1], target: m[2], line: lineNum }); continue; }
 
     // verify Source verifies Target;
     m = line.match(/^verify\s+(\w+)\s+verifies\s+(\w+)/);
-    if (m) { target.push({ kind: 'traceLink', linkType: 'verify', source: m[1], target: m[2], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'traceLink', namespace: currentNs(), linkType: 'verify', source: m[1], target: m[2], line: lineNum }); continue; }
 
     // trace Source traces Target;
     m = line.match(/^trace\s+(\w+)\s+traces\s+(\w+)/);
-    if (m) { target.push({ kind: 'traceLink', linkType: 'trace', source: m[1], target: m[2], line: lineNum }); continue; }
+    if (m) { target.push({ kind: 'traceLink', namespace: currentNs(), linkType: 'trace', source: m[1], target: m[2], line: lineNum }); continue; }
 
     diagnostics.push({ line: lineNum, message: `Unrecognized statement: "${line}"`, severity: 'warning' });
   }
@@ -401,16 +458,24 @@ export function parse(source: string): ParseResult {
   while (stack.length > 0) {
     const frame = stack.pop()!;
     diagnostics.push({ line: frame.startLine, message: `Unclosed block: ${frame.kind} ${frame.name}`, severity: 'error' });
-    if (frame.kind === 'requirementDef') {
-      nodes.push({ kind: 'requirementDef', name: frame.name, reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
+    const dest = stack.length > 0 ? stack[stack.length - 1].body : nodes;
+    if (frame.kind === 'packageDef') {
+      namespaceStack.pop();
+      dest.push({ kind: 'packageDef', name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine });
+    } else if (frame.kind === 'requirementDef') {
+      dest.push({ kind: 'requirementDef', name: frame.name, namespace: currentNs(), reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
     } else {
-      nodes.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
+      dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine } as SysMLNode);
     }
   }
 
-  validateStateMachines(nodes, diagnostics);
-  validateBehaviors(nodes, diagnostics);
-  validateRequirements(nodes, diagnostics);
-  validate(nodes, diagnostics);
-  return { nodes, diagnostics };
+  const { flatNodes, packages } = flattenPackages(nodes);
+
+  validateStateMachines(flatNodes, diagnostics);
+  validateBehaviors(flatNodes, diagnostics);
+  validateRequirements(flatNodes, diagnostics);
+  validateNamespaces(flatNodes, diagnostics);
+  validate(flatNodes, diagnostics);
+
+  return { nodes: flatNodes, packages, diagnostics };
 }

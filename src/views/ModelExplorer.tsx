@@ -1,7 +1,74 @@
 import { useState } from 'react';
-import type { ParseResult, SysMLNode, SelectionState } from '../types';
+import type { ParseResult, SysMLNode, SelectionState, PackageDefNode } from '../types';
 
 type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state' | 'requirements' | 'traceability';
+
+// ── Package tree node ─────────────────────────────────────────────────────────
+
+function PackageTreeNode({ pkg, depth, open, toggle, sel, onSelect }: {
+  pkg: PackageDefNode;
+  depth: number;
+  open: Set<string>;
+  toggle: (id: string) => void;
+  sel: (id: string) => boolean;
+  onSelect: (s: SelectionState) => void;
+}) {
+  const ns = pkg.namespace ? `${pkg.namespace}::${pkg.name}` : pkg.name;
+  const subId = `pkg-tree-${ns}`;
+  const isOpen = open.has(subId);
+  const childPkgs = pkg.body.filter((n): n is PackageDefNode => n.kind === 'packageDef');
+  const childElems = pkg.body.filter(n => n.kind !== 'packageDef' && 'name' in n);
+  const hasChildren = childPkgs.length > 0 || childElems.length > 0;
+
+  const ELEM_ICON: Record<string, string> = {
+    partDef: '■', interfaceDef: '◈', occurrenceDef: '◇',
+    actionDef: '▷', behaviorDef: '⟳', stateDef: '⊙', requirementDef: '◆',
+  };
+
+  return (
+    <div>
+      <div
+        className={`expl-item expl-item-package${sel(`pkg-${ns}`) ? ' expl-selected' : ''}`}
+        style={{ paddingLeft: 8 + depth * 14 }}
+        onClick={() => {
+          if (hasChildren) toggle(subId);
+          onSelect({ id: `pkg-${ns}`, type: 'packageDef', name: pkg.name,
+            extra: { namespace: pkg.namespace, qualifiedName: ns } });
+        }}
+      >
+        {hasChildren
+          ? <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
+          : <span style={{ width: 12, display: 'inline-block' }} />}
+        <span className="expl-icon expl-icon-pkg">⬡</span>
+        <span className="expl-name">{pkg.name}</span>
+        {childPkgs.length > 0 && <span className="expl-tag expl-tag-pkg" style={{ marginLeft: 2 }}>{childPkgs.length}p</span>}
+        {childElems.length > 0 && <span className="expl-tag expl-tag-pkg-elem" style={{ marginLeft: 2 }}>{childElems.length}e</span>}
+      </div>
+      {isOpen && (
+        <>
+          {childPkgs.map(child => (
+            <PackageTreeNode
+              key={child.name}
+              pkg={child}
+              depth={depth + 1}
+              open={open} toggle={toggle} sel={sel} onSelect={onSelect}
+            />
+          ))}
+          {childElems.map((n, i) => {
+            const named = n as { name: string; kind: string };
+            return (
+              <div key={i} className="expl-subitem" style={{ paddingLeft: 20 + depth * 14 }}>
+                <span className="expl-icon-sub">{ELEM_ICON[named.kind] ?? '·'}</span>
+                <span className="expl-subname">{named.name}</span>
+                <span className="expl-subtype">{named.kind.replace(/Def$/, ' def')}</span>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
 
 interface Props {
   result: ParseResult;
@@ -68,7 +135,7 @@ export default function ModelExplorer({
   onSelectScenario, onSelectBehavior, onSelectStateMachine, onSelect, onNavigate,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(
-    new Set(['interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors', 'stateMachines', 'requirements', 'traceLinks']),
+    new Set(['packages', 'interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors', 'stateMachines', 'requirements', 'traceLinks']),
   );
 
   function toggle(id: string) {
@@ -119,6 +186,25 @@ export default function ModelExplorer({
         <div className="expl-empty">Nothing to show yet.</div>
       ) : (
         <div className="expl-tree">
+
+          {/* ── Packages ── */}
+          {result.packages.length > 0 && (
+            <div className="expl-section">
+              <SectionHeader
+                label="Packages" count={result.packages.length}
+                open={open.has('packages')} onToggle={() => toggle('packages')}
+              />
+              {open.has('packages') && result.packages.map(pkg => (
+                <PackageTreeNode
+                  key={pkg.name}
+                  pkg={pkg}
+                  depth={0}
+                  open={open} toggle={toggle} sel={sel}
+                  onSelect={onSelect}
+                />
+              ))}
+            </div>
+          )}
 
           {/* ── Interfaces ── */}
           {ifaceDefs.length > 0 && (

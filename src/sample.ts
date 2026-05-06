@@ -129,4 +129,36 @@ satisfy BrakeByWireSystem satisfies ABSActivation;
 verify BrakeSystemStateMachine verifies SelfTestOnStartup;
 trace BrakeControlLogic traces BrakeResponseTime;
 trace FaultDetection traces ABSActivation;
+
+// ── Packages: Vehicle Systems ─────────────────────────────
+package VehicleSystems {
+  package Hydraulics {
+    interface def HydraulicPressure;
+    part def HydraulicPump {
+      port out pressure : HydraulicPressure;
+    }
+    part def ActuatorValve {
+      port in pressure : HydraulicPressure;
+    }
+    part def HydraulicsSubsystem {
+      part pump  : HydraulicPump;
+      part valve : ActuatorValve;
+      connect pump.pressure to valve.pressure;
+    }
+  }
+  package Safety {
+    requirement def MaxOperatingPressure {
+      id = "REQ-HYD-001";
+      text = "The hydraulic pump shall not exceed 250 bar operating pressure.";
+      priority = "High";
+    }
+    requirement def LeakDetection {
+      id = "REQ-HYD-002";
+      text = "The system shall detect fluid leaks within 2 seconds.";
+      priority = "Medium";
+    }
+  }
+}
+satisfy HydraulicPump satisfies MaxOperatingPressure;
+verify HydraulicsSubsystem verifies LeakDetection;
 `;
