@@ -766,6 +766,15 @@ html, body, #root {
 
 /* ── Behavior view ───────────────────────────────────────── */
 
+/* ── State machine explorer items ────────────────────────── */
+
+.expl-item-statemachine .expl-icon-sm { color: #2dd4bf; }
+.expl-item-statemachine .expl-tag-sm  { background: #0d2e2e; color: #5eead4; }
+.expl-tag-state { background: #0d2e2e; color: #2dd4bf; }
+.expl-tag-trans { background: #0a2020; color: #4ade80; }
+
+/* ── Behavior view ───────────────────────────────────────── */
+
 .behavior-placeholder {
   display: flex;
   align-items: center;

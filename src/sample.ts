@@ -83,4 +83,24 @@ behavior def FaultDetection {
 
   flow readSpeed -> detectFault;
 }
+
+// ── State Machine: Brake System ───────────────────
+state def BrakeSystemStateMachine {
+  state Off;
+  state SelfTest;
+  state Ready;
+  state Braking;
+  state ABSActive;
+  state Fault;
+
+  initial -> Off;
+  transition Off      -> SelfTest   on powerOn;
+  transition SelfTest -> Ready      on selfTestPassed;
+  transition Ready    -> Braking    on pedalPressed;
+  transition Braking  -> ABSActive  on wheelSlipDetected;
+  transition ABSActive -> Braking   on wheelRecovered;
+  transition Braking  -> Ready      on pedalReleased;
+  transition Ready    -> Fault      on diagnosticFailure;
+  transition Fault    -> Ready      on faultCleared;
+}
 `;

@@ -103,6 +103,47 @@ export function insertOccurrence(source: string, name: string): string {
   return ls.join('\n');
 }
 
+// ── State machine ─────────────────────────────────────────────────────────────
+
+export function insertStateDef(source: string, name: string): string {
+  const ls = source.split('\n');
+  while (ls.length > 0 && ls[ls.length - 1].trim() === '') ls.pop();
+  ls.push('', `state def ${name} {`, `}`);
+  return ls.join('\n');
+}
+
+export function insertStateEntry(
+  source: string, result: ParseResult, smName: string, stateName: string,
+): string {
+  const ls = source.split('\n');
+  type SD = Extract<SysMLNode, { kind: 'stateDef' }>;
+  const sm = result.nodes.find((n): n is SD => n.kind === 'stateDef' && n.name === smName);
+  if (!sm) return source;
+  const closeIdx = findCloseIdx(ls, sm.line);
+  ls.splice(closeIdx, 0, `  state ${stateName};`);
+  return ls.join('\n');
+}
+
+export function insertStateTransition(
+  source: string,
+  result: ParseResult,
+  smName: string,
+  from: string,
+  to: string,
+  event?: string,
+): string {
+  const ls = source.split('\n');
+  type SD = Extract<SysMLNode, { kind: 'stateDef' }>;
+  const sm = result.nodes.find((n): n is SD => n.kind === 'stateDef' && n.name === smName);
+  if (!sm) return source;
+  const closeIdx = findCloseIdx(ls, sm.line);
+  const text = event
+    ? `  transition ${from} -> ${to} on ${event};`
+    : `  transition ${from} -> ${to};`;
+  ls.splice(closeIdx, 0, text);
+  return ls.join('\n');
+}
+
 // ── Message ───────────────────────────────────────────────────────────────────
 
 export function insertMessage(

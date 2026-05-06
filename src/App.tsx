@@ -9,6 +9,7 @@ import ModelExplorer from './views/ModelExplorer';
 import StructureView from './views/StructureView';
 import SequenceView from './views/SequenceView';
 import BehaviorView from './views/BehaviorView';
+import StateView from './views/StateView';
 import JsonView from './views/JsonView';
 import InspectorPanel from './views/InspectorPanel';
 import ProjectBar from './views/ProjectBar';
@@ -29,7 +30,7 @@ import {
 } from './history';
 import './App.css';
 
-type ViewTab = 'structure' | 'sequence' | 'behavior' | 'json';
+type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'json';
 
 // ── Initial state derived from localStorage ──────────────────────────────────
 
@@ -43,6 +44,7 @@ export default function App() {
   const [tab, setTab]                     = useState<ViewTab>('structure');
   const [selectedOccurrence, setSelected] = useState('');
   const [selectedBehavior, setSelectedBehavior] = useState('');
+  const [selectedStateMachine, setSelectedStateMachine] = useState('');
   const [selection, setSelection]         = useState<SelectionState>(null);
 
   // ── Project state ──────────────────────────────────────────────────────────
@@ -83,6 +85,13 @@ export default function App() {
     [result],
   );
 
+  const stateMachineNames = useMemo(
+    () => result.nodes
+      .filter((n): n is Extract<SysMLNode, { kind: 'stateDef' }> => n.kind === 'stateDef')
+      .map(n => n.name),
+    [result],
+  );
+
   // ── Effects ────────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -100,6 +109,14 @@ export default function App() {
       return behaviorDefNames[0];
     });
   }, [behaviorDefNames]);
+
+  useEffect(() => {
+    setSelectedStateMachine(cur => {
+      if (stateMachineNames.length === 0)  return '';
+      if (stateMachineNames.includes(cur)) return cur;
+      return stateMachineNames[0];
+    });
+  }, [stateMachineNames]);
 
   // Auto-save every keystroke (crash recovery for untitled sessions)
   useEffect(() => { setAutosave(source); }, [source]);
@@ -406,9 +423,11 @@ export default function App() {
           result={result}
           selectedOccurrence={selectedOccurrence}
           selectedBehavior={selectedBehavior}
+          selectedStateMachine={selectedStateMachine}
           selection={selection}
           onSelectScenario={name => { setSelected(name); setTab('sequence'); }}
           onSelectBehavior={name => { setSelectedBehavior(name); setTab('behavior'); }}
+          onSelectStateMachine={name => { setSelectedStateMachine(name); setTab('state'); }}
           onSelect={setSelection}
           onNavigate={setTab}
         />
@@ -417,7 +436,7 @@ export default function App() {
         <div className="panel viz-panel">
           <div className="panel-header tabs">
             <div className="tab-group">
-              {(['structure', 'sequence', 'behavior', 'json'] as ViewTab[]).map(t => (
+              {(['structure', 'sequence', 'behavior', 'state', 'json'] as ViewTab[]).map(t => (
                 <button
                   key={t}
                   className={`tab-btn${tab === t ? ' active' : ''}`}
@@ -455,6 +474,20 @@ export default function App() {
                 </select>
               </div>
             )}
+            {tab === 'state' && stateMachineNames.length > 0 && (
+              <div className="occurrence-selector">
+                <label>State Machine</label>
+                <select
+                  value={selectedStateMachine}
+                  onChange={e => setSelectedStateMachine(e.target.value)}
+                  className="occurrence-select"
+                >
+                  {stateMachineNames.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
           <div className="view-area">
             <ErrorBoundary label="Structure view error">
@@ -477,6 +510,16 @@ export default function App() {
                 <BehaviorView
                   result={result}
                   behaviorName={selectedBehavior}
+                  selection={selection}
+                  onSelect={setSelection}
+                />
+              )}
+            </ErrorBoundary>
+            <ErrorBoundary label="State view error">
+              {tab === 'state' && (
+                <StateView
+                  result={result}
+                  stateMachineName={selectedStateMachine}
                   selection={selection}
                   onSelect={setSelection}
                 />

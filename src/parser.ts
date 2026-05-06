@@ -88,6 +88,69 @@ function validate(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
   }
 }
 
+// ── state machine validation ──────────────────────────────────────────────────
+
+function validateStateMachines(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
+  for (const node of nodes) {
+    if (node.kind !== 'stateDef') continue;
+
+    const seen       = new Set<string>();
+    const stateNames = new Set<string>();
+    let   hasInitial = false;
+
+    for (const child of node.body) {
+      if (child.kind === 'stateEntry') {
+        if (seen.has(child.name)) {
+          diagnostics.push({
+            line: child.line,
+            message: `Duplicate state "${child.name}" in "${node.name}"`,
+            severity: 'warning',
+          });
+        }
+        seen.add(child.name);
+        stateNames.add(child.name);
+      }
+    }
+
+    for (const child of node.body) {
+      if (child.kind !== 'transition') continue;
+      if (child.from === '') {
+        hasInitial = true;
+        if (!stateNames.has(child.to)) {
+          diagnostics.push({
+            line: child.line,
+            message: `Initial transition targets unknown state "${child.to}"`,
+            severity: 'warning',
+          });
+        }
+      } else {
+        if (stateNames.size > 0 && !stateNames.has(child.from)) {
+          diagnostics.push({
+            line: child.line,
+            message: `Transition from unknown state "${child.from}"`,
+            severity: 'warning',
+          });
+        }
+        if (stateNames.size > 0 && !stateNames.has(child.to)) {
+          diagnostics.push({
+            line: child.line,
+            message: `Transition to unknown state "${child.to}"`,
+            severity: 'warning',
+          });
+        }
+      }
+    }
+
+    if (stateNames.size > 0 && !hasInitial) {
+      diagnostics.push({
+        line: node.line,
+        message: `State machine "${node.name}" has no initial transition`,
+        severity: 'warning',
+      });
+    }
+  }
+}
+
 // ── behavior validation ───────────────────────────────────────────────────────
 
 function validateBehaviors(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
@@ -138,7 +201,7 @@ export function parse(source: string): ParseResult {
   const nodes: SysMLNode[] = [];
   const diagnostics: ParseDiagnostic[] = [];
 
-  type Frame = { kind: 'partDef' | 'occurrenceDef' | 'behaviorDef'; name: string; body: SysMLNode[]; startLine: number };
+  type Frame = { kind: 'partDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef'; name: string; body: SysMLNode[]; startLine: number };
   const stack: Frame[] = [];
 
   for (let i = 0; i < rawLines.length; i++) {
@@ -230,6 +293,30 @@ export function parse(source: string): ParseResult {
     m = line.match(/^flow\s+(\w+)\s*->\s*(\w+)/);
     if (m) { target.push({ kind: 'flow', from: m[1], to: m[2], line: lineNum }); continue; }
 
+    // state def Name {
+    m = line.match(/^state\s+def\s+(\w+)\s*\{/);
+    if (m) { stack.push({ kind: 'stateDef', name: m[1], body: [], startLine: lineNum }); continue; }
+
+    // state def Name;
+    m = line.match(/^state\s+def\s+(\w+)\s*;?\s*$/);
+    if (m) { target.push({ kind: 'stateDef', name: m[1], body: [], line: lineNum }); continue; }
+
+    // state Name;  (state entry inside state machine)
+    m = line.match(/^state\s+(\w+)\s*;?\s*$/);
+    if (m) { target.push({ kind: 'stateEntry', name: m[1], line: lineNum }); continue; }
+
+    // initial -> StateName;
+    m = line.match(/^initial\s*->\s*(\w+)/);
+    if (m) { target.push({ kind: 'transition', from: '', to: m[1], event: '', line: lineNum }); continue; }
+
+    // transition From -> To on Event;
+    m = line.match(/^transition\s+(\w+)\s*->\s*(\w+)\s+on\s+(\w+)/);
+    if (m) { target.push({ kind: 'transition', from: m[1], to: m[2], event: m[3], line: lineNum }); continue; }
+
+    // transition From -> To;  (no event)
+    m = line.match(/^transition\s+(\w+)\s*->\s*(\w+)/);
+    if (m) { target.push({ kind: 'transition', from: m[1], to: m[2], event: '', line: lineNum }); continue; }
+
     diagnostics.push({ line: lineNum, message: `Unrecognized statement: "${line}"`, severity: 'warning' });
   }
 
@@ -240,6 +327,7 @@ export function parse(source: string): ParseResult {
     nodes.push({ kind: frame.kind, name: frame.name, body: frame.body, line: frame.startLine } as SysMLNode);
   }
 
+  validateStateMachines(nodes, diagnostics);
   validateBehaviors(nodes, diagnostics);
   validate(nodes, diagnostics);
   return { nodes, diagnostics };
