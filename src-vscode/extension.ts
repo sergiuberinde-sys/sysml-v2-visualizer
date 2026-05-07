@@ -96,6 +96,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // ── Reveal source command ─────────────────────────────────────────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sysmlVisualizer.revealModelSource', async () => {
+      if (!currentSysmlUri) {
+        vscode.window.showWarningMessage('SysML Visualizer: no SysML file is currently tracked.');
+        return;
+      }
+      const doc    = await vscode.workspace.openTextDocument(currentSysmlUri);
+      const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One });
+      const pos    = new vscode.Position(0, 0);
+      editor.selection = new vscode.Selection(pos, pos);
+      editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
+      updateDiagnosticsForDocument(doc);
+      console.log(`[sysml-visualizer] revealModelSource — opened ${path.basename(doc.fileName)}`);
+    }),
+  );
+
   // ── Visualizer panel command ──────────────────────────────────────────────────
 
   const cmd = vscode.commands.registerCommand('sysmlVisualizer.openVisualizer', () => {
@@ -168,6 +186,18 @@ export function activate(context: vscode.ExtensionContext): void {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
       if (msg.type === 'ready') {
+        // Open and reveal the .sysml file in Column 1 so VS Code registers it as
+        // a visible editor — required for Problems-panel click navigation to work
+        // even when the webview panel currently holds focus (activeTextEditor = none).
+        if (currentSysmlUri) {
+          const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
+          await vscode.window.showTextDocument(doc, {
+            viewColumn: vscode.ViewColumn.One,
+            preserveFocus: true,
+          });
+          updateDiagnosticsForDocument(doc);
+          console.log(`[sysml-visualizer] revealed ${path.basename(doc.fileName)} in Column 1`);
+        }
         sendCurrentModelToWebview();
 
       } else if (msg.type === 'applyFullTextEdit') {
