@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { SelectionState, ParseResult, SysMLNode, PackageDefNode } from '../types';
+import type { SelectionState, ParseResult, SysMLNode, PackageDefNode, ParseDiagnostic } from '../types';
+import { elementLines } from '../model/validator';
 import ActionModal, { type FieldDef } from './ActionModal';
 import {
   insertInterface, insertPartDef, insertPort,
@@ -826,6 +827,25 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     }
   }
 
+  // ── Related diagnostics ─────────────────────────────────────────────────────
+
+  const relatedDiags: ParseDiagnostic[] = (() => {
+    if (!selection) return [];
+    const lines = elementLines(
+      selection.name,
+      selection.extra?.namespace,
+      result.nodes,
+      result.packages,
+    );
+    return result.diagnostics.filter(d => lines.has(d.line));
+  })();
+
+  // ── Health summary (shown when nothing selected) ────────────────────────────
+
+  const errCount  = result.diagnostics.filter(d => d.severity === 'error').length;
+  const warnCount = result.diagnostics.filter(d => d.severity === 'warning').length;
+  const infoCount = result.diagnostics.filter(d => d.severity === 'info').length;
+
   return (
     <div className="panel inspector-panel">
       <div className="panel-header">Inspector</div>
@@ -839,9 +859,41 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
             <div className="insp-name">{selection.name}</div>
           </div>
           {inspBody}
+          {relatedDiags.length > 0 && (
+            <div className="insp-section">
+              <div className="insp-section-label">Diagnostics ({relatedDiags.length})</div>
+              {relatedDiags.map((d, i) => (
+                <div key={i} className={`insp-diag-row insp-diag-${d.severity}`}>
+                  {d.code && <span className="insp-diag-code">{d.code}</span>}
+                  <span className="insp-diag-msg">{d.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       ) : (
-        <div className="insp-empty">Click any element to inspect it.</div>
+        <div className="insp-health">
+          <div className="insp-health-title">Model Health</div>
+          <div className="insp-health-grid">
+            <div className="insp-health-stat">
+              <span className="insp-health-num insp-health-num-elem">{result.nodes.length}</span>
+              <span className="insp-health-label">elements</span>
+            </div>
+            <div className="insp-health-stat">
+              <span className={`insp-health-num insp-health-num-err${errCount > 0 ? ' active' : ''}`}>{errCount}</span>
+              <span className="insp-health-label">errors</span>
+            </div>
+            <div className="insp-health-stat">
+              <span className={`insp-health-num insp-health-num-warn${warnCount > 0 ? ' active' : ''}`}>{warnCount}</span>
+              <span className="insp-health-label">warnings</span>
+            </div>
+            <div className="insp-health-stat">
+              <span className={`insp-health-num insp-health-num-info${infoCount > 0 ? ' active' : ''}`}>{infoCount}</span>
+              <span className="insp-health-label">info</span>
+            </div>
+          </div>
+          <div className="insp-health-hint">Click any element to inspect it.</div>
+        </div>
       )}
 
       {modals}
