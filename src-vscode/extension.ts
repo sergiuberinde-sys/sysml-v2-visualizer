@@ -16,7 +16,6 @@ export function activate(context: vscode.ExtensionContext): void {
       currentSysmlUri  = preLaunchSysml.document.uri;
       currentSysmlText = preLaunchSysml.document.getText();
       console.log(`[sysml-visualizer] captured initial sysml file: ${path.basename(preLaunchSysml.document.fileName)}`);
-      vscode.window.showInformationMessage(`SysML Visualizer: loaded ${preLaunchSysml.document.fileName}`);
     } else {
       console.log('[sysml-visualizer] no active .sysml editor at launch time');
     }
@@ -33,9 +32,6 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     panel.webview.html = getWebviewContent(panel.webview, context.extensionUri);
-
-    // Prevents echoing our own applyEdit back to the webview as an updateModel
-    let applyingEdit = false;
 
     const disposables: vscode.Disposable[] = [];
 
@@ -57,51 +53,23 @@ export function activate(context: vscode.ExtensionContext): void {
 
     panel.webview.onDidReceiveMessage(async (msg: {
       type: string;
-      text?: string;
       newText?: string;
-      textToAppend?: string;
     }) => {
-      // Visible + logged diagnostics for every message — remove once pipeline is verified
-      console.log('[sysml-visualizer] received webview message', JSON.stringify(msg));
-      vscode.window.showInformationMessage(`SysML Visualizer: webview message received — ${msg.type}`);
+      console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
       if (msg.type === 'ready') {
-        // Webview has mounted — send current model or empty state
         sendCurrentModelToWebview();
 
-      } else if (msg.type === 'testEdit') {
-        // ── Phase 1 diagnostic: append a comment to verify the edit pipeline ──
-        if (!currentSysmlUri) {
-          vscode.window.showErrorMessage('[sysml-visualizer] testEdit: no SysML file is loaded');
-          return;
-        }
-        const textToAppend = typeof msg.textToAppend === 'string'
-          ? msg.textToAppend
-          : '\n// Test edit from webview';
-        console.log(`[sysml-visualizer] testEdit — appending to ${path.basename(currentSysmlUri.fsPath)}`);
-        const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
-        const endPos = doc.positionAt(doc.getText().length);
-        const appendEdit = new vscode.WorkspaceEdit();
-        appendEdit.insert(currentSysmlUri, endPos, textToAppend);
-        applyingEdit = true;
-        const ok = await vscode.workspace.applyEdit(appendEdit);
-        applyingEdit = false;
-        vscode.window.showInformationMessage(`SysML Visualizer: testEdit applied — ${ok}`);
-        if (!ok) {
-          vscode.window.showErrorMessage('[sysml-visualizer] testEdit: WorkspaceEdit failed');
-          return;
-        }
-        currentSysmlText = (await vscode.workspace.openTextDocument(currentSysmlUri)).getText();
-        console.log('[sysml-visualizer] testEdit succeeded');
-
       } else if (msg.type === 'applyEdit') {
-        // ── Phase 2: replace full document with new text from a UI action ──
+        // User performed a UI action (add part, add message, etc.).
+        // Replace the full document with the new text.  onDidChangeTextDocument
+        // will pick up the change and send updateModel to the webview.
         if (!currentSysmlUri) {
-          vscode.window.showErrorMessage('[sysml-visualizer] applyEdit: no SysML file is loaded');
+          vscode.window.showErrorMessage('SysML Visualizer: no SysML file is loaded');
           return;
         }
         if (typeof msg.newText !== 'string' || msg.newText === '') {
-          vscode.window.showErrorMessage('[sysml-visualizer] applyEdit: newText is missing or empty');
+          vscode.window.showErrorMessage('SysML Visualizer: applyEdit received empty text');
           return;
         }
         console.log(`[sysml-visualizer] applyEdit — replacing ${path.basename(currentSysmlUri.fsPath)}`);
@@ -110,33 +78,23 @@ export function activate(context: vscode.ExtensionContext): void {
           doc.positionAt(0),
           doc.positionAt(doc.getText().length),
         );
-        const replaceEdit = new vscode.WorkspaceEdit();
-        replaceEdit.replace(currentSysmlUri, fullRange, msg.newText);
-        applyingEdit = true;
-        const ok = await vscode.workspace.applyEdit(replaceEdit);
-        applyingEdit = false;
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(currentSysmlUri, fullRange, msg.newText);
+        const ok = await vscode.workspace.applyEdit(edit);
         if (!ok) {
-          vscode.window.showErrorMessage('[sysml-visualizer] applyEdit: WorkspaceEdit failed');
+          vscode.window.showErrorMessage('SysML Visualizer: failed to apply edit to document');
           return;
         }
         currentSysmlText = msg.newText;
-        // Send updateModel so the webview re-renders from the saved text.
-        // onDidChangeTextDocument is suppressed via the applyingEdit flag for sync events.
-        panel.webview.postMessage({ type: 'updateModel', text: msg.newText });
-        console.log('[sysml-visualizer] applyEdit succeeded');
+        console.log('[sysml-visualizer] applyEdit succeeded — waiting for onDidChangeTextDocument');
       }
     }, undefined, disposables);
 
     // ── VS Code document changes → webview ───────────────────────────────────
+    // Handles both direct user edits in VS Code AND changes applied via applyEdit.
+    // The echo-loop is prevented on the React side via fromExtension.current.
 
     vscode.workspace.onDidChangeTextDocument(e => {
-      if (applyingEdit) {
-        // This change was caused by our own applyEdit.  Suppress the echo — the
-        // applyEdit handler already sent updateModel explicitly.
-        applyingEdit = false;
-        return;
-      }
-      // Only forward changes for the document we are currently tracking
       if (currentSysmlUri && e.document.uri.toString() === currentSysmlUri.toString()) {
         currentSysmlText = e.document.getText();
         console.log('[sysml-visualizer] document changed — sending updateModel to webview');
@@ -159,16 +117,14 @@ export function activate(context: vscode.ExtensionContext): void {
         currentSysmlUri  = editor.document.uri;
         currentSysmlText = editor.document.getText();
         console.log(`[sysml-visualizer] loading sysml file: ${path.basename(editor.document.fileName)}`);
-        vscode.window.showInformationMessage(`SysML Visualizer: loaded ${editor.document.fileName}`);
         panel.webview.postMessage({
           type: 'loadModel',
           text: currentSysmlText,
           fileName: path.basename(editor.document.fileName),
         });
       } else {
-        // Switched to a non-sysml file (e.g. JSON, Markdown) — do NOT clear the
-        // visualizer; the user may want to cross-reference the sysml model.
-        console.log(`[sysml-visualizer] non-sysml editor active (${path.basename(editor.document.fileName)}) — keeping current model`);
+        // Switched to a non-sysml file — keep showing the last sysml model
+        console.log(`[sysml-visualizer] non-sysml editor active — keeping current model`);
       }
     }, undefined, disposables);
 
