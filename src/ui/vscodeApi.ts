@@ -17,3 +17,10 @@ export function getVsCodeApi(): VsCodeApi | null {
   }
   return _api;
 }
+
+// Detect app mode by checking for the VS Code webview injection.
+// Called once at module load time; result is stable for the page lifetime.
+export function getAppMode(): 'standalone' | 'vscode' {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return typeof (window as any).acquireVsCodeApi === 'function' ? 'vscode' : 'standalone';
+}

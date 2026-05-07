@@ -31,7 +31,7 @@ import {
   makeSnapshot, MAX_HISTORY, HISTORY_DEBOUNCE_MS,
   type HistorySnapshot,
 } from './app/history';
-import { getVsCodeApi } from './ui/vscodeApi';
+import { getVsCodeApi, getAppMode } from './ui/vscodeApi';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
@@ -45,6 +45,10 @@ const TAB_LABELS: Record<ViewTab, string> = {
   traceability: 'Trace',
   json:         'JSON',
 };
+
+// ── App mode — detected once at module load, stable for the page lifetime ────
+
+const APP_MODE = getAppMode();
 
 // ── Initial state derived from localStorage ──────────────────────────────────
 
@@ -223,7 +227,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const inEditor = !!(editorRef.current?.hasTextFocus());
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's' && APP_MODE === 'standalone') {
         e.preventDefault();
         saveRef.current();
       }
@@ -399,21 +403,23 @@ export default function App() {
   return (
     <div className="app-root">
 
-      {/* ── Project bar ───────────────────────────── */}
-      <ProjectBar
-        projectName={activeProject?.name ?? null}
-        isUnsaved={isUnsaved}
-        canRevert={isUnsaved && activeProject !== null}
-        onSave={handleSave}
-        onNew={handleNew}
-        onLoad={handleLoad}
-        onExport={handleExport}
-        onImport={handleImport}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onHistory={() => setShowHistoryModal(true)}
-        onRevert={handleRevert}
-      />
+      {/* ── Project bar (standalone only) ─────────── */}
+      {APP_MODE === 'standalone' && (
+        <ProjectBar
+          projectName={activeProject?.name ?? null}
+          isUnsaved={isUnsaved}
+          canRevert={isUnsaved && activeProject !== null}
+          onSave={handleSave}
+          onNew={handleNew}
+          onLoad={handleLoad}
+          onExport={handleExport}
+          onImport={handleImport}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onHistory={() => setShowHistoryModal(true)}
+          onRevert={handleRevert}
+        />
+      )}
 
       {/* ── VS Code "no file" overlay ────────────── */}
       {noFileOpen && (
@@ -426,86 +432,142 @@ export default function App() {
       {/* ── 4-column workspace ────────────────────── */}
       <div className="app-layout">
 
-        {/* Column 1: Editor */}
-        <div className="panel editor-panel">
-          <div className="panel-header">
-            <span>SysML v2 Source</span>
+        {/* Column 1: Editor (standalone) or Problems panel (VS Code) */}
+        {APP_MODE === 'standalone' ? (
+          <div className="panel editor-panel">
+            <div className="panel-header">
+              <span>SysML v2 Source</span>
+              {result.diagnostics.length > 0 && (
+                <span className="diag-badge">
+                  {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
+                  {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+                  {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
+                </span>
+              )}
+            </div>
+
+            <div className="editor-wrap">
+              <Editor
+                height="100%"
+                language="sysml"
+                value={source}
+                onChange={v => setSource(v ?? '')}
+                theme="sysml-dark"
+                beforeMount={handleBeforeMount}
+                onMount={handleEditorMount}
+                options={{
+                  minimap:              { enabled: false },
+                  fontSize:             13.5,
+                  lineNumbers:          'on',
+                  wordWrap:             'on',
+                  scrollBeyondLastLine: false,
+                  renderLineHighlight:  'line',
+                  glyphMargin:          true,
+                  overviewRulerBorder:  false,
+                  folding:              true,
+                  padding:              { top: 8 },
+                }}
+              />
+            </div>
+
             {result.diagnostics.length > 0 && (
-              <span className="diag-badge">
-                {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
-                {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
-                {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
-              </span>
+              <div className="diagnostics-panel">
+                <div className="diag-panel-hdr">
+                  <span>Problems</span>
+                  <div className="diag-filter-bar">
+                    {(['all', 'error', 'warning', 'info'] as const).map(f => {
+                      const cnt = f === 'all' ? result.diagnostics.length
+                        : f === 'error'   ? errCount
+                        : f === 'warning' ? warnCount
+                        : infoCount;
+                      return (
+                        <button
+                          key={f}
+                          className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
+                          onClick={() => setDiagFilter(f)}
+                        >
+                          {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                          <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                {result.diagnostics
+                  .filter(d => diagFilter === 'all' || d.severity === diagFilter)
+                  .map((d, i) => (
+                    <div
+                      key={i}
+                      className={`diag-row diag-${d.severity}`}
+                      onClick={() => jumpToLine(d.line)}
+                      title={`Line ${d.line}: ${d.message}`}
+                    >
+                      <span className="diag-sev-icon">
+                        {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                      </span>
+                      <span className="diag-loc">L{d.line}</span>
+                      {d.code && <span className="diag-code">{d.code}</span>}
+                      <span className="diag-msg">{d.message}</span>
+                    </div>
+                  ))}
+              </div>
             )}
           </div>
-
-          <div className="editor-wrap">
-            <Editor
-              height="100%"
-              language="sysml"
-              value={source}
-              onChange={v => setSource(v ?? '')}
-              theme="sysml-dark"
-              beforeMount={handleBeforeMount}
-              onMount={handleEditorMount}
-              options={{
-                minimap:              { enabled: false },
-                fontSize:             13.5,
-                lineNumbers:          'on',
-                wordWrap:             'on',
-                scrollBeyondLastLine: false,
-                renderLineHighlight:  'line',
-                glyphMargin:          true,
-                overviewRulerBorder:  false,
-                folding:              true,
-                padding:              { top: 8 },
-              }}
-            />
-          </div>
-
-          {result.diagnostics.length > 0 && (
-            <div className="diagnostics-panel">
-              <div className="diag-panel-hdr">
-                <span>Problems</span>
-                <div className="diag-filter-bar">
-                  {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                    const cnt = f === 'all' ? result.diagnostics.length
-                      : f === 'error'   ? errCount
-                      : f === 'warning' ? warnCount
-                      : infoCount;
-                    return (
-                      <button
-                        key={f}
-                        className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
-                        onClick={() => setDiagFilter(f)}
-                      >
-                        {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                        <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              {result.diagnostics
-                .filter(d => diagFilter === 'all' || d.severity === diagFilter)
-                .map((d, i) => (
-                  <div
-                    key={i}
-                    className={`diag-row diag-${d.severity}`}
-                    onClick={() => jumpToLine(d.line)}
-                    title={`Line ${d.line}: ${d.message}`}
-                  >
-                    <span className="diag-sev-icon">
-                      {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
-                    </span>
-                    <span className="diag-loc">L{d.line}</span>
-                    {d.code && <span className="diag-code">{d.code}</span>}
-                    <span className="diag-msg">{d.message}</span>
-                  </div>
-                ))}
+        ) : (
+          /* VS Code mode: diagnostics-only panel */
+          <div className="panel editor-panel">
+            <div className="panel-header">
+              <span>Problems</span>
+              {result.diagnostics.length > 0 && (
+                <span className="diag-badge">
+                  {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
+                  {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+                  {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
+                </span>
+              )}
             </div>
-          )}
-        </div>
+            <div className="diag-filter-bar diag-filter-bar-top">
+              {(['all', 'error', 'warning', 'info'] as const).map(f => {
+                const cnt = f === 'all' ? result.diagnostics.length
+                  : f === 'error'   ? errCount
+                  : f === 'warning' ? warnCount
+                  : infoCount;
+                return (
+                  <button
+                    key={f}
+                    className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
+                    onClick={() => setDiagFilter(f)}
+                  >
+                    {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                    <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {result.diagnostics.length > 0 ? (
+              <div className="diagnostics-panel diagnostics-panel-fill">
+                {result.diagnostics
+                  .filter(d => diagFilter === 'all' || d.severity === diagFilter)
+                  .map((d, i) => (
+                    <div
+                      key={i}
+                      className={`diag-row diag-${d.severity}`}
+                      title={`Line ${d.line}: ${d.message}`}
+                    >
+                      <span className="diag-sev-icon">
+                        {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                      </span>
+                      <span className="diag-loc">L{d.line}</span>
+                      {d.code && <span className="diag-code">{d.code}</span>}
+                      <span className="diag-msg">{d.message}</span>
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div className="no-diags-hint">No problems detected.</div>
+            )}
+          </div>
+        )}
 
         {/* Column 2: Model Explorer */}
         <ModelExplorer
@@ -640,9 +702,9 @@ export default function App() {
 
       </div>
 
-      {/* ── Modals ────────────────────────────────── */}
+      {/* ── Modals (standalone only) ─────────────── */}
 
-      {showLoadModal && (
+      {APP_MODE === 'standalone' && showLoadModal && (
         <ProjectModal
           projects={projects}
           activeProjectId={activeProject?.id ?? null}
@@ -652,7 +714,7 @@ export default function App() {
         />
       )}
 
-      {newModalMode !== null && (
+      {APP_MODE === 'standalone' && newModalMode !== null && (
         <ActionModal
           title={newModalMode === 'new' ? 'New Project' : 'Save As'}
           submitLabel={newModalMode === 'new' ? 'Create' : 'Save'}
@@ -667,7 +729,7 @@ export default function App() {
         />
       )}
 
-      {showHistoryModal && (
+      {APP_MODE === 'standalone' && showHistoryModal && (
         <HistoryModal
           history={history}
           onRestore={handleHistoryRestore}

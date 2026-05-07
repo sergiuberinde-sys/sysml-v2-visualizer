@@ -1063,7 +1063,7 @@ html, body, #root {
 
 .no-file-overlay {
   position: absolute;
-  inset: 40px 0 0 0; /* sit below the project bar */
+  inset: 0; /* VS Code mode has no project bar, so cover the full root */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1080,4 +1080,29 @@ html, body, #root {
   margin: 0;
   font-size: 15px;
   color: #585b70;
+}
+
+/* ── VS Code mode: diagnostics-only column ───────────── */
+
+/* Filter bar flush at top of the panel (no Monaco above it) */
+.diag-filter-bar-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #313244;
+}
+
+/* Diagnostics list expands to fill remaining column height */
+.diagnostics-panel-fill {
+  flex: 1;
+  overflow-y: auto;
+}
+
+/* Empty-state hint when there are no diagnostics */
+.no-diags-hint {
+  padding: 24px 14px;
+  font-size: 12px;
+  color: #45475a;
+  text-align: center;
 }
