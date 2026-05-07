@@ -52,39 +52,73 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ── Webview → extension messages ─────────────────────────────────────────
 
-    panel.webview.onDidReceiveMessage(async (msg: { type: string; text?: string; newText?: string }) => {
+    panel.webview.onDidReceiveMessage(async (msg: {
+      type: string;
+      text?: string;
+      newText?: string;
+      textToAppend?: string;
+    }) => {
+      // Log every incoming message for diagnostics
+      console.log('[sysml-visualizer] received webview message', JSON.stringify(msg));
+
       if (msg.type === 'ready') {
         // Webview has mounted — send current model or empty state
-        console.log('[sysml-visualizer] webview ready — sending current model state');
         sendCurrentModelToWebview();
 
-      } else if (msg.type === 'applyEdit' && typeof msg.newText === 'string') {
-        // User performed a UI action (add part, add message, etc.) — write the new text to the
-        // tracked document.  The webview does not update its state locally; it waits for the
-        // updateModel echo that we send after a successful apply.
+      } else if (msg.type === 'testEdit') {
+        // ── Phase 1 diagnostic: append a comment to verify the edit pipeline ──
         if (!currentSysmlUri) {
-          console.log('[sysml-visualizer] applyEdit received but no sysml file tracked — ignoring');
+          vscode.window.showErrorMessage('[sysml-visualizer] testEdit: no SysML file is loaded');
           return;
         }
-        console.log('[sysml-visualizer] received applyEdit — applying to tracked document');
+        const textToAppend = typeof msg.textToAppend === 'string'
+          ? msg.textToAppend
+          : '\n// Test edit from webview';
+        console.log(`[sysml-visualizer] testEdit — appending to ${path.basename(currentSysmlUri.fsPath)}`);
+        const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
+        const endPos = doc.positionAt(doc.getText().length);
+        const appendEdit = new vscode.WorkspaceEdit();
+        appendEdit.insert(currentSysmlUri, endPos, textToAppend);
+        applyingEdit = true;
+        const ok = await vscode.workspace.applyEdit(appendEdit);
+        applyingEdit = false;
+        if (!ok) {
+          vscode.window.showErrorMessage('[sysml-visualizer] testEdit: WorkspaceEdit failed');
+          return;
+        }
+        currentSysmlText = (await vscode.workspace.openTextDocument(currentSysmlUri)).getText();
+        console.log('[sysml-visualizer] testEdit succeeded');
+
+      } else if (msg.type === 'applyEdit') {
+        // ── Phase 2: replace full document with new text from a UI action ──
+        if (!currentSysmlUri) {
+          vscode.window.showErrorMessage('[sysml-visualizer] applyEdit: no SysML file is loaded');
+          return;
+        }
+        if (typeof msg.newText !== 'string' || msg.newText === '') {
+          vscode.window.showErrorMessage('[sysml-visualizer] applyEdit: newText is missing or empty');
+          return;
+        }
+        console.log(`[sysml-visualizer] applyEdit — replacing ${path.basename(currentSysmlUri.fsPath)}`);
         const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
         const fullRange = new vscode.Range(
           doc.positionAt(0),
           doc.positionAt(doc.getText().length),
         );
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(currentSysmlUri, fullRange, msg.newText);
+        const replaceEdit = new vscode.WorkspaceEdit();
+        replaceEdit.replace(currentSysmlUri, fullRange, msg.newText);
         applyingEdit = true;
-        const ok = await vscode.workspace.applyEdit(edit);
+        const ok = await vscode.workspace.applyEdit(replaceEdit);
         applyingEdit = false;
         if (!ok) {
-          console.log('[sysml-visualizer] applyEdit failed — document unchanged');
+          vscode.window.showErrorMessage('[sysml-visualizer] applyEdit: WorkspaceEdit failed');
           return;
         }
         currentSysmlText = msg.newText;
-        // Send updateModel so the webview re-renders from the now-saved text.
-        // onDidChangeTextDocument is suppressed via applyingEdit for synchronous events.
+        // Send updateModel so the webview re-renders from the saved text.
+        // onDidChangeTextDocument is suppressed via the applyingEdit flag for sync events.
         panel.webview.postMessage({ type: 'updateModel', text: msg.newText });
+        console.log('[sysml-visualizer] applyEdit succeeded');
       }
     }, undefined, disposables);
 
