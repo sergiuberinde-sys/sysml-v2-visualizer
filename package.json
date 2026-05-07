@@ -19,6 +19,10 @@
       {
         "command": "sysmlVisualizer.debugDiagnostics",
         "title": "SysML: Debug Diagnostics"
+      },
+      {
+        "command": "sysmlVisualizer.revealModelSource",
+        "title": "SysML: Reveal Current Model Source"
       }
     ]
   },
