@@ -737,7 +737,16 @@ export default function App() {
             selection={selection}
             result={result}
             source={source}
-            onSourceChange={setSource}
+            onSourceChange={
+              APP_MODE === 'vscode'
+                ? (newText: string) => {
+                    // In VS Code mode, route edits through the extension so the
+                    // actual .sysml file is updated.  The webview does not update
+                    // local state; it waits for the extension's updateModel echo.
+                    getVsCodeApi()?.postMessage({ type: 'applyEdit', newText });
+                  }
+                : setSource
+            }
             onCollapse={() => setInspectorOpen(false)}
           />
         ) : (
