@@ -9,8 +9,9 @@ export function activate(context: vscode.ExtensionContext): void {
   let currentSysmlUri: vscode.Uri | undefined;
   let currentSysmlText: string | undefined;
 
-  // Publishes parser diagnostics to VS Code's native Problems panel.
+  // Diagnostic state
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
+  const lastDiagnosticsByUri  = new Map<string, vscode.Diagnostic[]>();
   context.subscriptions.push(diagnosticCollection);
 
   // ── Diagnostic helpers ────────────────────────────────────────────────────────
@@ -23,49 +24,73 @@ export function activate(context: vscode.ExtensionContext): void {
     const lineIndex = Math.min(Math.max((line ?? 1) - 1, 0), document.lineCount - 1);
     const textLine  = document.lineAt(lineIndex);
     const startCol  = Math.min(Math.max((column ?? 1) - 1, 0), textLine.text.length);
-    const endCol    = Math.min(Math.max(startCol + 1, textLine.text.length), textLine.text.length);
+    // Cover the full line for non-empty lines; zero-width cursor for empty lines.
+    const endCol    = textLine.text.length > 0 ? Math.max(startCol + 1, textLine.text.length) : 0;
     return new vscode.Range(lineIndex, startCol, lineIndex, endCol);
   }
 
-  function updateDiagnosticsForDocument(document: vscode.TextDocument): void {
-    if (!document.fileName.endsWith('.sysml')) return;
-    const result = parseAndValidate(document.getText());
-    const vscodeDiags = result.diagnostics.map(d => {
-      const range    = toVsCodeRange(document, d.line);
-      const severity =
-        d.severity === 'error'   ? vscode.DiagnosticSeverity.Error   :
-        d.severity === 'warning' ? vscode.DiagnosticSeverity.Warning :
-                                   vscode.DiagnosticSeverity.Information;
-      const diag = new vscode.Diagnostic(range, d.message, severity);
-      diag.source = 'SysML v2 Visualizer';
-      if (d.code) diag.code = d.code;
+  function mapSeverity(d: { severity: string }): vscode.DiagnosticSeverity {
+    return d.severity === 'error'   ? vscode.DiagnosticSeverity.Error   :
+           d.severity === 'warning' ? vscode.DiagnosticSeverity.Warning :
+                                      vscode.DiagnosticSeverity.Information;
+  }
+
+  // Opens the document (without showing it in an editor) so VS Code registers
+  // its URI, then parses and publishes diagnostics.  Async because openTextDocument
+  // is async; does NOT call showTextDocument — that would fight the webview for focus.
+  async function publishDiagnosticsForUri(uri: vscode.Uri): Promise<void> {
+    const document    = await vscode.workspace.openTextDocument(uri);
+    const result      = parseAndValidate(document.getText());
+    const diagnostics = result.diagnostics.map(d => {
+      const range = toVsCodeRange(document, d.line);
+      const vd    = new vscode.Diagnostic(range, d.message, mapSeverity(d));
+      vd.source   = 'SysML v2 Visualizer';
+      vd.code     = d.code;
       console.log(
         `[sysml-visualizer] diag ${d.code} L${d.line}` +
-        ` → range [${range.start.line},${range.start.character}]-[${range.end.line},${range.end.character}]`,
+        ` → [${range.start.line},${range.start.character}]-[${range.end.line},${range.end.character}]`,
       );
-      return diag;
+      return vd;
     });
-    diagnosticCollection.set(document.uri, vscodeDiags);
-    console.log(
-      `[sysml-visualizer] published ${vscodeDiags.length} diagnostics` +
-      ` for ${path.basename(document.fileName)}`,
-    );
+    diagnosticCollection.set(uri, diagnostics);
+    lastDiagnosticsByUri.set(uri.toString(), diagnostics);
+    console.log(`[sysml-visualizer] published ${diagnostics.length} diagnostics for ${path.basename(document.fileName)}`);
   }
 
   // ── Activation-level listeners ────────────────────────────────────────────────
-  // These fire regardless of whether the visualizer panel is open.
+  // These run regardless of whether the visualizer panel is open.
 
   // Diagnose any .sysml files already open when the extension activates.
   for (const doc of vscode.workspace.textDocuments) {
-    updateDiagnosticsForDocument(doc);
+    if (doc.fileName.endsWith('.sysml')) {
+      publishDiagnosticsForUri(doc.uri).catch(console.error);
+    }
   }
 
   context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument(updateDiagnosticsForDocument),
-    vscode.workspace.onDidChangeTextDocument(e => updateDiagnosticsForDocument(e.document)),
+    // Any newly opened .sysml file gets diagnosed immediately.
+    vscode.workspace.onDidOpenTextDocument(doc => {
+      if (doc.fileName.endsWith('.sysml')) {
+        publishDiagnosticsForUri(doc.uri).catch(console.error);
+      }
+    }),
+
+    // Re-publish diagnostics when the tracked .sysml file changes.
+    vscode.workspace.onDidChangeTextDocument(e => {
+      if (
+        e.document.fileName.endsWith('.sysml') &&
+        currentSysmlUri &&
+        e.document.uri.toString() === currentSysmlUri.toString()
+      ) {
+        publishDiagnosticsForUri(e.document.uri).catch(console.error);
+      }
+    }),
+
+    // Clear diagnostics when a .sysml file is closed.
     vscode.workspace.onDidCloseTextDocument(doc => {
       if (doc.fileName.endsWith('.sysml')) {
         diagnosticCollection.delete(doc.uri);
+        lastDiagnosticsByUri.delete(doc.uri.toString());
         console.log(`[sysml-visualizer] ${path.basename(doc.fileName)} closed — cleared diagnostics`);
       }
     }),
@@ -75,20 +100,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('sysmlVisualizer.debugDiagnostics', () => {
-      const editor     = vscode.window.activeTextEditor;
-      const activeUri  = editor?.document.uri.toString() ?? '(none)';
       const trackedUri = currentSysmlUri?.toString() ?? '(none)';
-      const diags      = currentSysmlUri ? (diagnosticCollection.get(currentSysmlUri) ?? []) : [];
-      const first      = diags[0];
+      const diags      = currentSysmlUri
+        ? (lastDiagnosticsByUri.get(currentSysmlUri.toString()) ?? [])
+        : [];
+      const first = diags[0];
 
       const lines = [
-        `Active document URI : ${activeUri}`,
-        `currentSysmlUri     : ${trackedUri}`,
-        `Diagnostic count    : ${diags.length}`,
-        `First range         : ${first
+        `currentSysmlUri  : ${trackedUri}`,
+        `Diagnostic count : ${diags.length}`,
+        `First range      : ${first
           ? `[${first.range.start.line},${first.range.start.character}]-[${first.range.end.line},${first.range.end.character}]`
           : '(none)'}`,
-        `First message       : ${first?.message ?? '(none)'}`,
+        `First message    : ${first?.message ?? '(none)'}`,
       ];
       const info = lines.join('\n');
       vscode.window.showInformationMessage(info);
@@ -109,7 +133,6 @@ export function activate(context: vscode.ExtensionContext): void {
       const pos    = new vscode.Position(0, 0);
       editor.selection = new vscode.Selection(pos, pos);
       editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
-      updateDiagnosticsForDocument(doc);
       console.log(`[sysml-visualizer] revealModelSource — opened ${path.basename(doc.fileName)}`);
     }),
   );
@@ -186,17 +209,10 @@ export function activate(context: vscode.ExtensionContext): void {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
       if (msg.type === 'ready') {
-        // Open and reveal the .sysml file in Column 1 so VS Code registers it as
-        // a visible editor — required for Problems-panel click navigation to work
-        // even when the webview panel currently holds focus (activeTextEditor = none).
+        // Publish diagnostics for the tracked file (openTextDocument only — no showTextDocument,
+        // which would fight the webview panel for editor focus).
         if (currentSysmlUri) {
-          const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
-          await vscode.window.showTextDocument(doc, {
-            viewColumn: vscode.ViewColumn.One,
-            preserveFocus: true,
-          });
-          updateDiagnosticsForDocument(doc);
-          console.log(`[sysml-visualizer] revealed ${path.basename(doc.fileName)} in Column 1`);
+          publishDiagnosticsForUri(currentSysmlUri).catch(console.error);
         }
         sendCurrentModelToWebview();
 
@@ -223,7 +239,8 @@ export function activate(context: vscode.ExtensionContext): void {
           return;
         }
         currentSysmlText = msg.newText;
-        console.log('[sysml-visualizer] applyFullTextEdit succeeded — waiting for onDidChangeTextDocument');
+        // onDidChangeTextDocument fires from applyEdit and triggers publishDiagnosticsForUri.
+        console.log('[sysml-visualizer] applyFullTextEdit succeeded');
 
       } else if (msg.type === 'applyIncrementalEdit') {
         if (!currentSysmlUri || !msg.edit) {
@@ -253,6 +270,7 @@ export function activate(context: vscode.ExtensionContext): void {
           vscode.window.showErrorMessage('SysML Visualizer: failed to apply incremental edit');
           return;
         }
+        // onDidChangeTextDocument fires from applyEdit and triggers publishDiagnosticsForUri.
         console.log(`[sysml-visualizer] applyIncrementalEdit (${ie.kind}) succeeded`);
 
       } else if (msg.type === 'revealSource') {
@@ -312,6 +330,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (editor === undefined) {
         // The webview panel (or another non-editor widget) gained focus.
         // This is not a real file switch — keep showing the current model.
+        // Do NOT clear diagnostics here.
         console.log('[sysml-visualizer] active editor undefined (webview focused?) — keeping current model');
         return;
       }
@@ -321,6 +340,7 @@ export function activate(context: vscode.ExtensionContext): void {
         currentSysmlUri  = editor.document.uri;
         currentSysmlText = editor.document.getText();
         console.log(`[sysml-visualizer] loading sysml file: ${path.basename(editor.document.fileName)}`);
+        publishDiagnosticsForUri(currentSysmlUri).catch(console.error);
         panel.webview.postMessage({
           type: 'loadModel',
           text: currentSysmlText,
