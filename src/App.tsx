@@ -196,7 +196,7 @@ export default function App() {
                 : d.severity === 'warning' ? monaco.MarkerSeverity.Warning
                 : monaco.MarkerSeverity.Info,
         startLineNumber: d.line,
-        startColumn: 1,
+        startColumn: d.column ?? 1,
         endLineNumber: d.line,
         endColumn: d.line <= model.getLineCount()
           ? model.getLineMaxColumn(d.line) : 999,

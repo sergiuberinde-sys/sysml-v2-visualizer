@@ -125,7 +125,13 @@ export function parse(source: string): ParseResult {
     m = line.match(/^message\s+(\w+)\s+from\s+(\w+)\s+to\s+(\w+)/);
     if (m) {
       const occurrence = stack.length > 0 ? stack[stack.length - 1].name : '';
-      target.push({ kind: 'message', name: m[1], from: m[2], to: m[3], occurrence, line: lineNum });
+      const rawLine = rawLines[i];
+      const indent  = rawLine.length - rawLine.trimStart().length;
+      const fromPfx = /^message\s+\w+\s+from\s+/.exec(line);
+      const toPfx   = /^message\s+\w+\s+from\s+\w+\s+to\s+/.exec(line);
+      const fromColumn = fromPfx ? indent + fromPfx[0].length + 1 : undefined;
+      const toColumn   = toPfx   ? indent + toPfx[0].length   + 1 : undefined;
+      target.push({ kind: 'message', name: m[1], from: m[2], to: m[3], occurrence, fromColumn, toColumn, line: lineNum });
       continue;
     }
 

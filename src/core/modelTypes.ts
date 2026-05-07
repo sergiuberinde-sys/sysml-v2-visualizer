@@ -1,5 +1,6 @@
 export interface ParseDiagnostic {
   line: number;
+  column?: number;
   message: string;
   severity: 'error' | 'warning' | 'info';
   code?: string;
@@ -19,7 +20,7 @@ export type SysMLNode =
   | { kind: 'port';           name: string; direction: 'in' | 'out'; portType: string;                                             line: number }
   | { kind: 'partAlias';      name: string; type: string;                                                                           line: number }
   | { kind: 'connection';     fromPart: string; fromPort: string; toPart: string; toPort: string;                                   line: number }
-  | { kind: 'message';        name: string; from: string; to: string; occurrence: string;                                           line: number }
+  | { kind: 'message';        name: string; from: string; to: string; occurrence: string; fromColumn?: number; toColumn?: number;  line: number }
   | { kind: 'actionDef';      name: string; namespace: string;                                                                      line: number }
   | { kind: 'behaviorDef';    name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'actionInst';     name: string; actionType: string;                                                                     line: number }

@@ -11,8 +11,11 @@ function diag(
   severity: ParseDiagnostic['severity'],
   code: string,
   message: string,
+  column?: number,
 ): ParseDiagnostic {
-  return { line, severity, code, message };
+  const d: ParseDiagnostic = { line, severity, code, message };
+  if (column !== undefined) d.column = column;
+  return d;
 }
 
 // ── Type aliases ──────────────────────────────────────────────────────────────
@@ -217,13 +220,32 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
   }
 
   // ── 3. Occurrence def — participants / duplicate messages ─────────────────
+  //
+  // Debug/test case for UNKNOWN_PARTICIPANT validation:
+  //
+  //   part def Driver;
+  //   part def BrakePedal;
+  //
+  //   occurrence def Test {
+  //     part driver : Driver;
+  //     part pedal  : BrakePedal;
+  //
+  //     message pedalPressed from Driver to BrakePsssedal;
+  //   }
+  //
+  //   Expected diagnostics:
+  //   - UNKNOWN_PARTICIPANT for "Driver"    (type name, not alias; alias is "driver")
+  //   - UNKNOWN_PARTICIPANT for "BrakePsssedal" (neither alias nor known type)
 
   for (const node of nodes) {
     if (node.kind !== 'occurrenceDef') continue;
     const occ = node as OccNode;
 
-    const participants = new Set<string>(
-      occ.body.filter((b): b is AliasNode => b.kind === 'partAlias').map(a => a.name),
+    // Map alias name → type for participant lookup.
+    const participants = new Map<string, string>(
+      occ.body
+        .filter((b): b is AliasNode => b.kind === 'partAlias')
+        .map(a => [a.name, a.type]),
     );
 
     const seenMsgNames = new Set<string>();
@@ -240,15 +262,28 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
         seenMsgNames.add(msg.name);
       }
 
-      if (participants.size > 0) {
-        if (!participants.has(msg.from)) {
-          diagnostics.push(diag(msg.line, 'error', 'UNKNOWN_PART',
-            `Message "from" participant "${msg.from}" not declared in "${occ.name}"`,
+      // Every message endpoint must resolve to a declared participant alias.
+      // No guard on participants.size — even an empty occurrence has no valid aliases.
+      for (const [endpoint, col] of [[msg.from, msg.fromColumn], [msg.to, msg.toColumn]] as [string, number | undefined][]) {
+        if (participants.has(endpoint)) continue;
+
+        // Check whether the endpoint looks like a type name (not an alias).
+        if (partDefMap.has(endpoint)) {
+          // Find an alias in this occurrence that uses the given type.
+          const alias = occ.body
+            .filter((b): b is AliasNode => b.kind === 'partAlias')
+            .find(a => a.type === endpoint);
+          const hint = alias
+            ? ` Use participant alias "${alias.name}" instead.`
+            : '';
+          diagnostics.push(diag(msg.line, 'error', 'UNKNOWN_PARTICIPANT',
+            `Message endpoint "${endpoint}" looks like a part type, not a participant alias.${hint} Message endpoints must use participant aliases declared inside the occurrence.`,
+            col,
           ));
-        }
-        if (!participants.has(msg.to)) {
-          diagnostics.push(diag(msg.line, 'error', 'UNKNOWN_PART',
-            `Message "to" participant "${msg.to}" not declared in "${occ.name}"`,
+        } else {
+          diagnostics.push(diag(msg.line, 'error', 'UNKNOWN_PARTICIPANT',
+            `Unknown message participant "${endpoint}" in occurrence "${occ.name}". Message endpoints must use participant aliases declared inside the occurrence.`,
+            col,
           ));
         }
       }
