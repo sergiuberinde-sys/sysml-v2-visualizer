@@ -73,6 +73,12 @@ export default function App() {
   // Only send updateModel after we have received at least one loadModel
   const receivedFirstLoad                 = useRef(false);
 
+  // ── Panel visibility ───────────────────────────────────────────────────────
+  // VS Code mode: all side panels start collapsed so the viz canvas fills the view
+  const [col1Open,      setCol1Open]      = useState(APP_MODE === 'standalone');
+  const [explorerOpen,  setExplorerOpen]  = useState(APP_MODE === 'standalone');
+  const [inspectorOpen, setInspectorOpen] = useState(APP_MODE === 'standalone');
+
   // ── Project state ──────────────────────────────────────────────────────────
   const [projects, setProjects]           = useState<Project[]>(init.projects);
   const [activeProject, setActiveProject] = useState<Project | null>(init.active);
@@ -220,6 +226,11 @@ export default function App() {
     if (fromExtension.current) { fromExtension.current = false; return; }
     getVsCodeApi()?.postMessage({ type: 'modelEdit', text: source });
   }, [source]);
+
+  // Auto-open inspector when the user selects an element
+  useEffect(() => {
+    if (selection !== null) setInspectorOpen(true);
+  }, [selection]);
 
   // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────
 
@@ -436,155 +447,180 @@ export default function App() {
       <div className="app-layout">
 
         {/* Column 1: Editor (standalone) or Problems panel (VS Code) */}
-        {APP_MODE === 'standalone' ? (
-          <div className="panel editor-panel">
-            <div className="panel-header">
-              <span>SysML v2 Source</span>
+        {col1Open ? (
+          APP_MODE === 'standalone' ? (
+            <div className="panel editor-panel">
+              <div className="panel-header">
+                <span>SysML v2 Source</span>
+                {result.diagnostics.length > 0 && (
+                  <span className="diag-badge">
+                    {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
+                    {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+                    {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
+                  </span>
+                )}
+                <button className="panel-toggle-btn" onClick={() => setCol1Open(false)} title="Collapse">◀</button>
+              </div>
+
+              <div className="editor-wrap">
+                <Editor
+                  height="100%"
+                  language="sysml"
+                  value={source}
+                  onChange={v => setSource(v ?? '')}
+                  theme="sysml-dark"
+                  beforeMount={handleBeforeMount}
+                  onMount={handleEditorMount}
+                  options={{
+                    minimap:              { enabled: false },
+                    fontSize:             13.5,
+                    lineNumbers:          'on',
+                    wordWrap:             'on',
+                    scrollBeyondLastLine: false,
+                    renderLineHighlight:  'line',
+                    glyphMargin:          true,
+                    overviewRulerBorder:  false,
+                    folding:              true,
+                    padding:              { top: 8 },
+                  }}
+                />
+              </div>
+
               {result.diagnostics.length > 0 && (
-                <span className="diag-badge">
-                  {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
-                  {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
-                  {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
-                </span>
-              )}
-            </div>
-
-            <div className="editor-wrap">
-              <Editor
-                height="100%"
-                language="sysml"
-                value={source}
-                onChange={v => setSource(v ?? '')}
-                theme="sysml-dark"
-                beforeMount={handleBeforeMount}
-                onMount={handleEditorMount}
-                options={{
-                  minimap:              { enabled: false },
-                  fontSize:             13.5,
-                  lineNumbers:          'on',
-                  wordWrap:             'on',
-                  scrollBeyondLastLine: false,
-                  renderLineHighlight:  'line',
-                  glyphMargin:          true,
-                  overviewRulerBorder:  false,
-                  folding:              true,
-                  padding:              { top: 8 },
-                }}
-              />
-            </div>
-
-            {result.diagnostics.length > 0 && (
-              <div className="diagnostics-panel">
-                <div className="diag-panel-hdr">
-                  <span>Problems</span>
-                  <div className="diag-filter-bar">
-                    {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                      const cnt = f === 'all' ? result.diagnostics.length
-                        : f === 'error'   ? errCount
-                        : f === 'warning' ? warnCount
-                        : infoCount;
-                      return (
-                        <button
-                          key={f}
-                          className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
-                          onClick={() => setDiagFilter(f)}
-                        >
-                          {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                          <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
-                        </button>
-                      );
-                    })}
+                <div className="diagnostics-panel">
+                  <div className="diag-panel-hdr">
+                    <span>Problems</span>
+                    <div className="diag-filter-bar">
+                      {(['all', 'error', 'warning', 'info'] as const).map(f => {
+                        const cnt = f === 'all' ? result.diagnostics.length
+                          : f === 'error'   ? errCount
+                          : f === 'warning' ? warnCount
+                          : infoCount;
+                        return (
+                          <button
+                            key={f}
+                            className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
+                            onClick={() => setDiagFilter(f)}
+                          >
+                            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                            <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
+                  {result.diagnostics
+                    .filter(d => diagFilter === 'all' || d.severity === diagFilter)
+                    .map((d, i) => (
+                      <div
+                        key={i}
+                        className={`diag-row diag-${d.severity}`}
+                        onClick={() => jumpToLine(d.line)}
+                        title={`Line ${d.line}: ${d.message}`}
+                      >
+                        <span className="diag-sev-icon">
+                          {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                        </span>
+                        <span className="diag-loc">L{d.line}</span>
+                        {d.code && <span className="diag-code">{d.code}</span>}
+                        <span className="diag-msg">{d.message}</span>
+                      </div>
+                    ))}
                 </div>
-                {result.diagnostics
-                  .filter(d => diagFilter === 'all' || d.severity === diagFilter)
-                  .map((d, i) => (
-                    <div
-                      key={i}
-                      className={`diag-row diag-${d.severity}`}
-                      onClick={() => jumpToLine(d.line)}
-                      title={`Line ${d.line}: ${d.message}`}
-                    >
-                      <span className="diag-sev-icon">
-                        {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
-                      </span>
-                      <span className="diag-loc">L{d.line}</span>
-                      {d.code && <span className="diag-code">{d.code}</span>}
-                      <span className="diag-msg">{d.message}</span>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        ) : (
-          /* VS Code mode: diagnostics-only panel */
-          <div className="panel editor-panel">
-            <div className="panel-header">
-              <span>Problems</span>
-              {result.diagnostics.length > 0 && (
-                <span className="diag-badge">
-                  {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
-                  {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
-                  {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
-                </span>
               )}
             </div>
-            <div className="diag-filter-bar diag-filter-bar-top">
-              {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                const cnt = f === 'all' ? result.diagnostics.length
-                  : f === 'error'   ? errCount
-                  : f === 'warning' ? warnCount
-                  : infoCount;
-                return (
-                  <button
-                    key={f}
-                    className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
-                    onClick={() => setDiagFilter(f)}
-                  >
-                    {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                    <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {result.diagnostics.length > 0 ? (
-              <div className="diagnostics-panel diagnostics-panel-fill">
-                {result.diagnostics
-                  .filter(d => diagFilter === 'all' || d.severity === diagFilter)
-                  .map((d, i) => (
-                    <div
-                      key={i}
-                      className={`diag-row diag-${d.severity}`}
-                      title={`Line ${d.line}: ${d.message}`}
-                    >
-                      <span className="diag-sev-icon">
-                        {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
-                      </span>
-                      <span className="diag-loc">L{d.line}</span>
-                      {d.code && <span className="diag-code">{d.code}</span>}
-                      <span className="diag-msg">{d.message}</span>
-                    </div>
-                  ))}
+          ) : (
+            /* VS Code mode: diagnostics-only panel */
+            <div className="panel editor-panel">
+              <div className="panel-header">
+                <span>Problems</span>
+                {result.diagnostics.length > 0 && (
+                  <span className="diag-badge">
+                    {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
+                    {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+                    {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
+                  </span>
+                )}
+                <button className="panel-toggle-btn" onClick={() => setCol1Open(false)} title="Collapse">◀</button>
               </div>
-            ) : (
-              <div className="no-diags-hint">No problems detected.</div>
-            )}
-          </div>
+              <div className="diag-filter-bar diag-filter-bar-top">
+                {(['all', 'error', 'warning', 'info'] as const).map(f => {
+                  const cnt = f === 'all' ? result.diagnostics.length
+                    : f === 'error'   ? errCount
+                    : f === 'warning' ? warnCount
+                    : infoCount;
+                  return (
+                    <button
+                      key={f}
+                      className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
+                      onClick={() => setDiagFilter(f)}
+                    >
+                      {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                      <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {result.diagnostics.length > 0 ? (
+                <div className="diagnostics-panel diagnostics-panel-fill">
+                  {result.diagnostics
+                    .filter(d => diagFilter === 'all' || d.severity === diagFilter)
+                    .map((d, i) => (
+                      <div
+                        key={i}
+                        className={`diag-row diag-${d.severity}`}
+                        title={`Line ${d.line}: ${d.message}`}
+                      >
+                        <span className="diag-sev-icon">
+                          {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                        </span>
+                        <span className="diag-loc">L{d.line}</span>
+                        {d.code && <span className="diag-code">{d.code}</span>}
+                        <span className="diag-msg">{d.message}</span>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <div className="no-diags-hint">No problems detected.</div>
+              )}
+            </div>
+          )
+        ) : (
+          <button
+            className="panel-collapsed-strip panel-border-right"
+            onClick={() => setCol1Open(true)}
+          >
+            <span className="panel-tab-label">
+              {APP_MODE === 'standalone'
+                ? 'Editor'
+                : `Problems${result.diagnostics.length > 0 ? ` (${result.diagnostics.length})` : ''}`}
+            </span>
+          </button>
         )}
 
         {/* Column 2: Model Explorer */}
-        <ModelExplorer
-          result={result}
-          selectedOccurrence={selectedOccurrence}
-          selectedBehavior={selectedBehavior}
-          selectedStateMachine={selectedStateMachine}
-          selection={selection}
-          onSelectScenario={name => { setSelected(name); setTab('sequence'); }}
-          onSelectBehavior={name => { setSelectedBehavior(name); setTab('behavior'); }}
-          onSelectStateMachine={name => { setSelectedStateMachine(name); setTab('state'); }}
-          onSelect={setSelection}
-          onNavigate={setTab}
-        />
+        {explorerOpen ? (
+          <ModelExplorer
+            result={result}
+            selectedOccurrence={selectedOccurrence}
+            selectedBehavior={selectedBehavior}
+            selectedStateMachine={selectedStateMachine}
+            selection={selection}
+            onSelectScenario={name => { setSelected(name); setTab('sequence'); }}
+            onSelectBehavior={name => { setSelectedBehavior(name); setTab('behavior'); }}
+            onSelectStateMachine={name => { setSelectedStateMachine(name); setTab('state'); }}
+            onSelect={setSelection}
+            onNavigate={setTab}
+            onCollapse={() => setExplorerOpen(false)}
+          />
+        ) : (
+          <button
+            className="panel-collapsed-strip panel-border-right"
+            onClick={() => setExplorerOpen(true)}
+          >
+            <span className="panel-tab-label">Explorer</span>
+          </button>
+        )}
 
         {/* Column 3: Visualization */}
         <div className="panel viz-panel">
@@ -696,12 +732,22 @@ export default function App() {
         </div>
 
         {/* Column 4: Inspector */}
-        <InspectorPanel
-          selection={selection}
-          result={result}
-          source={source}
-          onSourceChange={setSource}
-        />
+        {inspectorOpen ? (
+          <InspectorPanel
+            selection={selection}
+            result={result}
+            source={source}
+            onSourceChange={setSource}
+            onCollapse={() => setInspectorOpen(false)}
+          />
+        ) : (
+          <button
+            className="panel-collapsed-strip panel-border-left"
+            onClick={() => setInspectorOpen(true)}
+          >
+            <span className="panel-tab-label">Inspector</span>
+          </button>
+        )}
 
       </div>
 

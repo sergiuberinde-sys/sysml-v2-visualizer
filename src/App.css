@@ -1106,3 +1106,56 @@ html, body, #root {
   color: #45475a;
   text-align: center;
 }
+
+/* ── Collapsible panel strips ────────────────────────── */
+
+/* Slim vertical strip shown when a side panel is collapsed */
+.panel-collapsed-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  flex-shrink: 0;
+  height: 100%;
+  background: #181825;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.1s;
+}
+.panel-collapsed-strip:hover { background: #252535; }
+
+.panel-border-right { border-right: 2px solid #313244; }
+.panel-border-left  { border-left:  2px solid #313244; }
+
+/* Vertical label inside the collapsed strip */
+.panel-tab-label {
+  writing-mode: vertical-lr;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6c7086;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  user-select: none;
+  transition: color 0.1s;
+}
+.panel-collapsed-strip:hover .panel-tab-label { color: #cdd6f4; }
+
+/* ── Panel collapse toggle button (inside panel header) ─ */
+
+.panel-toggle-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: #585b70;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  line-height: 1;
+  font-family: inherit;
+  transition: color 0.1s, background 0.1s;
+}
+.panel-toggle-btn:hover { color: #cdd6f4; background: #313244; }
