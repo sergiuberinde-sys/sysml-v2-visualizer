@@ -46,11 +46,11 @@ export function parse(source: string): ParseResult {
         const dest = stack.length > 0 ? stack[stack.length - 1].body : nodes;
         if (frame.kind === 'packageDef') {
           namespaceStack.pop();
-          dest.push({ kind: 'packageDef', name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine });
+          dest.push({ kind: 'packageDef', name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine, endLine: lineNum });
         } else if (frame.kind === 'requirementDef') {
-          dest.push({ kind: 'requirementDef', name: frame.name, namespace: currentNs(), reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
+          dest.push({ kind: 'requirementDef', name: frame.name, namespace: currentNs(), reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine, endLine: lineNum });
         } else {
-          dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine } as SysMLNode);
+          dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine, endLine: lineNum } as SysMLNode);
         }
       } else {
         diagnostics.push({ line: lineNum, severity: 'error', message: 'Unexpected }' });
@@ -196,18 +196,19 @@ export function parse(source: string): ParseResult {
     diagnostics.push({ line: lineNum, severity: 'warning', message: `Unrecognized statement: "${line}"` });
   }
 
-  // Flush unclosed blocks
+  // Flush unclosed blocks — use last line of file as endLine
+  const lastLine = rawLines.length;
   while (stack.length > 0) {
     const frame = stack.pop()!;
     diagnostics.push({ line: frame.startLine, severity: 'error', message: `Unclosed block: ${frame.kind} ${frame.name}` });
     const dest = stack.length > 0 ? stack[stack.length - 1].body : nodes;
     if (frame.kind === 'packageDef') {
       namespaceStack.pop();
-      dest.push({ kind: 'packageDef', name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine });
+      dest.push({ kind: 'packageDef', name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine, endLine: lastLine });
     } else if (frame.kind === 'requirementDef') {
-      dest.push({ kind: 'requirementDef', name: frame.name, namespace: currentNs(), reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine });
+      dest.push({ kind: 'requirementDef', name: frame.name, namespace: currentNs(), reqId: frame.reqId ?? '', text: frame.reqText ?? '', priority: frame.reqPriority ?? '', line: frame.startLine, endLine: lastLine });
     } else {
-      dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine } as SysMLNode);
+      dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine, endLine: lastLine } as SysMLNode);
     }
   }
 

@@ -153,6 +153,7 @@ export default function SequenceView({ result, occurrenceName, selection, onSele
                 id: `msg-${occurrenceName}-${m.name}-${i}`,
                 type: 'message',
                 name: m.name,
+                line: m.line,
                 extra: { from: m.from, to: m.to, occurrence: occurrenceName },
               })}>
               {selected && (
