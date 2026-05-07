@@ -1,4 +1,4 @@
-import type { ParseResult } from './types';
+import type { ParseResult } from '../core/modelTypes';
 
 export interface HistorySnapshot {
   id: string;

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { ParseResult, SysMLNode, SelectionState, PackageDefNode } from '../types';
+import type { ParseResult, SysMLNode, PackageDefNode } from '../../core/modelTypes';
+import type { SelectionState } from '../../app/selection';
 
 type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state' | 'requirements' | 'traceability';
 

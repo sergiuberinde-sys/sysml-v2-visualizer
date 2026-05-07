@@ -2,35 +2,35 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
-import { parse } from './parser';
-import { validate } from './model/validator';
-import { BRK_SAMPLE } from './sample';
-import { SYSML_TOKENS, SYSML_THEME } from './sysmlLanguage';
-import ModelExplorer from './views/ModelExplorer';
-import StructureView from './views/StructureView';
-import SequenceView from './views/SequenceView';
-import BehaviorView from './views/BehaviorView';
-import StateView from './views/StateView';
-import RequirementsView from './views/RequirementsView';
-import TraceabilityView from './views/TraceabilityView';
-import JsonView from './views/JsonView';
-import InspectorPanel from './views/InspectorPanel';
-import ProjectBar from './views/ProjectBar';
-import ProjectModal from './views/ProjectModal';
-import ActionModal from './views/ActionModal';
-import HistoryModal from './views/HistoryModal';
-import ErrorBoundary from './ErrorBoundary';
-import type { SysMLNode, SelectionState } from './types';
-import type { Project } from './projects';
+import { parseAndValidate } from './core/modelBuilder';
+import { BRK_SAMPLE } from './ui/sample';
+import { SYSML_TOKENS, SYSML_THEME } from './ui/sysmlLanguage';
+import ModelExplorer from './ui/views/ModelExplorer';
+import StructureView from './ui/views/StructureView';
+import SequenceView from './ui/views/SequenceView';
+import BehaviorView from './ui/views/BehaviorView';
+import StateView from './ui/views/StateView';
+import RequirementsView from './ui/views/RequirementsView';
+import TraceabilityView from './ui/views/TraceabilityView';
+import JsonView from './ui/views/JsonView';
+import InspectorPanel from './ui/panels/InspectorPanel';
+import ProjectBar from './ui/components/ProjectBar';
+import ProjectModal from './ui/components/ProjectModal';
+import ActionModal from './ui/components/ActionModal';
+import HistoryModal from './ui/components/HistoryModal';
+import ErrorBoundary from './ui/ErrorBoundary';
+import type { SysMLNode } from './core/modelTypes';
+import type { SelectionState } from './app/selection';
+import type { Project } from './app/state';
 import {
   saveProjects, persistActiveId,
   setAutosave, generateId, makeTemplate,
   getInitialProjectState,
-} from './projects';
+} from './app/state';
 import {
   makeSnapshot, MAX_HISTORY, HISTORY_DEBOUNCE_MS,
   type HistorySnapshot,
-} from './history';
+} from './app/history';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
@@ -69,10 +69,9 @@ export default function App() {
   // ── History state ──────────────────────────────────────────────────────────
   const [diagFilter, setDiagFilter]       = useState<'all' | 'error' | 'warning' | 'info'>('all');
 
-  const [history, setHistory]             = useState<HistorySnapshot[]>(() => {
-    const parsed = parse(init.text);
-    return [makeSnapshot(init.text, { ...parsed, diagnostics: [...parsed.diagnostics, ...validate(parsed)] })];
-  });
+  const [history, setHistory]             = useState<HistorySnapshot[]>(() => [
+    makeSnapshot(init.text, parseAndValidate(init.text)),
+  ]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const historyDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipHistoryPush = useRef(false);
@@ -84,11 +83,7 @@ export default function App() {
   const monacoRef = useRef<Monaco | null>(null);
 
   // ── Parse + validate ──────────────────────────────────────────────────────
-  const result = useMemo(() => {
-    const parsed = parse(source);
-    const semDiags = validate(parsed);
-    return { ...parsed, diagnostics: [...parsed.diagnostics, ...semDiags] };
-  }, [source]);
+  const result = useMemo(() => parseAndValidate(source), [source]);
 
   const behavioralOccurrences = useMemo(
     () => result.nodes

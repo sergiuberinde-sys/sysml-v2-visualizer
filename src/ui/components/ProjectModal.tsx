@@ -1,5 +1,5 @@
-import type { Project } from '../projects';
-import { formatDate } from '../projects';
+import type { Project } from '../../app/state';
+import { formatDate } from '../../app/state';
 
 interface Props {
   projects: Project[];

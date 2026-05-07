@@ -1,4 +1,4 @@
-import type { HistorySnapshot } from '../history';
+import type { HistorySnapshot } from '../../app/history';
 
 interface Props {
   history: HistorySnapshot[];

@@ -1,4 +1,5 @@
-import type { ParseResult, SysMLNode, SelectionState } from '../types';
+import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import type { SelectionState } from '../../app/selection';
 
 type RD = Extract<SysMLNode, { kind: 'requirementDef' }>;
 type TL = Extract<SysMLNode, { kind: 'traceLink' }>;

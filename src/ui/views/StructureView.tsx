@@ -4,7 +4,8 @@ import {
   type Node, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { ParseResult, SysMLNode, SelectionState } from '../types';
+import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import type { SelectionState } from '../../app/selection';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 

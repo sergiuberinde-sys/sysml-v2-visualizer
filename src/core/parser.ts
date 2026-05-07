@@ -1,4 +1,4 @@
-import type { SysMLNode, ParseDiagnostic, ParseResult, PackageDefNode } from './types';
+import type { SysMLNode, ParseDiagnostic, ParseResult, PackageDefNode } from './modelTypes';
 
 // ── Package tree → flat nodes + top-level packages ────────────────────────────
 
