@@ -67,6 +67,12 @@ export function activate(context: vscode.ExtensionContext): void {
     panel.webview.onDidReceiveMessage(async (msg: {
       type: string;
       newText?: string;
+      edit?: {
+        kind: 'insert' | 'replace' | 'delete';
+        position?: { line: number; column: number };
+        range?: { start: { line: number; column: number }; end: { line: number; column: number } };
+        text?: string;
+      };
       sourceLocation?: { line: number; column: number };
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
@@ -74,33 +80,60 @@ export function activate(context: vscode.ExtensionContext): void {
       if (msg.type === 'ready') {
         sendCurrentModelToWebview();
 
-      } else if (msg.type === 'applyEdit') {
-        // User performed a UI action (add part, add message, etc.).
-        // Replace the full document with the new text.  onDidChangeTextDocument
-        // will pick up the change and send updateModel to the webview.
+      } else if (msg.type === 'applyFullTextEdit') {
         if (!currentSysmlUri) {
           vscode.window.showErrorMessage('SysML Visualizer: no SysML file is loaded');
           return;
         }
         if (typeof msg.newText !== 'string' || msg.newText === '') {
-          vscode.window.showErrorMessage('SysML Visualizer: applyEdit received empty text');
+          vscode.window.showErrorMessage('SysML Visualizer: applyFullTextEdit received empty text');
           return;
         }
-        console.log(`[sysml-visualizer] applyEdit — replacing ${path.basename(currentSysmlUri.fsPath)}`);
+        console.log(`[sysml-visualizer] applyFullTextEdit — replacing ${path.basename(currentSysmlUri.fsPath)}`);
         const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
         const fullRange = new vscode.Range(
           doc.positionAt(0),
           doc.positionAt(doc.getText().length),
         );
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(currentSysmlUri, fullRange, msg.newText);
-        const ok = await vscode.workspace.applyEdit(edit);
+        const wsEdit = new vscode.WorkspaceEdit();
+        wsEdit.replace(currentSysmlUri, fullRange, msg.newText);
+        const ok = await vscode.workspace.applyEdit(wsEdit);
         if (!ok) {
           vscode.window.showErrorMessage('SysML Visualizer: failed to apply edit to document');
           return;
         }
         currentSysmlText = msg.newText;
-        console.log('[sysml-visualizer] applyEdit succeeded — waiting for onDidChangeTextDocument');
+        console.log('[sysml-visualizer] applyFullTextEdit succeeded — waiting for onDidChangeTextDocument');
+
+      } else if (msg.type === 'applyIncrementalEdit') {
+        if (!currentSysmlUri || !msg.edit) {
+          vscode.window.showErrorMessage('SysML Visualizer: no SysML file is loaded');
+          return;
+        }
+        const ie = msg.edit;
+        // Positions from webview are 1-based; VS Code expects 0-based.
+        function toPos(p: { line: number; column: number }): vscode.Position {
+          return new vscode.Position(p.line - 1, p.column - 1);
+        }
+        const wsEdit = new vscode.WorkspaceEdit();
+        if (ie.kind === 'insert' && ie.position && typeof ie.text === 'string') {
+          wsEdit.insert(currentSysmlUri, toPos(ie.position), ie.text);
+        } else if (ie.kind === 'replace' && ie.range && typeof ie.text === 'string') {
+          const range = new vscode.Range(toPos(ie.range.start), toPos(ie.range.end));
+          wsEdit.replace(currentSysmlUri, range, ie.text);
+        } else if (ie.kind === 'delete' && ie.range) {
+          const range = new vscode.Range(toPos(ie.range.start), toPos(ie.range.end));
+          wsEdit.delete(currentSysmlUri, range);
+        } else {
+          vscode.window.showErrorMessage('SysML Visualizer: malformed incremental edit');
+          return;
+        }
+        const ok = await vscode.workspace.applyEdit(wsEdit);
+        if (!ok) {
+          vscode.window.showErrorMessage('SysML Visualizer: failed to apply incremental edit');
+          return;
+        }
+        console.log(`[sysml-visualizer] applyIncrementalEdit (${ie.kind}) succeeded`);
 
       } else if (msg.type === 'revealSource') {
         if (!currentSysmlUri || !msg.sourceLocation) return;

@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(gh repo *)",
+      "Bash(/opt/homebrew/bin/gh repo *)",
+      "Bash(git push *)",
+      "Bash(gh run *)",
+      "Bash(gh api *)",
+      "WebFetch(domain:sergiuberinde-sys.github.io)",
+      "Bash(curl -s -I \"https://sergiuberinde-sys.github.io/sysml-v2-visualizer/\")",
+      "Bash(curl -s \"https://sergiuberinde-sys.github.io/sysml-v2-visualizer/\")",
+      "Bash(curl -s \"https://sergiuberinde-sys.github.io/sysml-v2-visualizer/assets/index-dFwwULvn.js\")",
+      "Bash(curl *)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(sed -i '' 's|import type { SelectionState, ParseResult, SysMLNode, PackageDefNode, ParseDiagnostic } from '\\\\''../types'\\\\'';|import type { ParseResult, SysMLNode, PackageDefNode, ParseDiagnostic } from '\\\\''../../core/modelTypes'\\\\'';\\\\nimport type { SelectionState } from '\\\\''../../app/selection'\\\\'';|' /Users/sergiu/sysml-v2-visualizer/src/ui/panels/InspectorPanel.tsx)",
+      "Bash(sed -i '' 's|import { elementLines } from '\\\\''../model/validator'\\\\'';|import { elementLines } from '\\\\''../../core/validator'\\\\'';|' /Users/sergiu/sysml-v2-visualizer/src/ui/panels/InspectorPanel.tsx)",
+      "Bash(sed -i '' 's|import ActionModal, { type FieldDef } from '\\\\''./ActionModal'\\\\'';|import ActionModal, { type FieldDef } from '\\\\''../components/ActionModal'\\\\'';|' /Users/sergiu/sysml-v2-visualizer/src/ui/panels/InspectorPanel.tsx)",
+      "Bash(sed -i '' 's|} from '\\\\''../insertions'\\\\'';|} from '\\\\''../../core/insertions'\\\\'';|' /Users/sergiu/sysml-v2-visualizer/src/ui/panels/InspectorPanel.tsx)",
+      "Bash(sed -i '' 's|from '\\\\''../projects'\\\\''|from '\\\\''../../app/state'\\\\''|g' /Users/sergiu/sysml-v2-visualizer/src/ui/components/ProjectModal.tsx)",
+      "Bash(sed -i '' 's|from '\\\\''../history'\\\\''|from '\\\\''../../app/history'\\\\''|g' /Users/sergiu/sysml-v2-visualizer/src/ui/components/HistoryModal.tsx)",
+      "Bash(git -C /Users/sergiu/sysml-v2-visualizer status)",
+      "Bash(git -C /Users/sergiu/sysml-v2-visualizer diff --stat)",
+      "Bash(git *)",
+      "Bash(npm audit *)",
+      "Bash(node *)"
+    ]
+  }
+}

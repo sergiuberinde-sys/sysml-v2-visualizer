@@ -9,13 +9,20 @@ import {
   insertStateDef, insertStateEntry, insertStateTransition,
   insertRequirementDef, insertTraceLink,
   insertPackage, insertElementIntoPackage,
+  computeInsertInterface, computeInsertPartDef, computeInsertPort,
+  computeInsertConnection, computeInsertOccurrence, computeInsertMessage,
+  computeInsertStateDef, computeInsertStateEntry, computeInsertStateTransition,
+  computeInsertRequirementDef, computeInsertTraceLink,
+  computeInsertPackage, computeInsertElementIntoPackage,
 } from '../../core/insertions';
+import type { IncrementalEdit } from '../../core/editDescriptor';
 
 interface Props {
   selection: SelectionState;
   result: ParseResult;
   source: string;
   onSourceChange: (s: string) => void;
+  onIncrementalEdit?: (edit: IncrementalEdit) => void;
   onCollapse?: () => void;
 }
 
@@ -59,8 +66,16 @@ function ActionBtn({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function InspectorPanel({ selection, result, source, onSourceChange, onCollapse }: Props) {
+export default function InspectorPanel({ selection, result, source, onSourceChange, onIncrementalEdit, onCollapse }: Props) {
   const [modal, setModal] = useState<ModalKind>(null);
+
+  function apply(edit: IncrementalEdit | null, fallbackText: string): void {
+    if (edit !== null && onIncrementalEdit) {
+      onIncrementalEdit(edit);
+    } else {
+      onSourceChange(fallbackText);
+    }
+  }
 
   // ── Derived model data for validation ──────────────────────────────────────
 
@@ -114,7 +129,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!name) return 'Name cannot be empty.';
     if (!/^\w+$/.test(name)) return 'Name must be a single word (letters, digits, _).';
     if (allTopNames.has(name)) return `"${name}" already exists.`;
-    onSourceChange(insertInterface(source, result, name));
+    apply(computeInsertInterface(source, result, name), insertInterface(source, result, name));
     return null;
   }
 
@@ -123,7 +138,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!name) return 'Name cannot be empty.';
     if (!/^\w+$/.test(name)) return 'Name must be a single word (letters, digits, _).';
     if (allTopNames.has(name)) return `"${name}" already exists.`;
-    onSourceChange(insertPartDef(source, result, name));
+    apply(computeInsertPartDef(source, result, name), insertPartDef(source, result, name));
     return null;
   }
 
@@ -146,7 +161,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
       (partDefs.find(p => p.name === selectedPartName)?.line ?? 1) - 1
     ];
     if (!/{/.test(srcLine)) return `"${selectedPartName}" must have a block body { }. Convert it first.`;
-    onSourceChange(insertPort(source, result, selectedPartName, vals.direction as 'in' | 'out', portName, portType));
+    apply(
+      computeInsertPort(source, result, selectedPartName, vals.direction as 'in' | 'out', portName, portType),
+      insertPort(source, result, selectedPartName, vals.direction as 'in' | 'out', portName, portType),
+    );
     return null;
   }
 
@@ -161,7 +179,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     const instNames = new Set(systemInstances.map(a => a.name));
     if (!instNames.has(fp)) return `"${fp}" is not an instance in ${selectedSystemName}.`;
     if (!instNames.has(tp)) return `"${tp}" is not an instance in ${selectedSystemName}.`;
-    onSourceChange(insertConnection(source, result, selectedSystemName, fp, fport, tp, tport));
+    apply(
+      computeInsertConnection(source, result, selectedSystemName, fp, fport, tp, tport),
+      insertConnection(source, result, selectedSystemName, fp, fport, tp, tport),
+    );
     return null;
   }
 
@@ -170,7 +191,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!name) return 'Name cannot be empty.';
     if (!/^\w+$/.test(name)) return 'Name must be a single word (letters, digits, _).';
     if (allTopNames.has(name)) return `"${name}" already exists.`;
-    onSourceChange(insertOccurrence(source, name));
+    apply(computeInsertOccurrence(source, name), insertOccurrence(source, name));
     return null;
   }
 
@@ -189,7 +210,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
       ?.body.filter((b): b is MsgN => b.kind === 'message')
       .map(m => m.name) ?? [];
     if (existing.includes(msgName)) return `Message "${msgName}" already exists in ${selectedOccName}.`;
-    onSourceChange(insertMessage(source, result, selectedOccName, msgName, from, to));
+    apply(
+      computeInsertMessage(source, result, selectedOccName, msgName, from, to),
+      insertMessage(source, result, selectedOccName, msgName, from, to),
+    );
     return null;
   }
 
@@ -198,7 +222,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!name) return 'Name cannot be empty.';
     if (!/^\w+$/.test(name)) return 'Name must be a single word.';
     if (allTopNames.has(name)) return `"${name}" already exists.`;
-    onSourceChange(insertStateDef(source, name));
+    apply(computeInsertStateDef(source, name), insertStateDef(source, name));
     return null;
   }
 
@@ -210,7 +234,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     const existing = smDefs.find(s => s.name === selectedSMName)
       ?.body.filter((b): b is SEntry => b.kind === 'stateEntry').map(s => s.name) ?? [];
     if (existing.includes(name)) return `State "${name}" already exists in ${selectedSMName}.`;
-    onSourceChange(insertStateEntry(source, result, selectedSMName, name));
+    apply(
+      computeInsertStateEntry(source, result, selectedSMName, name),
+      insertStateEntry(source, result, selectedSMName, name),
+    );
     return null;
   }
 
@@ -229,7 +256,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     );
     if (stateNames.size > 0 && !stateNames.has(from)) return `"${from}" is not a state in ${selectedSMName}.`;
     if (stateNames.size > 0 && !stateNames.has(to))   return `"${to}" is not a state in ${selectedSMName}.`;
-    onSourceChange(insertStateTransition(source, result, selectedSMName, from, to, event || undefined));
+    apply(
+      computeInsertStateTransition(source, result, selectedSMName, from, to, event || undefined),
+      insertStateTransition(source, result, selectedSMName, from, to, event || undefined),
+    );
     return null;
   }
 
@@ -238,7 +268,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!name) return 'Name cannot be empty.';
     if (!/^\w+$/.test(name)) return 'Name must be a single word.';
     if (allTopNames.has(name)) return `"${name}" already exists.`;
-    onSourceChange(insertRequirementDef(source, name));
+    apply(computeInsertRequirementDef(source, name), insertRequirementDef(source, name));
     return null;
   }
 
@@ -250,7 +280,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!/^\w+$/.test(sourceEl))  return 'Source must be a single word.';
     if (!/^\w+$/.test(targetReq)) return 'Target must be a single word.';
     const linkType = modal === 'satisfyLink' ? 'satisfy' : modal === 'verifyLink' ? 'verify' : 'trace';
-    onSourceChange(insertTraceLink(source, linkType as 'satisfy' | 'verify' | 'trace', sourceEl, targetReq));
+    apply(
+      computeInsertTraceLink(source, linkType as 'satisfy' | 'verify' | 'trace', sourceEl, targetReq),
+      insertTraceLink(source, linkType as 'satisfy' | 'verify' | 'trace', sourceEl, targetReq),
+    );
     return null;
   }
 
@@ -259,7 +292,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     if (!name) return 'Name cannot be empty.';
     if (!/^\w+$/.test(name)) return 'Name must be a single word (letters, digits, _).';
     if (allTopNames.has(name)) return `"${name}" already exists.`;
-    onSourceChange(insertPackage(source, name));
+    apply(computeInsertPackage(source, name), insertPackage(source, name));
     return null;
   }
 
@@ -279,7 +312,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     } else {
       elementText = `package ${name} {\n}`;
     }
-    onSourceChange(insertElementIntoPackage(source, result, selectedPackagePath, elementText));
+    apply(
+      computeInsertElementIntoPackage(source, result, selectedPackagePath, elementText),
+      insertElementIntoPackage(source, result, selectedPackagePath, elementText),
+    );
     return null;
   }
 

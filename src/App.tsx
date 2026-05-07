@@ -33,6 +33,7 @@ import {
 } from './app/history';
 import { getVsCodeApi, getAppMode } from './ui/vscodeApi';
 import { findElementAtLine } from './app/sourceMatcher';
+import type { IncrementalEdit } from './core/editDescriptor';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
@@ -776,12 +777,16 @@ export default function App() {
             onSourceChange={
               APP_MODE === 'vscode'
                 ? (newText: string) => {
-                    // In VS Code mode, route edits through the extension so the
-                    // actual .sysml file is updated.  The webview does not update
-                    // local state; it waits for the extension's updateModel echo.
-                    getVsCodeApi()?.postMessage({ type: 'applyEdit', newText });
+                    getVsCodeApi()?.postMessage({ type: 'applyFullTextEdit', newText });
                   }
                 : setSource
+            }
+            onIncrementalEdit={
+              APP_MODE === 'vscode'
+                ? (edit: IncrementalEdit) => {
+                    getVsCodeApi()?.postMessage({ type: 'applyIncrementalEdit', edit });
+                  }
+                : undefined
             }
             onCollapse={() => setInspectorOpen(false)}
           />
