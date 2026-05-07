@@ -31,6 +31,7 @@ import {
   makeSnapshot, MAX_HISTORY, HISTORY_DEBOUNCE_MS,
   type HistorySnapshot,
 } from './app/history';
+import { getVsCodeApi } from './ui/vscodeApi';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
@@ -59,6 +60,14 @@ export default function App() {
   const [selectedBehavior, setSelectedBehavior] = useState('');
   const [selectedStateMachine, setSelectedStateMachine] = useState('');
   const [selection, setSelection]         = useState<SelectionState>(null);
+
+  // ── VS Code webview integration ────────────────────────────────────────────
+  // noFileOpen: true when extension reports no .sysml file is active
+  const [noFileOpen, setNoFileOpen]       = useState(false);
+  // Prevents echoing extension-initiated source changes back as updateModel
+  const fromExtension                     = useRef(false);
+  // Only send updateModel after we have received at least one loadModel
+  const receivedFirstLoad                 = useRef(false);
 
   // ── Project state ──────────────────────────────────────────────────────────
   const [projects, setProjects]           = useState<Project[]>(init.projects);
@@ -174,6 +183,36 @@ export default function App() {
       })),
     );
   }, [result.diagnostics]);
+
+  // ── VS Code webview message bus ───────────────────────────────────────────
+
+  // Signal readiness so the extension knows when to send the initial model
+  useEffect(() => { getVsCodeApi()?.postMessage({ type: 'ready' }); }, []);
+
+  // Receive messages from the extension
+  useEffect(() => {
+    const handler = (ev: MessageEvent) => {
+      const msg = ev.data as { type: string; text?: string };
+      if (msg.type === 'loadModel' && typeof msg.text === 'string') {
+        receivedFirstLoad.current = true;
+        fromExtension.current = true;
+        setNoFileOpen(false);
+        setSource(msg.text);
+        setSelection(null);
+      } else if (msg.type === 'noFile') {
+        setNoFileOpen(true);
+      }
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  // Send edits back to the extension (skip echo of extension-initiated changes)
+  useEffect(() => {
+    if (!receivedFirstLoad.current) return;
+    if (fromExtension.current) { fromExtension.current = false; return; }
+    getVsCodeApi()?.postMessage({ type: 'updateModel', text: source });
+  }, [source]);
 
   // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────
 
@@ -375,6 +414,14 @@ export default function App() {
         onHistory={() => setShowHistoryModal(true)}
         onRevert={handleRevert}
       />
+
+      {/* ── VS Code "no file" overlay ────────────── */}
+      {noFileOpen && (
+        <div className="no-file-overlay">
+          <span className="no-file-icon">⬡</span>
+          <p className="no-file-msg">Open a .sysml file to visualize</p>
+        </div>
+      )}
 
       {/* ── 4-column workspace ────────────────────── */}
       <div className="app-layout">
