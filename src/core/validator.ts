@@ -241,7 +241,18 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
     if (node.kind !== 'occurrenceDef') continue;
     const occ = node as OccNode;
 
-    // Map alias name → type for participant lookup.
+    // 3a. Participant type resolution — each declared participant must reference a known part def.
+    for (const child of occ.body) {
+      if (child.kind !== 'partAlias') continue;
+      const alias = child as AliasNode;
+      if (!partDefMap.has(alias.type)) {
+        diagnostics.push(diag(alias.line, 'error', 'UNKNOWN_PART',
+          `Unknown part type "${alias.type}" for participant "${alias.name}" in occurrence "${occ.name}"`,
+        ));
+      }
+    }
+
+    // Map alias name → type for message endpoint resolution.
     const participants = new Map<string, string>(
       occ.body
         .filter((b): b is AliasNode => b.kind === 'partAlias')
