@@ -7,7 +7,6 @@
     "lib": ["ES2020"],
     "types": ["node"],
     "outDir": "./out-extension",
-    "rootDir": "./src-vscode",
     "strict": true,
     "skipLibCheck": true,
     "sourceMap": true,
@@ -15,5 +14,6 @@
     "noUnusedParameters": true
   },
   "include": ["src-vscode"],
+  "files": ["src/core/modelBuilder.ts"],
   "exclude": ["node_modules", ".vscode-test"]
 }
