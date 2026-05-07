@@ -1,13 +1,31 @@
 {
   "name": "sysml-v2-visualizer",
+  "displayName": "SysML v2 Visualizer",
+  "description": "Visualizer for SysML v2 models",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.0.1",
   "type": "module",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "main": "./out-extension/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sysmlVisualizer.openVisualizer",
+        "title": "Open SysML v2 Visualizer"
+      }
+    ]
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "compile:extension": "tsc -p tsconfig.extension.json && node scripts/write-extension-pkg.cjs",
+    "watch:extension": "tsc -p tsconfig.extension.json --watch",
+    "package:extension": "vsce package"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -21,7 +39,10 @@
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.118.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.1",
     "eslint": "^10.2.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
