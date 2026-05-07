@@ -8,5 +8,6 @@ export type SelectionState = {
     | 'requirement' | 'traceLink'
     | 'packageDef';
   name: string;
+  line?: number;
   extra?: Record<string, string>;
 } | null;

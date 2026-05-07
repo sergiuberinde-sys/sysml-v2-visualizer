@@ -32,6 +32,7 @@ import {
   type HistorySnapshot,
 } from './app/history';
 import { getVsCodeApi, getAppMode } from './ui/vscodeApi';
+import { findElementAtLine } from './app/sourceMatcher';
 import './App.css';
 
 type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
@@ -72,6 +73,12 @@ export default function App() {
   const fromExtension                     = useRef(false);
   // Only send updateModel after we have received at least one loadModel
   const receivedFirstLoad                 = useRef(false);
+  // Prevents echo-loop: set true when selection comes from revealElementAtSource
+  const suppressRevealSource              = useRef(false);
+  // Latest result and selection for use inside stable message-handler closure.
+  // Initialized with null; kept current by direct assignment after useMemo below.
+  const resultRef                         = useRef<ReturnType<typeof parseAndValidate> | null>(null);
+  const selectionRef                      = useRef<SelectionState>(null);
 
   // ── Panel visibility ───────────────────────────────────────────────────────
   // VS Code mode: all side panels start collapsed so the viz canvas fills the view
@@ -103,6 +110,9 @@ export default function App() {
 
   // ── Parse + validate ──────────────────────────────────────────────────────
   const result = useMemo(() => parseAndValidate(source), [source]);
+  // Keep latest-ref copies for use inside stable closures (message handlers)
+  resultRef.current    = result;
+  selectionRef.current = selection;
 
   const behavioralOccurrences = useMemo(
     () => result.nodes
@@ -202,7 +212,11 @@ export default function App() {
   // Receive messages from the extension
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
-      const msg = ev.data as { type: string; text?: string };
+      const msg = ev.data as {
+        type: string;
+        text?: string;
+        sourceLocation?: { line: number; column: number };
+      };
       if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
         fromExtension.current = true;
@@ -214,6 +228,14 @@ export default function App() {
         setSource(msg.text);
       } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
+      } else if (msg.type === 'revealElementAtSource' && msg.sourceLocation) {
+        const { line } = msg.sourceLocation;
+        if (!resultRef.current) return;
+        const found = findElementAtLine(line, resultRef.current);
+        if (found !== null && found.id !== selectionRef.current?.id) {
+          suppressRevealSource.current = true;
+          setSelection(found);
+        }
       }
     };
     window.addEventListener('message', handler);
@@ -230,6 +252,20 @@ export default function App() {
   // Auto-open inspector when the user selects an element
   useEffect(() => {
     if (selection !== null) setInspectorOpen(true);
+  }, [selection]);
+
+  // Sync selection → VS Code editor cursor (skip if selection came from editor)
+  useEffect(() => {
+    if (APP_MODE !== 'vscode') return;
+    if (selection === null || selection.line === undefined) return;
+    if (suppressRevealSource.current) {
+      suppressRevealSource.current = false;
+      return;
+    }
+    getVsCodeApi()?.postMessage({
+      type: 'revealSource',
+      sourceLocation: { line: selection.line, column: 1 },
+    });
   }, [selection]);
 
   // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────

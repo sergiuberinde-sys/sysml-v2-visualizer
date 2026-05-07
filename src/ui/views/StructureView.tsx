@@ -141,7 +141,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
         baseNodes.push(makePartNode(
           `iface-${n.name}`, pos.get(n.name)!, '«interface def»', n.name, [], PAL.iface,
           undefined,
-          { id: `iface-${n.name}`, type: 'interface', name: n.name },
+          { id: `iface-${n.name}`, type: 'interface', name: n.name, line: n.line },
         ));
       }
       curY += IFACE_H + ROW_GAP;
@@ -158,7 +158,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
         baseNodes.push(makePartNode(
           `def-${n.name}`, pos.get(n.name)!, '«part def»', n.name, ports, PAL.type,
           undefined,
-          { id: `def-${n.name}`, type: 'part', name: n.name },
+          { id: `def-${n.name}`, type: 'part', name: n.name, line: n.line },
         ));
       }
       curY += maxH + ROW_GAP;
@@ -187,7 +187,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
         className: 'comp-group',
         data: {
           label: `«part def»  ${compDef.name}`,
-          _sel: { id: `grp-${compDef.name}`, type: 'systemPart', name: compDef.name } satisfies SelectionState,
+          _sel: { id: `grp-${compDef.name}`, type: 'systemPart', name: compDef.name, line: compDef.line } satisfies SelectionState,
         },
         style: {
           width: groupW, height: groupH,
@@ -223,6 +223,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
               id: `inst-${compDef.name}-${alias.name}`,
               type: 'instance',
               name: alias.name,
+              line: alias.line,
               extra: { type: alias.type, parent: compDef.name },
             },
           ),
@@ -255,6 +256,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
               id: edgeId,
               type: 'connection',
               name: `${conn.fromPart}.${conn.fromPort} → ${conn.toPart}.${conn.toPort}`,
+              line: conn.line,
               extra: {
                 fromPart: conn.fromPart, fromPort: conn.fromPort,
                 toPart:   conn.toPart,   toPort:   conn.toPort,
@@ -276,7 +278,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
         baseNodes.push(makePartNode(
           `occ-${n.name}`, pos.get(n.name)!, '«occurrence def»', n.name, [], PAL.occ,
           undefined,
-          { id: `occ-${n.name}`, type: 'occurrence', name: n.name },
+          { id: `occ-${n.name}`, type: 'occurrence', name: n.name, line: n.line },
         ));
         const seenType = new Set<string>();
         for (const b of n.body) {
@@ -308,7 +310,7 @@ export default function StructureView({ result, selection, onSelect }: Props) {
         baseNodes.push(makePartNode(
           `occ-${n.name}`, pos.get(n.name)!, '«scenario»', n.name, [], PAL.scen,
           undefined,
-          { id: `occ-${n.name}`, type: 'occurrence', name: n.name },
+          { id: `occ-${n.name}`, type: 'occurrence', name: n.name, line: n.line },
         ));
       }
     }

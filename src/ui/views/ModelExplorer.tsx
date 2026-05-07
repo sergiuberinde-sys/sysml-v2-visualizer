@@ -33,7 +33,7 @@ function PackageTreeNode({ pkg, depth, open, toggle, sel, onSelect }: {
         style={{ paddingLeft: 8 + depth * 14 }}
         onClick={() => {
           if (hasChildren) toggle(subId);
-          onSelect({ id: `pkg-${ns}`, type: 'packageDef', name: pkg.name,
+          onSelect({ id: `pkg-${ns}`, type: 'packageDef', name: pkg.name, line: pkg.line,
             extra: { namespace: pkg.namespace, qualifiedName: ns } });
         }}
       >
@@ -226,7 +226,7 @@ export default function ModelExplorer({
                   className={`expl-item expl-item-iface${sel('iface-' + n.name) ? ' expl-selected' : ''}`}
                   title={`interface def ${n.name}  (line ${n.line})`}
                   onClick={() => {
-                    onSelect({ id: `iface-${n.name}`, type: 'interface', name: n.name });
+                    onSelect({ id: `iface-${n.name}`, type: 'interface', name: n.name, line: n.line });
                     onNavigate('structure');
                   }}>
                   <span className="expl-icon">◈</span>
@@ -255,7 +255,7 @@ export default function ModelExplorer({
                       title={`part def ${n.name}  (line ${n.line})`}
                       onClick={() => {
                         if (ports.length) toggle(subId);
-                        onSelect({ id: `def-${n.name}`, type: 'part', name: n.name });
+                        onSelect({ id: `def-${n.name}`, type: 'part', name: n.name, line: n.line });
                         onNavigate('structure');
                       }}>
                       {ports.length > 0
@@ -278,6 +278,7 @@ export default function ModelExplorer({
                           id: `port-${n.name}-${p.name}`,
                           type: 'port',
                           name: p.name,
+                          line: p.line,
                           extra: { direction: p.direction, portType: p.portType, partDef: n.name },
                         })}
                       />
@@ -309,7 +310,7 @@ export default function ModelExplorer({
                           title={`part def ${n.name}  (line ${n.line})`}
                           onClick={() => {
                             toggle(subId);
-                            onSelect({ id: `grp-${n.name}`, type: 'systemPart', name: n.name });
+                            onSelect({ id: `grp-${n.name}`, type: 'systemPart', name: n.name, line: n.line });
                             onNavigate('structure');
                           }}>
                           <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
@@ -333,6 +334,7 @@ export default function ModelExplorer({
                                   id: `inst-${n.name}-${a.name}`,
                                   type: 'instance',
                                   name: a.name,
+                                  line: a.line,
                                   extra: { type: a.type, parent: n.name },
                                 })}
                               />
@@ -350,6 +352,7 @@ export default function ModelExplorer({
                                     id: connId,
                                     type: 'connection',
                                     name: `${c.fromPart}.${c.fromPort} → ${c.toPart}.${c.toPort}`,
+                                    line: c.line,
                                     extra: {
                                       fromPart: c.fromPart, fromPort: c.fromPort,
                                       toPart: c.toPart,     toPort:  c.toPort,
@@ -376,7 +379,7 @@ export default function ModelExplorer({
                           title={`occurrence def ${occ.name}  (line ${occ.line})`}
                           onClick={() => {
                             toggle(subId);
-                            onSelect({ id: `occ-${occ.name}`, type: 'occurrence', name: occ.name });
+                            onSelect({ id: `occ-${occ.name}`, type: 'occurrence', name: occ.name, line: occ.line });
                             onNavigate('structure');
                           }}>
                           <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
@@ -412,7 +415,7 @@ export default function ModelExplorer({
                     title={`${occ.name} — ${msgCount} messages  (line ${occ.line})`}
                     onClick={() => {
                       onSelectScenario(occ.name);
-                      onSelect({ id: `occ-${occ.name}`, type: 'occurrence', name: occ.name });
+                      onSelect({ id: `occ-${occ.name}`, type: 'occurrence', name: occ.name, line: occ.line });
                     }}>
                     <span className="expl-icon expl-icon-scenario">{isActive ? '◉' : '○'}</span>
                     <span className="expl-name">{occ.name}</span>
@@ -434,7 +437,7 @@ export default function ModelExplorer({
                 <div key={n.name}
                   className={`expl-item expl-item-action${sel('adef-' + n.name) ? ' expl-selected' : ''}`}
                   title={`action def ${n.name}  (line ${n.line})`}
-                  onClick={() => onSelect({ id: `adef-${n.name}`, type: 'action', name: n.name })}>
+                  onClick={() => onSelect({ id: `adef-${n.name}`, type: 'action', name: n.name, line: n.line })}>
                   <span className="expl-icon expl-icon-action">▷</span>
                   <span className="expl-name">{n.name}</span>
                   <span className="expl-tag expl-tag-action">action</span>
@@ -464,7 +467,7 @@ export default function ModelExplorer({
                       onClick={() => {
                         if (instCount) toggle(subId);
                         onSelectBehavior(beh.name);
-                        onSelect({ id: `bhv-${beh.name}`, type: 'behavior', name: beh.name });
+                        onSelect({ id: `bhv-${beh.name}`, type: 'behavior', name: beh.name, line: beh.line });
                       }}>
                       {instCount > 0
                         ? <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
@@ -489,6 +492,7 @@ export default function ModelExplorer({
                             id: `bact-${beh.name}-${a.name}`,
                             type: 'actionInst',
                             name: a.name,
+                            line: a.line,
                             extra: { actionType: a.actionType, behavior: beh.name },
                           })}
                         />
@@ -522,7 +526,7 @@ export default function ModelExplorer({
                       onClick={() => {
                         if (states.length || transitions.length) toggle(subId);
                         onSelectStateMachine(sm.name);
-                        onSelect({ id: `smdef-${sm.name}`, type: 'stateMachine', name: sm.name });
+                        onSelect({ id: `smdef-${sm.name}`, type: 'stateMachine', name: sm.name, line: sm.line });
                       }}>
                       {(states.length > 0 || transitions.length > 0)
                         ? <span className="expl-chevron-inline">{isOpen ? '▾' : '▸'}</span>
@@ -547,6 +551,7 @@ export default function ModelExplorer({
                               onSelect({
                                 id: `sstate-${sm.name}-${s.name}`,
                                 type: 'stateEntry', name: s.name,
+                                line: s.line,
                                 extra: { stateMachine: sm.name },
                               });
                             }}
@@ -566,6 +571,7 @@ export default function ModelExplorer({
                                 onSelect({
                                   id: edgeId, type: 'stateTransition',
                                   name: t.event ? `${t.from} → ${t.to} [${t.event}]` : `${t.from} → ${t.to}`,
+                                  line: t.line,
                                   extra: { from: t.from, to: t.to, event: t.event, stateMachine: sm.name },
                                 });
                               }}
@@ -592,7 +598,7 @@ export default function ModelExplorer({
                   className={`expl-item expl-item-requirement${sel('req-' + req.name) ? ' expl-selected' : ''}`}
                   title={`${req.reqId ? req.reqId + ' — ' : ''}${req.name}  (line ${req.line})`}
                   onClick={() => {
-                    onSelect({ id: `req-${req.name}`, type: 'requirement', name: req.name,
+                    onSelect({ id: `req-${req.name}`, type: 'requirement', name: req.name, line: req.line,
                       extra: { reqId: req.reqId, text: req.text, priority: req.priority } });
                     onNavigate('requirements');
                   }}>
@@ -621,6 +627,7 @@ export default function ModelExplorer({
                       onSelect({
                         id: edgeId, type: 'traceLink',
                         name: `${l.source} ${l.linkType}s ${l.target}`,
+                        line: l.line,
                         extra: { source: l.source, target: l.target, linkType: l.linkType },
                       });
                       onNavigate('traceability');

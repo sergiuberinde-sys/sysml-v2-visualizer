@@ -35,6 +35,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const disposables: vscode.Disposable[] = [];
 
+    // ── Editor → webview cursor sync ──────────────────────────────────────────
+    // Suppressed for 150 ms after we move the cursor ourselves (via revealSource)
+    // to prevent the echo-loop: visualizer→revealSource→cursor→revealElementAtSource→loop.
+    let editorSyncSuppressed = false;
+    let editorSyncSuppressTimer: ReturnType<typeof setTimeout> | undefined;
+    let editorSyncDebounce:      ReturnType<typeof setTimeout> | undefined;
+
+    function suppressEditorSync(): void {
+      editorSyncSuppressed = true;
+      if (editorSyncSuppressTimer) clearTimeout(editorSyncSuppressTimer);
+      editorSyncSuppressTimer = setTimeout(() => { editorSyncSuppressed = false; }, 150);
+    }
+
     // Send the persisted sysml model to the webview — never reads activeTextEditor
     // so clicking inside the webview cannot change what is displayed.
     function sendCurrentModelToWebview(): void {
@@ -54,6 +67,7 @@ export function activate(context: vscode.ExtensionContext): void {
     panel.webview.onDidReceiveMessage(async (msg: {
       type: string;
       newText?: string;
+      sourceLocation?: { line: number; column: number };
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
@@ -87,6 +101,24 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         currentSysmlText = msg.newText;
         console.log('[sysml-visualizer] applyEdit succeeded — waiting for onDidChangeTextDocument');
+
+      } else if (msg.type === 'revealSource') {
+        if (!currentSysmlUri || !msg.sourceLocation) return;
+        const { line, column } = msg.sourceLocation;
+        // Suppress the cursor-change event that our cursor move will generate
+        suppressEditorSync();
+        const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
+        const position = new vscode.Position(line - 1, (column ?? 1) - 1);
+        const editor = await vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.One,
+          preserveFocus: true,
+        });
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+        );
+        console.log(`[sysml-visualizer] revealSource — line ${line}, col ${column}`);
       }
     }, undefined, disposables);
 
@@ -100,6 +132,24 @@ export function activate(context: vscode.ExtensionContext): void {
         console.log('[sysml-visualizer] document changed — sending updateModel to webview');
         panel.webview.postMessage({ type: 'updateModel', text: currentSysmlText });
       }
+    }, undefined, disposables);
+
+    // ── VS Code cursor → webview selection ───────────────────────────────────
+    // Debounced 100 ms so rapid typing/scrolling doesn't flood the webview.
+
+    vscode.window.onDidChangeTextEditorSelection(e => {
+      if (editorSyncSuppressed) return;
+      if (!currentSysmlUri || e.textEditor.document.uri.toString() !== currentSysmlUri.toString()) return;
+
+      clearTimeout(editorSyncDebounce);
+      editorSyncDebounce = setTimeout(() => {
+        const pos = e.selections[0].active;
+        console.log(`[sysml-visualizer] cursor moved — line ${pos.line + 1}`);
+        panel.webview.postMessage({
+          type: 'revealElementAtSource',
+          sourceLocation: { line: pos.line + 1, column: pos.character + 1 },
+        });
+      }, 100);
     }, undefined, disposables);
 
     // ── Active editor switches ────────────────────────────────────────────────
@@ -128,9 +178,11 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }, undefined, disposables);
 
-    // Dispose listeners when the panel is closed
+    // Dispose listeners and pending timers when the panel is closed
     panel.onDidDispose(() => {
       disposables.forEach(d => d.dispose());
+      if (editorSyncSuppressTimer) clearTimeout(editorSyncSuppressTimer);
+      if (editorSyncDebounce) clearTimeout(editorSyncDebounce);
     });
   });
 
