@@ -61,14 +61,18 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
   const allTypeNames = new Set<string>([...ifaceNames, ...partDefMap.keys()]);
 
   // All named element names — for reference resolution and ambiguity detection.
-  const allNames  = new Set<string>();
-  const nameCount = new Map<string, number>();
+  // elementKindMap records each element's kind for trace-link source validation.
+  const allNames       = new Set<string>();
+  const nameCount      = new Map<string, number>();
+  const elementKindMap = new Map<string, string>();
   for (const n of nodes) {
     if (!('name' in n)) continue;
-    const node = n as { name: string; namespace?: string };
+    const node = n as { name: string; namespace?: string; kind: string };
     allNames.add(node.name);
     if (node.namespace) allNames.add(`${node.namespace}::${node.name}`);
     nameCount.set(node.name, (nameCount.get(node.name) ?? 0) + 1);
+    elementKindMap.set(node.name, node.kind);
+    if (node.namespace) elementKindMap.set(`${node.namespace}::${node.name}`, node.kind);
   }
 
   // ── 0. WRONG_CONTEXT ─────────────────────────────────────────────────────
@@ -205,15 +209,36 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
         ));
       }
 
-      // Port direction compatibility: connected ports must have complementary directions
-      // (one in, one out) so data flows correctly between components.
+      // Port compatibility: direction and type checks require both ports to be resolved.
       if (fromPortMap && toPortMap) {
         const fp = fromPortMap.get(conn.fromPort);
         const tp = toPortMap.get(conn.toPort);
-        if (fp && tp && fp.direction === tp.direction) {
-          diagnostics.push(diag(conn.line, 'error', 'INCOMPATIBLE_PORT_DIRECTION',
-            `Port "${conn.fromPort}" (${fp.direction}) and "${conn.toPort}" (${tp.direction}) have the same direction — connected ports must be complementary`,
-          ));
+        if (fp && tp) {
+          // Direction compatibility.
+          // out→in is the standard flow direction and is always valid.
+          // in→in and out→out make no sense (no producer or no consumer).
+          // in→out is reverse direction — unusual, likely a boundary binding.
+          if (fp.direction === tp.direction) {
+            diagnostics.push(diag(conn.line, 'error', 'INCOMPATIBLE_PORT_DIRECTIONS',
+              `Ports "${conn.fromPort}" and "${conn.toPort}" both have direction "${fp.direction}" — a connection requires one "in" and one "out" port`,
+            ));
+          } else if (fp.direction === 'in' && tp.direction === 'out') {
+            diagnostics.push(diag(conn.line, 'warning', 'INCOMPATIBLE_PORT_DIRECTIONS',
+              `Connection from "in" port "${conn.fromPort}" to "out" port "${conn.toPort}" is reverse direction (in→out) — standard flow is out→in; verify this is an intentional boundary binding`,
+            ));
+          }
+
+          // Type compatibility: connected ports must carry the same interface type.
+          // Skipped when either type is unresolved — UNKNOWN_INTERFACE is already reported.
+          if (
+            fp.portType !== tp.portType &&
+            allTypeNames.has(fp.portType) &&
+            allTypeNames.has(tp.portType)
+          ) {
+            diagnostics.push(diag(conn.line, 'error', 'INCOMPATIBLE_PORT_TYPES',
+              `Port "${conn.fromPort}" carries type "${fp.portType}" but port "${conn.toPort}" carries type "${tp.portType}" — connected ports must share the same interface type`,
+            ));
+          }
         }
       }
     }
@@ -394,14 +419,24 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
 
     for (const child of node.body) {
       if (child.kind !== 'flow') continue;
-      if (!localActionNames.has(child.from)) {
+      const fromExists = localActionNames.has(child.from);
+      const toExists   = localActionNames.has(child.to);
+
+      if (!fromExists) {
         diagnostics.push(diag(child.line, 'error', 'UNKNOWN_ACTION',
           `Flow references unknown action "${child.from}"`,
         ));
       }
-      if (!localActionNames.has(child.to)) {
+      if (!toExists) {
         diagnostics.push(diag(child.line, 'error', 'UNKNOWN_ACTION',
           `Flow references unknown action "${child.to}"`,
+        ));
+      }
+
+      // Self-flow: both endpoints exist but point to the same action instance.
+      if (fromExists && toExists && child.from === child.to) {
+        diagnostics.push(diag(child.line, 'warning', 'SELF_FLOW',
+          `Flow from action "${child.from}" to itself — self-loops are typically a modeling error`,
         ));
       }
     }
@@ -440,6 +475,13 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
     }
   }
 
+  // Element kinds that are semantically appropriate as trace link sources.
+  // satisfy: design-level elements that fulfil requirements.
+  // verify:  verification artifacts that demonstrate requirement satisfaction.
+  // trace:   unrestricted — any element may be traced.
+  const SATISFY_SOURCE_KINDS = new Set(['partDef', 'behaviorDef', 'occurrenceDef', 'stateDef']);
+  const VERIFY_SOURCE_KINDS  = new Set(['occurrenceDef', 'behaviorDef', 'stateDef']);
+
   for (const link of links) {
     if (!allNames.has(link.source)) {
       const ambiguous = (nameCount.get(link.source) ?? 0) > 1;
@@ -449,6 +491,20 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
           ? `Ambiguous reference "${link.source}" (exists in multiple namespaces) — use a qualified name`
           : `Traceability source "${link.source}" not found in model`,
       ));
+    } else {
+      // Source resolves — check that its kind is appropriate for the link type.
+      const sourceKind = elementKindMap.get(link.source);
+      if (sourceKind) {
+        if (link.linkType === 'satisfy' && !SATISFY_SOURCE_KINDS.has(sourceKind)) {
+          diagnostics.push(diag(link.line, 'warning', 'SUSPICIOUS_TRACE_LINK',
+            `"satisfy" link source "${link.source}" is a "${sourceKind}" — satisfy links should originate from part definitions, behaviors, occurrences, or state machines`,
+          ));
+        } else if (link.linkType === 'verify' && !VERIFY_SOURCE_KINDS.has(sourceKind)) {
+          diagnostics.push(diag(link.line, 'warning', 'SUSPICIOUS_TRACE_LINK',
+            `"verify" link source "${link.source}" is a "${sourceKind}" — verify links should originate from occurrences, behaviors, or state machines`,
+          ));
+        }
+      }
     }
     if (!reqNames.has(link.target)) {
       diagnostics.push(diag(link.line, 'error', 'BROKEN_TRACE_LINK',
