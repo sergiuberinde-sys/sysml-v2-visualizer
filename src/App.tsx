@@ -250,6 +250,13 @@ export default function App() {
     getVsCodeApi()?.postMessage({ type: 'modelEdit', text: source });
   }, [source]);
 
+  // Relay parser diagnostics to VS Code's native Problems panel
+  useEffect(() => {
+    if (APP_MODE !== 'vscode') return;
+    if (!receivedFirstLoad.current) return;
+    getVsCodeApi()?.postMessage({ type: 'diagnosticsUpdate', diagnostics: result.diagnostics });
+  }, [result]);
+
   // Auto-open inspector when the user selects an element
   useEffect(() => {
     if (selection !== null) setInspectorOpen(true);
@@ -483,7 +490,7 @@ export default function App() {
       {/* ── 4-column workspace ────────────────────── */}
       <div className="app-layout">
 
-        {/* Column 1: Editor (standalone) or Problems panel (VS Code) */}
+        {/* Column 1: Editor (standalone) or Model Diagnostics panel (VS Code) */}
         {col1Open ? (
           APP_MODE === 'standalone' ? (
             <div className="panel editor-panel">
@@ -526,7 +533,7 @@ export default function App() {
               {result.diagnostics.length > 0 && (
                 <div className="diagnostics-panel">
                   <div className="diag-panel-hdr">
-                    <span>Problems</span>
+                    <span>Model Diagnostics</span>
                     <div className="diag-filter-bar">
                       {(['all', 'error', 'warning', 'info'] as const).map(f => {
                         const cnt = f === 'all' ? result.diagnostics.length
@@ -570,7 +577,7 @@ export default function App() {
             /* VS Code mode: diagnostics-only panel */
             <div className="panel editor-panel">
               <div className="panel-header">
-                <span>Problems</span>
+                <span>Model Diagnostics</span>
                 {result.diagnostics.length > 0 && (
                   <span className="diag-badge">
                     {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
@@ -630,7 +637,7 @@ export default function App() {
             <span className="panel-tab-label">
               {APP_MODE === 'standalone'
                 ? 'Editor'
-                : `Problems${result.diagnostics.length > 0 ? ` (${result.diagnostics.length})` : ''}`}
+                : `Model Diagnostics${result.diagnostics.length > 0 ? ` (${result.diagnostics.length})` : ''}`}
             </span>
           </button>
         )}

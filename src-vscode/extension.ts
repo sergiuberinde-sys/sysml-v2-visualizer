@@ -8,6 +8,10 @@ export function activate(context: vscode.ExtensionContext): void {
   let currentSysmlUri: vscode.Uri | undefined;
   let currentSysmlText: string | undefined;
 
+  // Publishes parser diagnostics to VS Code's native Problems panel.
+  const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
+  context.subscriptions.push(diagnosticCollection);
+
   const cmd = vscode.commands.registerCommand('sysmlVisualizer.openVisualizer', () => {
     // Snapshot the active sysml file BEFORE opening the panel.
     // Creating a webview panel can steal editor focus and clear activeTextEditor.
@@ -59,6 +63,7 @@ export function activate(context: vscode.ExtensionContext): void {
         });
       } else {
         panel.webview.postMessage({ type: 'noModel' });
+        diagnosticCollection.clear();
       }
     }
 
@@ -73,12 +78,35 @@ export function activate(context: vscode.ExtensionContext): void {
         range?: { start: { line: number; column: number }; end: { line: number; column: number } };
         text?: string;
       };
+      diagnostics?: Array<{
+        line: number;
+        severity: string;
+        message: string;
+        code?: string;
+      }>;
       sourceLocation?: { line: number; column: number };
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
       if (msg.type === 'ready') {
         sendCurrentModelToWebview();
+
+      } else if (msg.type === 'diagnosticsUpdate') {
+        if (!currentSysmlUri || !msg.diagnostics) return;
+        const vscodeDiags = msg.diagnostics.map(d => {
+          const line0 = Math.max(0, d.line - 1);
+          const range = new vscode.Range(line0, 0, line0, Number.MAX_SAFE_INTEGER);
+          const severity =
+            d.severity === 'error'   ? vscode.DiagnosticSeverity.Error :
+            d.severity === 'warning' ? vscode.DiagnosticSeverity.Warning :
+                                       vscode.DiagnosticSeverity.Information;
+          const diag = new vscode.Diagnostic(range, d.message, severity);
+          diag.source = 'SysML v2 Visualizer';
+          if (d.code) diag.code = d.code;
+          return diag;
+        });
+        diagnosticCollection.set(currentSysmlUri, vscodeDiags);
+        console.log(`[sysml-visualizer] published ${vscodeDiags.length} diagnostics for ${path.basename(currentSysmlUri.fsPath)}`);
 
       } else if (msg.type === 'applyFullTextEdit') {
         if (!currentSysmlUri) {
@@ -196,7 +224,9 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       if (isSysml(editor.document)) {
-        // Switched to a (possibly different) sysml file — update tracking and reload
+        // Switched to a (possibly different) sysml file — update tracking and reload.
+        // Clear stale diagnostics from the previous file before fresh ones arrive.
+        diagnosticCollection.clear();
         currentSysmlUri  = editor.document.uri;
         currentSysmlText = editor.document.getText();
         console.log(`[sysml-visualizer] loading sysml file: ${path.basename(editor.document.fileName)}`);
@@ -211,11 +241,21 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }, undefined, disposables);
 
-    // Dispose listeners and pending timers when the panel is closed
+    // ── Document close → clear diagnostics ───────────────────────────────────
+
+    vscode.workspace.onDidCloseTextDocument(doc => {
+      if (currentSysmlUri && doc.uri.toString() === currentSysmlUri.toString()) {
+        diagnosticCollection.clear();
+        console.log('[sysml-visualizer] tracked document closed — cleared diagnostics');
+      }
+    }, undefined, disposables);
+
+    // Dispose listeners, timers, and diagnostics when the panel is closed
     panel.onDidDispose(() => {
       disposables.forEach(d => d.dispose());
       if (editorSyncSuppressTimer) clearTimeout(editorSyncSuppressTimer);
       if (editorSyncDebounce) clearTimeout(editorSyncDebounce);
+      diagnosticCollection.clear();
     });
   });
 
