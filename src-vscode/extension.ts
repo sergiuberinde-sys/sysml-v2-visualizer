@@ -80,6 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
       };
       diagnostics?: Array<{
         line: number;
+        column?: number;
         severity: string;
         message: string;
         code?: string;
@@ -93,9 +94,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
       } else if (msg.type === 'diagnosticsUpdate') {
         if (!currentSysmlUri || !msg.diagnostics) return;
+        const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
         const vscodeDiags = msg.diagnostics.map(d => {
-          const line0 = Math.max(0, d.line - 1);
-          const range = new vscode.Range(line0, 0, line0, Number.MAX_SAFE_INTEGER);
+          // Parser locations are 1-based; VS Code positions are 0-based.
+          const lineIndex = Math.min(Math.max(0, d.line - 1), doc.lineCount - 1);
+          const lineObj   = doc.lineAt(lineIndex);
+          const startCol  = d.column ? Math.max(0, d.column - 1) : 0;
+          const endCol    = Math.max(startCol + 1, lineObj.text.length);
+          const range     = new vscode.Range(lineIndex, startCol, lineIndex, endCol);
+
           const severity =
             d.severity === 'error'   ? vscode.DiagnosticSeverity.Error :
             d.severity === 'warning' ? vscode.DiagnosticSeverity.Warning :
@@ -103,6 +110,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const diag = new vscode.Diagnostic(range, d.message, severity);
           diag.source = 'SysML v2 Visualizer';
           if (d.code) diag.code = d.code;
+          console.log(`[sysml-visualizer] diag ${d.code} L${d.line} → range [${lineIndex},${startCol}]-[${lineIndex},${endCol}]`);
           return diag;
         });
         diagnosticCollection.set(currentSysmlUri, vscodeDiags);

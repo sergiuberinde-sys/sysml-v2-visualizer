@@ -68,7 +68,7 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
 
     for (const child of node.body) {
       if (child.kind === 'port' && ifaceNames.size > 0 && !ifaceNames.has(child.portType)) {
-        diagnostics.push(diag(child.line, 'warning', 'UNKNOWN_INTERFACE',
+        diagnostics.push(diag(child.line, 'error', 'UNKNOWN_INTERFACE',
           `Unknown interface type "${child.portType}"`,
         ));
       }
@@ -90,13 +90,13 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
       const conn = child as ConnNode;
 
       if (!instanceTypes.has(conn.fromPart)) {
-        diagnostics.push(diag(conn.line, 'warning', 'UNKNOWN_PART',
+        diagnostics.push(diag(conn.line, 'error', 'UNKNOWN_PART',
           `Unknown part instance "${conn.fromPart}" in "${node.name}"`,
         ));
         continue;
       }
       if (!instanceTypes.has(conn.toPart)) {
-        diagnostics.push(diag(conn.line, 'warning', 'UNKNOWN_PART',
+        diagnostics.push(diag(conn.line, 'error', 'UNKNOWN_PART',
           `Unknown part instance "${conn.toPart}" in "${node.name}"`,
         ));
         continue;
@@ -104,14 +104,14 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
 
       const fromPorts = portNamesOf(instanceTypes.get(conn.fromPart)!);
       if (fromPorts && !fromPorts.has(conn.fromPort)) {
-        diagnostics.push(diag(conn.line, 'warning', 'UNKNOWN_PORT',
+        diagnostics.push(diag(conn.line, 'error', 'UNKNOWN_PORT',
           `"${instanceTypes.get(conn.fromPart)}" has no port "${conn.fromPort}"`,
         ));
       }
 
       const toPorts = portNamesOf(instanceTypes.get(conn.toPart)!);
       if (toPorts && !toPorts.has(conn.toPort)) {
-        diagnostics.push(diag(conn.line, 'warning', 'UNKNOWN_PORT',
+        diagnostics.push(diag(conn.line, 'error', 'UNKNOWN_PORT',
           `"${instanceTypes.get(conn.toPart)}" has no port "${conn.toPort}"`,
         ));
       }
@@ -144,18 +144,18 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
       if (child.from === '') {
         hasInitial = true;
         if (!stateNames.has(child.to)) {
-          diagnostics.push(diag(child.line, 'warning', 'UNKNOWN_STATE',
+          diagnostics.push(diag(child.line, 'error', 'UNKNOWN_STATE',
             `Initial transition targets unknown state "${child.to}"`,
           ));
         }
       } else {
         if (stateNames.size > 0 && !stateNames.has(child.from)) {
-          diagnostics.push(diag(child.line, 'warning', 'UNKNOWN_STATE',
+          diagnostics.push(diag(child.line, 'error', 'UNKNOWN_STATE',
             `Transition from unknown state "${child.from}"`,
           ));
         }
         if (stateNames.size > 0 && !stateNames.has(child.to)) {
-          diagnostics.push(diag(child.line, 'warning', 'UNKNOWN_STATE',
+          diagnostics.push(diag(child.line, 'error', 'UNKNOWN_STATE',
             `Transition to unknown state "${child.to}"`,
           ));
         }
@@ -192,12 +192,12 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
     for (const child of node.body) {
       if (child.kind !== 'flow') continue;
       if (!actionNames.has(child.from)) {
-        diagnostics.push(diag(child.line, 'warning', 'UNKNOWN_ACTION',
+        diagnostics.push(diag(child.line, 'error', 'UNKNOWN_ACTION',
           `Flow references unknown action "${child.from}"`,
         ));
       }
       if (!actionNames.has(child.to)) {
-        diagnostics.push(diag(child.line, 'warning', 'UNKNOWN_ACTION',
+        diagnostics.push(diag(child.line, 'error', 'UNKNOWN_ACTION',
           `Flow references unknown action "${child.to}"`,
         ));
       }
@@ -246,7 +246,7 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
   for (const link of links) {
     if (!allNames.has(link.source)) {
       const ambiguous = (nameCount.get(link.source) ?? 0) > 1;
-      diagnostics.push(diag(link.line, 'warning',
+      diagnostics.push(diag(link.line, 'error',
         ambiguous ? 'AMBIGUOUS_REFERENCE' : 'BROKEN_TRACE_LINK',
         ambiguous
           ? `Ambiguous reference "${link.source}" (exists in multiple namespaces)`
@@ -254,7 +254,7 @@ export function validate(result: ParseResult): ParseDiagnostic[] {
       ));
     }
     if (!reqNames.has(link.target)) {
-      diagnostics.push(diag(link.line, 'warning', 'BROKEN_TRACE_LINK',
+      diagnostics.push(diag(link.line, 'error', 'BROKEN_TRACE_LINK',
         `Traceability target "${link.target}" is not a defined requirement`,
       ));
     }
