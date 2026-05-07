@@ -448,10 +448,14 @@ export default function App() {
         <div className="vscode-debug-bar">
           <button
             className="vscode-debug-btn"
-            onClick={() => getVsCodeApi()?.postMessage({
-              type: 'testEdit',
-              textToAppend: '\n// Test edit from webview',
-            })}
+            onClick={() => {
+              const api = getVsCodeApi();
+              if (!api) {
+                alert('VS Code API not available');
+                return;
+              }
+              api.postMessage({ type: 'testEdit', textToAppend: '\n// Test edit from webview' });
+            }}
           >
             Test VS Code Edit
           </button>

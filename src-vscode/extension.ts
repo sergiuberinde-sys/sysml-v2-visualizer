@@ -16,6 +16,9 @@ export function activate(context: vscode.ExtensionContext): void {
       currentSysmlUri  = preLaunchSysml.document.uri;
       currentSysmlText = preLaunchSysml.document.getText();
       console.log(`[sysml-visualizer] captured initial sysml file: ${path.basename(preLaunchSysml.document.fileName)}`);
+      vscode.window.showInformationMessage(`SysML Visualizer: loaded ${preLaunchSysml.document.fileName}`);
+    } else {
+      console.log('[sysml-visualizer] no active .sysml editor at launch time');
     }
 
     const panel = vscode.window.createWebviewPanel(
@@ -58,8 +61,9 @@ export function activate(context: vscode.ExtensionContext): void {
       newText?: string;
       textToAppend?: string;
     }) => {
-      // Log every incoming message for diagnostics
+      // Visible + logged diagnostics for every message — remove once pipeline is verified
       console.log('[sysml-visualizer] received webview message', JSON.stringify(msg));
+      vscode.window.showInformationMessage(`SysML Visualizer: webview message received — ${msg.type}`);
 
       if (msg.type === 'ready') {
         // Webview has mounted — send current model or empty state
@@ -82,6 +86,7 @@ export function activate(context: vscode.ExtensionContext): void {
         applyingEdit = true;
         const ok = await vscode.workspace.applyEdit(appendEdit);
         applyingEdit = false;
+        vscode.window.showInformationMessage(`SysML Visualizer: testEdit applied — ${ok}`);
         if (!ok) {
           vscode.window.showErrorMessage('[sysml-visualizer] testEdit: WorkspaceEdit failed');
           return;
@@ -154,6 +159,7 @@ export function activate(context: vscode.ExtensionContext): void {
         currentSysmlUri  = editor.document.uri;
         currentSysmlText = editor.document.getText();
         console.log(`[sysml-visualizer] loading sysml file: ${path.basename(editor.document.fileName)}`);
+        vscode.window.showInformationMessage(`SysML Visualizer: loaded ${editor.document.fileName}`);
         panel.webview.postMessage({
           type: 'loadModel',
           text: currentSysmlText,
