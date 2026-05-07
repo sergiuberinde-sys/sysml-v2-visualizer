@@ -1,0 +1,18 @@
+# Exclude development source — only ship the compiled outputs
+src/**
+src-vscode/**
+scripts/**
+node_modules/**
+.vscode-test/**
+
+# Config / tooling
+tsconfig*.json
+vite.config.ts
+eslint.config.js
+.eslintrc*
+.gitignore
+
+# Keep dist/ and out-extension/ — they are the runtime artefacts
+# (vsce would otherwise exclude dist because it is in .gitignore)
+!dist/**
+!out-extension/**
