@@ -203,6 +203,9 @@ export default function App() {
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
+      } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
+        fromExtension.current = true;
+        setSource(msg.text);
       } else if (msg.type === 'noFile') {
         setNoFileOpen(true);
       }
@@ -215,7 +218,7 @@ export default function App() {
   useEffect(() => {
     if (!receivedFirstLoad.current) return;
     if (fromExtension.current) { fromExtension.current = false; return; }
-    getVsCodeApi()?.postMessage({ type: 'updateModel', text: source });
+    getVsCodeApi()?.postMessage({ type: 'modelEdit', text: source });
   }, [source]);
 
   // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────

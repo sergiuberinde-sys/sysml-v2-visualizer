@@ -29,7 +29,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // Webview has mounted — send initial model or "no file" signal
         sendCurrentFile(panel.webview);
 
-      } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
+      } else if (msg.type === 'modelEdit' && typeof msg.text === 'string') {
         // User edited in the webview — apply changes to the VS Code document
         const editor = vscode.window.activeTextEditor;
         if (!editor || !isSysml(editor.document)) return;
@@ -52,7 +52,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (applyingEdit) return;
       const editor = vscode.window.activeTextEditor;
       if (editor && e.document === editor.document && isSysml(e.document)) {
-        panel.webview.postMessage({ type: 'loadModel', text: e.document.getText() });
+        panel.webview.postMessage({ type: 'updateModel', text: e.document.getText() });
       }
     }, undefined, disposables);
 
