@@ -212,7 +212,7 @@ export default function App() {
       } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
         fromExtension.current = true;
         setSource(msg.text);
-      } else if (msg.type === 'noFile') {
+      } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
       }
     };
