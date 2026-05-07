@@ -1,7 +1,7 @@
 // Pure text insertion utilities. All functions return a new source string.
 // Line numbers in ParseResult are 1-based; array indices are 0-based.
 
-import type { ParseResult, SysMLNode, PackageDefNode } from './types';
+import type { ParseResult, SysMLNode, PackageDefNode } from './modelTypes';
 
 // Returns 0-based index of the first `}` line after openLineNum (1-based).
 // openLineNum as a 0-based index IS the line after the opening (e.g. opening at
@@ -179,8 +179,6 @@ export function insertTraceLink(
   ls.push(`${linkType} ${sourceEl} ${verb} ${targetReq};`);
   return ls.join('\n');
 }
-
-// ── Message ───────────────────────────────────────────────────────────────────
 
 // ── Package ───────────────────────────────────────────────────────────────────
 

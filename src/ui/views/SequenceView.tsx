@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import type { ParseResult, SysMLNode, SelectionState } from '../types';
+import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import type { SelectionState } from '../../app/selection';
 
 const LANE_W         = 170;
 const LANE_PAD       = 50;

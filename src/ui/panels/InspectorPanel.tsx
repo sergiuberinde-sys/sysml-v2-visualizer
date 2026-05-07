@@ -1,14 +1,15 @@
 import { useState } from 'react';
-import type { SelectionState, ParseResult, SysMLNode, PackageDefNode, ParseDiagnostic } from '../types';
-import { elementLines } from '../model/validator';
-import ActionModal, { type FieldDef } from './ActionModal';
+import type { ParseResult, SysMLNode, PackageDefNode, ParseDiagnostic } from '../../core/modelTypes';
+import type { SelectionState } from '../../app/selection';
+import { elementLines } from '../../core/validator';
+import ActionModal, { type FieldDef } from '../components/ActionModal';
 import {
   insertInterface, insertPartDef, insertPort,
   insertConnection, insertOccurrence, insertMessage,
   insertStateDef, insertStateEntry, insertStateTransition,
   insertRequirementDef, insertTraceLink,
   insertPackage, insertElementIntoPackage,
-} from '../insertions';
+} from '../../core/insertions';
 
 interface Props {
   selection: SelectionState;
