@@ -443,6 +443,21 @@ export default function App() {
         </div>
       )}
 
+      {/* ── VS Code debug toolbar (temporary — remove once edit pipeline is verified) ── */}
+      {APP_MODE === 'vscode' && (
+        <div className="vscode-debug-bar">
+          <button
+            className="vscode-debug-btn"
+            onClick={() => getVsCodeApi()?.postMessage({
+              type: 'testEdit',
+              textToAppend: '\n// Test edit from webview',
+            })}
+          >
+            Test VS Code Edit
+          </button>
+        </div>
+      )}
+
       {/* ── 4-column workspace ────────────────────── */}
       <div className="app-layout">
 
