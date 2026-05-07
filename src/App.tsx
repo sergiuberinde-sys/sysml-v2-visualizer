@@ -3,6 +3,7 @@ import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
 import { parse } from './parser';
+import { validate } from './model/validator';
 import { BRK_SAMPLE } from './sample';
 import { SYSML_TOKENS, SYSML_THEME } from './sysmlLanguage';
 import ModelExplorer from './views/ModelExplorer';
@@ -66,9 +67,12 @@ export default function App() {
   const [newModalMode, setNewModalMode]   = useState<'new' | 'saveAs' | null>(null);
 
   // ── History state ──────────────────────────────────────────────────────────
-  const [history, setHistory]             = useState<HistorySnapshot[]>(() => [
-    makeSnapshot(init.text, parse(init.text)),
-  ]);
+  const [diagFilter, setDiagFilter]       = useState<'all' | 'error' | 'warning' | 'info'>('all');
+
+  const [history, setHistory]             = useState<HistorySnapshot[]>(() => {
+    const parsed = parse(init.text);
+    return [makeSnapshot(init.text, { ...parsed, diagnostics: [...parsed.diagnostics, ...validate(parsed)] })];
+  });
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const historyDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const skipHistoryPush = useRef(false);
@@ -79,8 +83,12 @@ export default function App() {
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
 
-  // ── Parse ──────────────────────────────────────────────────────────────────
-  const result = useMemo(() => parse(source), [source]);
+  // ── Parse + validate ──────────────────────────────────────────────────────
+  const result = useMemo(() => {
+    const parsed = parse(source);
+    const semDiags = validate(parsed);
+    return { ...parsed, diagnostics: [...parsed.diagnostics, ...semDiags] };
+  }, [source]);
 
   const behavioralOccurrences = useMemo(
     () => result.nodes
@@ -159,9 +167,9 @@ export default function App() {
     monaco.editor.setModelMarkers(
       model, 'sysml',
       result.diagnostics.map(d => ({
-        severity: d.severity === 'error'
-          ? monaco.MarkerSeverity.Error
-          : monaco.MarkerSeverity.Warning,
+        severity: d.severity === 'error'   ? monaco.MarkerSeverity.Error
+                : d.severity === 'warning' ? monaco.MarkerSeverity.Warning
+                : monaco.MarkerSeverity.Info,
         startLineNumber: d.line,
         startColumn: 1,
         endLineNumber: d.line,
@@ -350,6 +358,7 @@ export default function App() {
 
   const errCount  = result.diagnostics.filter(d => d.severity === 'error').length;
   const warnCount = result.diagnostics.filter(d => d.severity === 'warning').length;
+  const infoCount = result.diagnostics.filter(d => d.severity === 'info').length;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -383,6 +392,7 @@ export default function App() {
               <span className="diag-badge">
                 {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
                 {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+                {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
               </span>
             )}
           </div>
@@ -413,19 +423,44 @@ export default function App() {
 
           {result.diagnostics.length > 0 && (
             <div className="diagnostics-panel">
-              <div className="diag-panel-hdr">Problems — click to navigate</div>
-              {result.diagnostics.map((d, i) => (
-                <div
-                  key={i}
-                  className={`diag-row diag-${d.severity}`}
-                  onClick={() => jumpToLine(d.line)}
-                  title={`Line ${d.line}: ${d.message}`}
-                >
-                  <span className="diag-sev-icon">{d.severity === 'error' ? '✖' : '⚠'}</span>
-                  <span className="diag-loc">L{d.line}</span>
-                  <span className="diag-msg">{d.message}</span>
+              <div className="diag-panel-hdr">
+                <span>Problems</span>
+                <div className="diag-filter-bar">
+                  {(['all', 'error', 'warning', 'info'] as const).map(f => {
+                    const cnt = f === 'all' ? result.diagnostics.length
+                      : f === 'error'   ? errCount
+                      : f === 'warning' ? warnCount
+                      : infoCount;
+                    return (
+                      <button
+                        key={f}
+                        className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
+                        onClick={() => setDiagFilter(f)}
+                      >
+                        {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                        <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
+                      </button>
+                    );
+                  })}
                 </div>
-              ))}
+              </div>
+              {result.diagnostics
+                .filter(d => diagFilter === 'all' || d.severity === diagFilter)
+                .map((d, i) => (
+                  <div
+                    key={i}
+                    className={`diag-row diag-${d.severity}`}
+                    onClick={() => jumpToLine(d.line)}
+                    title={`Line ${d.line}: ${d.message}`}
+                  >
+                    <span className="diag-sev-icon">
+                      {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                    </span>
+                    <span className="diag-loc">L{d.line}</span>
+                    {d.code && <span className="diag-code">{d.code}</span>}
+                    <span className="diag-msg">{d.message}</span>
+                  </div>
+                ))}
             </div>
           )}
         </div>

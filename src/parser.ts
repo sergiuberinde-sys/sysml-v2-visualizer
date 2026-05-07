@@ -1,13 +1,6 @@
 import type { SysMLNode, ParseDiagnostic, ParseResult, PackageDefNode } from './types';
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-type PartDefNode      = Extract<SysMLNode, { kind: 'partDef' }>;
-type InterfaceDefNode = Extract<SysMLNode, { kind: 'interfaceDef' }>;
-type PortNode         = Extract<SysMLNode, { kind: 'port' }>;
-type ConnectionNode   = Extract<SysMLNode, { kind: 'connection' }>;
-
-// ── package tree → flat nodes + top-level packages ────────────────────────────
+// ── Package tree → flat nodes + top-level packages ────────────────────────────
 
 function flattenPackages(topNodes: SysMLNode[]): { flatNodes: SysMLNode[]; packages: PackageDefNode[] } {
   const packages = topNodes.filter((n): n is PackageDefNode => n.kind === 'packageDef');
@@ -22,258 +15,7 @@ function flattenPackages(topNodes: SysMLNode[]): { flatNodes: SysMLNode[]; packa
   return { flatNodes, packages };
 }
 
-// ── semantic validation ───────────────────────────────────────────────────────
-
-function validate(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
-  const ifaceNames = new Set<string>(
-    nodes
-      .filter((n): n is InterfaceDefNode => n.kind === 'interfaceDef')
-      .map(n => n.name),
-  );
-
-  const partDefMap = new Map<string, PartDefNode>(
-    nodes
-      .filter((n): n is PartDefNode => n.kind === 'partDef')
-      .map(n => [n.name, n]),
-  );
-
-  for (const node of nodes) {
-    if (node.kind !== 'partDef') continue;
-
-    for (const child of node.body) {
-      if (child.kind === 'port' && ifaceNames.size > 0 && !ifaceNames.has(child.portType)) {
-        diagnostics.push({
-          line: child.line,
-          message: `Unknown interface type: "${child.portType}"`,
-          severity: 'warning',
-        });
-      }
-    }
-
-    const instanceTypes = new Map<string, string>();
-    for (const child of node.body) {
-      if (child.kind === 'partAlias') instanceTypes.set(child.name, child.type);
-    }
-
-    const portNamesOf = (typeName: string): Set<string> | undefined => {
-      const def = partDefMap.get(typeName);
-      if (!def) return undefined;
-      return new Set(
-        def.body
-          .filter((b): b is PortNode => b.kind === 'port')
-          .map(p => p.name),
-      );
-    };
-
-    for (const child of node.body) {
-      if (child.kind !== 'connection') continue;
-      const conn = child as ConnectionNode;
-
-      if (!instanceTypes.has(conn.fromPart)) {
-        diagnostics.push({ line: conn.line, message: `Unknown part instance: "${conn.fromPart}"`, severity: 'warning' });
-        continue;
-      }
-      if (!instanceTypes.has(conn.toPart)) {
-        diagnostics.push({ line: conn.line, message: `Unknown part instance: "${conn.toPart}"`, severity: 'warning' });
-        continue;
-      }
-
-      const fromPorts = portNamesOf(instanceTypes.get(conn.fromPart)!);
-      if (fromPorts && !fromPorts.has(conn.fromPort)) {
-        diagnostics.push({
-          line: conn.line,
-          message: `"${instanceTypes.get(conn.fromPart)}" has no port "${conn.fromPort}"`,
-          severity: 'warning',
-        });
-      }
-
-      const toPorts = portNamesOf(instanceTypes.get(conn.toPart)!);
-      if (toPorts && !toPorts.has(conn.toPort)) {
-        diagnostics.push({
-          line: conn.line,
-          message: `"${instanceTypes.get(conn.toPart)}" has no port "${conn.toPort}"`,
-          severity: 'warning',
-        });
-      }
-    }
-  }
-}
-
-// ── state machine validation ──────────────────────────────────────────────────
-
-function validateStateMachines(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
-  for (const node of nodes) {
-    if (node.kind !== 'stateDef') continue;
-
-    const seen       = new Set<string>();
-    const stateNames = new Set<string>();
-    let   hasInitial = false;
-
-    for (const child of node.body) {
-      if (child.kind === 'stateEntry') {
-        if (seen.has(child.name)) {
-          diagnostics.push({
-            line: child.line,
-            message: `Duplicate state "${child.name}" in "${node.name}"`,
-            severity: 'warning',
-          });
-        }
-        seen.add(child.name);
-        stateNames.add(child.name);
-      }
-    }
-
-    for (const child of node.body) {
-      if (child.kind !== 'transition') continue;
-      if (child.from === '') {
-        hasInitial = true;
-        if (!stateNames.has(child.to)) {
-          diagnostics.push({
-            line: child.line,
-            message: `Initial transition targets unknown state "${child.to}"`,
-            severity: 'warning',
-          });
-        }
-      } else {
-        if (stateNames.size > 0 && !stateNames.has(child.from)) {
-          diagnostics.push({
-            line: child.line,
-            message: `Transition from unknown state "${child.from}"`,
-            severity: 'warning',
-          });
-        }
-        if (stateNames.size > 0 && !stateNames.has(child.to)) {
-          diagnostics.push({
-            line: child.line,
-            message: `Transition to unknown state "${child.to}"`,
-            severity: 'warning',
-          });
-        }
-      }
-    }
-
-    if (stateNames.size > 0 && !hasInitial) {
-      diagnostics.push({
-        line: node.line,
-        message: `State machine "${node.name}" has no initial transition`,
-        severity: 'warning',
-      });
-    }
-  }
-}
-
-// ── behavior validation ───────────────────────────────────────────────────────
-
-function validateBehaviors(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
-  for (const node of nodes) {
-    if (node.kind !== 'behaviorDef') continue;
-
-    const seen = new Set<string>();
-    const actionNames = new Set<string>();
-
-    for (const child of node.body) {
-      if (child.kind === 'actionInst') {
-        if (seen.has(child.name)) {
-          diagnostics.push({
-            line: child.line,
-            message: `Duplicate action name "${child.name}" in behavior "${node.name}"`,
-            severity: 'warning',
-          });
-        }
-        seen.add(child.name);
-        actionNames.add(child.name);
-      }
-    }
-
-    for (const child of node.body) {
-      if (child.kind !== 'flow') continue;
-      if (!actionNames.has(child.from)) {
-        diagnostics.push({
-          line: child.line,
-          message: `Flow references unknown action "${child.from}"`,
-          severity: 'warning',
-        });
-      }
-      if (!actionNames.has(child.to)) {
-        diagnostics.push({
-          line: child.line,
-          message: `Flow references unknown action "${child.to}"`,
-          severity: 'warning',
-        });
-      }
-    }
-  }
-}
-
-// ── namespace validation ──────────────────────────────────────────────────────
-
-function validateNamespaces(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
-  const seen = new Map<string, number>();
-  for (const node of nodes) {
-    if (!('name' in node) || !('namespace' in node)) continue;
-    const n = node as { name: string; namespace: string; line: number };
-    const key = n.namespace ? `${n.namespace}::${n.name}` : n.name;
-    if (seen.has(key)) {
-      diagnostics.push({
-        line: n.line,
-        severity: 'error',
-        message: `Duplicate element name "${n.name}" in namespace "${n.namespace || '(root)'}"`,
-      });
-    } else {
-      seen.set(key, n.line);
-    }
-  }
-}
-
-// ── requirement / traceability validation ─────────────────────────────────────
-
-function validateRequirements(nodes: SysMLNode[], diagnostics: ParseDiagnostic[]) {
-  type RD = Extract<SysMLNode, { kind: 'requirementDef' }>;
-  type TL = Extract<SysMLNode, { kind: 'traceLink' }>;
-
-  const reqs  = nodes.filter((n): n is RD => n.kind === 'requirementDef');
-  const links = nodes.filter((n): n is TL => n.kind === 'traceLink');
-
-  const allNames = new Set<string>();
-  const reqNames = new Set<string>();
-
-  for (const n of nodes) {
-    if (!('name' in n)) continue;
-    const node = n as { name: string; namespace?: string };
-    allNames.add(node.name);
-    if (node.namespace) allNames.add(`${node.namespace}::${node.name}`);
-    if (n.kind === 'requirementDef') {
-      reqNames.add(node.name);
-      if (node.namespace) reqNames.add(`${node.namespace}::${node.name}`);
-    }
-  }
-
-  const seenIds = new Map<string, number>();
-
-  for (const req of reqs) {
-    if (!req.reqId) {
-      diagnostics.push({ line: req.line, severity: 'warning', message: `Requirement "${req.name}" is missing an id field.` });
-    } else if (seenIds.has(req.reqId)) {
-      diagnostics.push({ line: req.line, severity: 'error', message: `Duplicate requirement id "${req.reqId}".` });
-    } else {
-      seenIds.set(req.reqId, req.line);
-    }
-    if (!req.text) {
-      diagnostics.push({ line: req.line, severity: 'warning', message: `Requirement "${req.name}" is missing a text field.` });
-    }
-  }
-
-  for (const link of links) {
-    if (!allNames.has(link.source)) {
-      diagnostics.push({ line: link.line, severity: 'warning', message: `Traceability: source "${link.source}" not found in the model.` });
-    }
-    if (!reqNames.has(link.target)) {
-      diagnostics.push({ line: link.line, severity: 'warning', message: `Traceability: target "${link.target}" is not a defined requirement.` });
-    }
-  }
-}
-
-// ── main parser ───────────────────────────────────────────────────────────────
+// ── Main parser ───────────────────────────────────────────────────────────────
 
 export function parse(source: string): ParseResult {
   const rawLines = source.split('\n');
@@ -311,7 +53,7 @@ export function parse(source: string): ParseResult {
           dest.push({ kind: frame.kind, name: frame.name, namespace: currentNs(), body: frame.body, line: frame.startLine } as SysMLNode);
         }
       } else {
-        diagnostics.push({ line: lineNum, message: 'Unexpected }', severity: 'error' });
+        diagnostics.push({ line: lineNum, severity: 'error', message: 'Unexpected }' });
       }
       continue;
     }
@@ -325,7 +67,7 @@ export function parse(source: string): ParseResult {
       if (fm) { frame.reqText = fm[1]; continue; }
       fm = line.match(/^priority\s*=\s*"([^"]*)"/);
       if (fm) { frame.reqPriority = fm[1]; continue; }
-      diagnostics.push({ line: lineNum, message: `Unrecognized requirement field: "${line}"`, severity: 'warning' });
+      diagnostics.push({ line: lineNum, severity: 'warning', message: `Unrecognized requirement field: "${line}"` });
       continue;
     }
 
@@ -451,13 +193,13 @@ export function parse(source: string): ParseResult {
     m = line.match(/^trace\s+(\w+)\s+traces\s+(\w+)/);
     if (m) { target.push({ kind: 'traceLink', namespace: currentNs(), linkType: 'trace', source: m[1], target: m[2], line: lineNum }); continue; }
 
-    diagnostics.push({ line: lineNum, message: `Unrecognized statement: "${line}"`, severity: 'warning' });
+    diagnostics.push({ line: lineNum, severity: 'warning', message: `Unrecognized statement: "${line}"` });
   }
 
   // Flush unclosed blocks
   while (stack.length > 0) {
     const frame = stack.pop()!;
-    diagnostics.push({ line: frame.startLine, message: `Unclosed block: ${frame.kind} ${frame.name}`, severity: 'error' });
+    diagnostics.push({ line: frame.startLine, severity: 'error', message: `Unclosed block: ${frame.kind} ${frame.name}` });
     const dest = stack.length > 0 ? stack[stack.length - 1].body : nodes;
     if (frame.kind === 'packageDef') {
       namespaceStack.pop();
@@ -470,12 +212,5 @@ export function parse(source: string): ParseResult {
   }
 
   const { flatNodes, packages } = flattenPackages(nodes);
-
-  validateStateMachines(flatNodes, diagnostics);
-  validateBehaviors(flatNodes, diagnostics);
-  validateRequirements(flatNodes, diagnostics);
-  validateNamespaces(flatNodes, diagnostics);
-  validate(flatNodes, diagnostics);
-
   return { nodes: flatNodes, packages, diagnostics };
 }

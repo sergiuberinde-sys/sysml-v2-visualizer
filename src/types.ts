@@ -1,7 +1,8 @@
 export interface ParseDiagnostic {
   line: number;
   message: string;
-  severity: 'error' | 'warning';
+  severity: 'error' | 'warning' | 'info';
+  code?: string;
 }
 
 // ── Node kinds ─────────────────────────────────────────────────────────────────
