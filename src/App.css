@@ -1082,33 +1082,6 @@ html, body, #root {
   color: #585b70;
 }
 
-/* ── VS Code debug toolbar (temporary) ──────────────── */
-
-.vscode-debug-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding: 0 12px;
-  background: #12121e;
-  border-bottom: 1px solid #313244;
-  flex-shrink: 0;
-}
-
-.vscode-debug-btn {
-  background: #2a1200;
-  border: 1px solid #7f4a00;
-  color: #fb923c;
-  padding: 3px 10px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: inherit;
-  font-weight: 600;
-  transition: background 0.1s;
-}
-.vscode-debug-btn:hover { background: #3d1c00; }
-
 /* ── VS Code mode: diagnostics-only column ───────────── */
 
 /* Filter bar flush at top of the panel (no Monaco above it) */
