@@ -1,4 +1,5 @@
 export const DUPLICATE_NAME          = 'DUPLICATE_NAME';
+export const UNKNOWN_PARTICIPANT     = 'UNKNOWN_PARTICIPANT';
 export const UNKNOWN_INTERFACE       = 'UNKNOWN_INTERFACE';
 export const UNKNOWN_PART            = 'UNKNOWN_PART';
 export const UNKNOWN_PORT            = 'UNKNOWN_PORT';

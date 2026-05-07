@@ -37,7 +37,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const result      = parseAndValidate(document.getText());
     const diagnostics = result.diagnostics.map(d => {
-      const range = toVsCodeRange(document, d.line);
+      const range = toVsCodeRange(document, d.line, d.column);
       const vd    = new vscode.Diagnostic(range, d.message, mapSeverity(d));
       vd.source   = 'SysML v2 Visualizer';
       vd.code     = d.code;
