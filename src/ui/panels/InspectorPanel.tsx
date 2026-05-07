@@ -16,6 +16,7 @@ interface Props {
   result: ParseResult;
   source: string;
   onSourceChange: (s: string) => void;
+  onCollapse?: () => void;
 }
 
 // ── Modal discriminant ────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ function ActionBtn({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function InspectorPanel({ selection, result, source, onSourceChange }: Props) {
+export default function InspectorPanel({ selection, result, source, onSourceChange, onCollapse }: Props) {
   const [modal, setModal] = useState<ModalKind>(null);
 
   // ── Derived model data for validation ──────────────────────────────────────
@@ -849,7 +850,12 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
   return (
     <div className="panel inspector-panel">
-      <div className="panel-header">Inspector</div>
+      <div className="panel-header">
+        Inspector
+        {onCollapse && (
+          <button className="panel-toggle-btn" onClick={onCollapse} title="Collapse">▶</button>
+        )}
+      </div>
 
       {actionsPanel}
 

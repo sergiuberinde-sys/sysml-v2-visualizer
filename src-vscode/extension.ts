@@ -27,10 +27,12 @@ export function activate(context: vscode.ExtensionContext): void {
     panel.webview.onDidReceiveMessage(async (msg: { type: string; text?: string }) => {
       if (msg.type === 'ready') {
         // Webview has mounted — send initial model or "no file" signal
+        console.log('[sysml-visualizer] webview ready — sending current file state');
         sendCurrentFile(panel.webview);
 
       } else if (msg.type === 'modelEdit' && typeof msg.text === 'string') {
-        // User edited in the webview — apply changes to the VS Code document
+        // User edited via UI actions in the webview — write back to the VS Code document
+        console.log('[sysml-visualizer] received modelEdit from webview — applying to document');
         const editor = vscode.window.activeTextEditor;
         if (!editor || !isSysml(editor.document)) return;
         const doc = editor.document;
@@ -52,13 +54,22 @@ export function activate(context: vscode.ExtensionContext): void {
       if (applyingEdit) return;
       const editor = vscode.window.activeTextEditor;
       if (editor && e.document === editor.document && isSysml(e.document)) {
+        console.log('[sysml-visualizer] document changed — sending updateModel to webview');
         panel.webview.postMessage({ type: 'updateModel', text: e.document.getText() });
       }
     }, undefined, disposables);
 
     // ── Active editor switches → reload ──────────────────────────────────────
 
-    vscode.window.onDidChangeActiveTextEditor(_editor => {
+    vscode.window.onDidChangeActiveTextEditor(editor => {
+      // editor is undefined when the webview panel itself gains focus — that is not a real
+      // editor switch, just the user clicking inside the visualizer.  Keep showing the last
+      // loaded model rather than flashing the "no file" overlay.
+      if (editor === undefined) {
+        console.log('[sysml-visualizer] active editor undefined (webview focused?) — keeping current model');
+        return;
+      }
+      console.log(`[sysml-visualizer] active editor → ${path.basename(editor.document.fileName)}`);
       sendCurrentFile(panel.webview);
     }, undefined, disposables);
 

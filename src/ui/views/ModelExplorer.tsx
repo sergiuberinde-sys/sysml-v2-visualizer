@@ -82,6 +82,7 @@ interface Props {
   onSelectStateMachine: (name: string) => void;
   onSelect: (s: SelectionState) => void;
   onNavigate: (tab: ViewTab) => void;
+  onCollapse?: () => void;
 }
 
 type IfaceDef    = Extract<SysMLNode, { kind: 'interfaceDef' }>;
@@ -134,6 +135,7 @@ function SubItem({ icon, text, dim, onClick, selected }: {
 export default function ModelExplorer({
   result, selectedOccurrence, selectedBehavior, selectedStateMachine, selection,
   onSelectScenario, onSelectBehavior, onSelectStateMachine, onSelect, onNavigate,
+  onCollapse,
 }: Props) {
   const [open, setOpen] = useState<Set<string>>(
     new Set(['packages', 'interfaces', 'partTypes', 'system', 'scenarios', 'actions', 'behaviors', 'stateMachines', 'requirements', 'traceLinks']),
@@ -174,7 +176,12 @@ export default function ModelExplorer({
 
   return (
     <div className="panel explorer-panel">
-      <div className="panel-header">Model Explorer</div>
+      <div className="panel-header">
+        Model Explorer
+        {onCollapse && (
+          <button className="panel-toggle-btn" onClick={onCollapse} title="Collapse">◀</button>
+        )}
+      </div>
 
       {pkg && (
         <div className="expl-package">
