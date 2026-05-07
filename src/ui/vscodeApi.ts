@@ -1,26 +1,31 @@
 // VS Code webview API bridge.
 // acquireVsCodeApi() is injected by VS Code into the webview page.
-// Returns null when running as a standalone web app.
+// It must be called exactly once per webview session — we do it here at
+// module load time so the result is cached for the entire page lifetime.
+
+declare global {
+  interface Window {
+    acquireVsCodeApi?: () => {
+      postMessage: (message: unknown) => void;
+    };
+  }
+}
 
 interface VsCodeApi {
   postMessage(message: unknown): void;
 }
 
-let _api: VsCodeApi | null = null;
+// Acquired once.  undefined when running as a plain web app.
+const _api: VsCodeApi | undefined =
+  typeof window !== 'undefined' && typeof window.acquireVsCodeApi === 'function'
+    ? window.acquireVsCodeApi()
+    : undefined;
 
-export function getVsCodeApi(): VsCodeApi | null {
-  if (_api) return _api;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const acquire = (window as any).acquireVsCodeApi;
-  if (typeof acquire === 'function') {
-    _api = acquire() as VsCodeApi;
-  }
+export function getVsCodeApi(): VsCodeApi | undefined {
   return _api;
 }
 
-// Detect app mode by checking for the VS Code webview injection.
-// Called once at module load time; result is stable for the page lifetime.
+// Stable for the page lifetime — derived from the single acquisition above.
 export function getAppMode(): 'standalone' | 'vscode' {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return typeof (window as any).acquireVsCodeApi === 'function' ? 'vscode' : 'standalone';
+  return _api !== undefined ? 'vscode' : 'standalone';
 }
