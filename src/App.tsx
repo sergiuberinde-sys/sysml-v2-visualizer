@@ -250,12 +250,6 @@ export default function App() {
     getVsCodeApi()?.postMessage({ type: 'modelEdit', text: source });
   }, [source]);
 
-  // Relay parser diagnostics to VS Code's native Problems panel
-  useEffect(() => {
-    if (APP_MODE !== 'vscode') return;
-    if (!receivedFirstLoad.current) return;
-    getVsCodeApi()?.postMessage({ type: 'diagnosticsUpdate', diagnostics: result.diagnostics });
-  }, [result]);
 
   // Auto-open inspector when the user selects an element
   useEffect(() => {

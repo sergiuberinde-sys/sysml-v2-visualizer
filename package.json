@@ -8,13 +8,17 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "main": "./out-extension/extension.js",
+  "main": "./out-extension/src-vscode/extension.js",
   "activationEvents": [],
   "contributes": {
     "commands": [
       {
         "command": "sysmlVisualizer.openVisualizer",
         "title": "Open SysML v2 Visualizer"
+      },
+      {
+        "command": "sysmlVisualizer.debugDiagnostics",
+        "title": "SysML: Debug Diagnostics"
       }
     ]
   },
