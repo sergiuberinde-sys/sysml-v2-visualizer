@@ -727,6 +727,7 @@ satisfy Signal satisfies SafeBraking;              // SUSPICIOUS_TRACE_LINK — 
 |---|---|---|
 | `DUPLICATE_NAME` | error | Two elements share a name in the same namespace |
 | `UNKNOWN_INTERFACE` | error | Port type is not a declared `interface def` or `part def` |
+| `UNSUPPORTED_SYNTAX` | warning | A SysML v2 construct is not yet supported in this subset |
 | `UNKNOWN_PART` | error | Part usage or participant type is not a declared `part def` |
 | `UNKNOWN_PORT` | error | Port referenced in `connect` is not declared on the part type |
 | `UNKNOWN_PARTICIPANT` | error | Message endpoint is not a declared participant alias |
@@ -749,17 +750,37 @@ satisfy Signal satisfies SafeBraking;              // SUSPICIOUS_TRACE_LINK — 
 
 ## Out of Scope (Unsupported SysML v2)
 
-The following SysML v2 constructs are **not yet supported** and will produce
-parser warnings if encountered:
+The following SysML v2 constructs are **not yet supported**. The parser emits
+an `UNSUPPORTED_SYNTAX` warning (code `UNSUPPORTED_SYNTAX`) when any of these
+are encountered. Known patterns receive a targeted hint message; anything
+completely unrecognized gets a generic `Unrecognized statement` message.
 
-- `attribute def` / `item def` / `calc def` / `constraint def`
-- Generalization / specialization (`:>`)
-- Redefinition (`redefines`)
-- `import` / `alias`
-- `ref` usages
-- Multiplicities (`[0..*]`, `[1]`)
-- `perform` / `exhibit` / `send` / `bind` / `succession`
-- `doc` / `comment` annotations
-- `metadata def`
-- `use case def`
-- `allocation def`
+| Construct | Example | Hint |
+|-----------|---------|------|
+| `import` | `import Pkg::*;` | not supported in this subset |
+| `alias` | `alias Foo = Bar;` | not supported in this subset |
+| `attribute def` | `attribute def Mass;` | use `interface def` instead |
+| `attribute` usage | `attribute mass : Real;` | not supported in this subset |
+| `item def` | `item def Payload;` | not supported in this subset |
+| `calc def` | `calc def Compute;` | not supported in this subset |
+| `constraint def` | `constraint def MaxLoad;` | not supported in this subset |
+| `use case def` | `use case def Scenario;` | not supported in this subset |
+| `allocation def` | `allocation def HwAlloc;` | not supported in this subset |
+| `metadata def` | `metadata def Tags;` | not supported in this subset |
+| `view def` | `view def Diagram;` | not supported in this subset |
+| `allocate` | `allocate Comp to HW;` | not supported in this subset |
+| `ref` | `ref part brake = B;` | not supported in this subset |
+| `doc` | `doc /* ... */` | use `//` line comments instead |
+| `comment` | `comment /* ... */` | use `//` line comments instead |
+| `perform` | `perform action A;` | not supported in this subset |
+| `exhibit` | `exhibit state M;` | not supported in this subset |
+| `send` | `send Signal via P;` | not supported in this subset |
+| `bind` | `bind a.x = b.y;` | not supported in this subset |
+| `succession` | `succession A then B;` | not supported in this subset |
+| Generalization | `part def Child :> Parent;` | `:>` not supported |
+| Redefinition | `redefines ...` | not supported in this subset |
+| Multiplicities | `port out p : T [0..*];` | bracket multiplicities not parsed |
+
+> Line comments (`// ...`) and blank lines are always silently ignored.
+> Unrecognized requirement body fields (anything other than `id`, `text`,
+> `priority`) also emit `UNSUPPORTED_SYNTAX`.

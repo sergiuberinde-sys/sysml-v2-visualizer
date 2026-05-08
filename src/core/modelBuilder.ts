@@ -1,9 +1,32 @@
-import { parse } from './parser';
-import { validate } from './validator';
-import type { ParseResult } from './modelTypes';
+/**
+ * Public entry point for the visualizer UI and VS Code extension.
+ *
+ * parseAndValidate() is the backward-compatible surface used by the UI.
+ * New code (extension, future LSP) should prefer analyzeSysML() directly.
+ */
 
-export function parseAndValidate(sysmlText: string): ParseResult {
-  const parsed = parse(sysmlText);
-  const semDiags = validate(parsed);
-  return { ...parsed, diagnostics: [...parsed.diagnostics, ...semDiags] };
+import { analyzeSysML } from './analyzer/analyzeSysML';
+import { elementLines } from './validator/validator';
+import type { ParseResult, ParseDiagnostic, SysMLNode, PackageDefNode } from './modelTypes';
+import type { ASTResult } from './ast/astTypes';
+import type { SemanticModel } from './model/modelBuilder';
+
+export interface ParseAndValidateResult extends ParseResult {
+  ast:   ASTResult;
+  model: SemanticModel;
 }
+
+/** @deprecated Prefer analyzeSysML() for new code. */
+export function parseAndValidate(sysmlText: string): ParseAndValidateResult {
+  const analysis = analyzeSysML(sysmlText);
+  return {
+    ast:          analysis.ast,
+    model:        analysis.model,
+    nodes:        analysis.model.nodes,
+    packages:     analysis.model.packages,
+    diagnostics:  analysis.diagnostics,
+  };
+}
+
+export { elementLines };
+export type { ParseResult, ParseDiagnostic, SysMLNode, PackageDefNode, SemanticModel };
