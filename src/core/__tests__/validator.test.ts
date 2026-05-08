@@ -578,8 +578,9 @@ package B {
   interface def Signal;
 }
 `;
-    // AMBIGUOUS_REFERENCE fires (same short name in two namespaces), but not DUPLICATE_NAME
+    // Same short name in different namespaces is allowed — no error at definition sites
     expect(hasCode(src, 'DUPLICATE_NAME')).toBe(false);
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(false);
   });
 });
 
@@ -629,9 +630,8 @@ behavior def Behav {
   action a : Ghost;
 }
 `;
-    // actionDefNames is empty, so the guard prevents false positives
-    // — no error when there are zero action defs
-    expect(hasCode(src, 'UNKNOWN_ACTION')).toBe(false);
+    // Ghost is not in the symbol table — always an error regardless of how many action defs exist
+    expect(hasCode(src, 'UNKNOWN_ACTION')).toBe(true);
   });
 
   it('UNKNOWN_ACTION — action instance type declared but mismatched', () => {
@@ -978,5 +978,346 @@ describe('diagnostic source line accuracy', () => {
     const d = run(src).find(x => x.code === 'UNKNOWN_STATE');
     expect(d).toBeDefined();
     expect(d?.line).toBe(4);
+  });
+});
+
+// ── 17. UNSUPPORTED_SYNTAX detection ─────────────────────────────────────────
+
+describe('UNSUPPORTED_SYNTAX detection', () => {
+  it('import statement emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('import SomePackage::*;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('alias statement emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('alias Foo = Bar;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('attribute def emits UNSUPPORTED_SYNTAX with helpful message', () => {
+    const diags = warnings('attribute def Mass;');
+    expect(diags.some(d => d.code === 'UNSUPPORTED_SYNTAX' && d.message.includes('interface def'))).toBe(true);
+  });
+
+  it('attribute usage emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('attribute mass : Real;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('item def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('item def Payload;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('calc def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('calc def Compute;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('constraint def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('constraint def MaxLoad;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('use case def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('use case def BrakeScenario;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('allocation def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('allocation def HwAlloc;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('metadata def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('metadata def Tags;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('view def emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('view def Diagram;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('allocate emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('allocate Comp to HW;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('ref usage emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('ref part brake = BrakePedal;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('doc annotation emits UNSUPPORTED_SYNTAX with comment hint', () => {
+    const diags = warnings('doc /* some docs */');
+    expect(diags.some(d => d.code === 'UNSUPPORTED_SYNTAX' && d.message.includes('//'))).toBe(true);
+  });
+
+  it('comment block emits UNSUPPORTED_SYNTAX with comment hint', () => {
+    const diags = warnings('comment /* block comment */');
+    expect(diags.some(d => d.code === 'UNSUPPORTED_SYNTAX' && d.message.includes('//'))).toBe(true);
+  });
+
+  it('perform emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('perform action Brake;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('exhibit emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('exhibit state Machine;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('send emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('send Signal via Port;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('bind emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('bind a.x = b.y;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('succession emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('succession first then second;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('generalization (:>) emits UNSUPPORTED_SYNTAX warning', () => {
+    expect(warnCodes('part def Child :> Parent;')).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('completely unrecognized line still emits UNSUPPORTED_SYNTAX (no code)', () => {
+    const diags = warnings('gibberish xyz 123');
+    expect(diags.some(d => d.code === 'UNSUPPORTED_SYNTAX')).toBe(true);
+  });
+
+  it('unrecognized requirement field emits UNSUPPORTED_SYNTAX', () => {
+    const src = [
+      'requirement def R {',
+      '  id = "REQ-1"',
+      '  text = "some text"',
+      '  unknown = "field"',
+      '}',
+    ].join('\n');
+    expect(warnCodes(src)).toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('line comments produce no diagnostics', () => {
+    expect(run('// this is a comment')).toHaveLength(0);
+  });
+
+  it('empty lines produce no diagnostics', () => {
+    expect(run('   \n\n   \n')).toHaveLength(0);
+  });
+
+  it('valid interface def produces no UNSUPPORTED_SYNTAX', () => {
+    expect(codes('interface def BrakeSignal;')).not.toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('valid part def produces no UNSUPPORTED_SYNTAX', () => {
+    const src = [
+      'part def BrakePedal {',
+      '}',
+    ].join('\n');
+    expect(codes(src)).not.toContain('UNSUPPORTED_SYNTAX');
+  });
+
+  it('valid satisfy link produces no UNSUPPORTED_SYNTAX', () => {
+    const src = [
+      'part def Brake;',
+      'requirement def R1 {',
+      '  id = "REQ-1"',
+      '  text = "must brake"',
+      '}',
+      'satisfy Brake satisfies R1;',
+    ].join('\n');
+    expect(codes(src)).not.toContain('UNSUPPORTED_SYNTAX');
+  });
+});
+
+// ── 18. Symbol table & resolver ───────────────────────────────────────────────
+
+describe('symbol table and resolver', () => {
+  // ── Namespace scoping ────────────────────────────────────────────────────
+
+  it('same short name in different packages is allowed — no error at definition site', () => {
+    const src = `
+package A {
+  part def Brake;
+}
+package B {
+  part def Brake;
+}
+`;
+    expect(hasCode(src, 'DUPLICATE_NAME')).toBe(false);
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(false);
+    expect(errors(src)).toHaveLength(0);
+  });
+
+  it('duplicate short name in same package is DUPLICATE_NAME error', () => {
+    const src = `
+package A {
+  part def Brake;
+  part def Brake;
+}
+`;
+    expect(hasCode(src, 'DUPLICATE_NAME')).toBe(true);
+  });
+
+  it('duplicate short name at root level is DUPLICATE_NAME error', () => {
+    const src = `
+interface def Signal;
+interface def Signal;
+`;
+    expect(hasCode(src, 'DUPLICATE_NAME')).toBe(true);
+  });
+
+  // ── Qualified name resolution ────────────────────────────────────────────
+
+  it('qualified port type resolves correctly — no error', () => {
+    const src = `
+package Signals {
+  interface def BrakeSignal;
+}
+part def BrakePedal {
+  port out p : Signals::BrakeSignal;
+}
+`;
+    expect(hasCode(src, 'UNKNOWN_INTERFACE')).toBe(false);
+    expect(errors(src)).toHaveLength(0);
+  });
+
+  it('qualified part type in composition resolves correctly — no error', () => {
+    const src = `
+package Parts {
+  part def Wheel;
+}
+part def Car {
+  part w : Parts::Wheel;
+}
+`;
+    expect(hasCode(src, 'UNKNOWN_PART')).toBe(false);
+    expect(errors(src)).toHaveLength(0);
+  });
+
+  it('qualified name resolves within package — no error', () => {
+    const src = `
+package Braking {
+  interface def Signal;
+  part def Pedal {
+    port out p : Braking::Signal;
+  }
+}
+`;
+    expect(errors(src)).toHaveLength(0);
+  });
+
+  it('unqualified name resolves via local namespace lookup', () => {
+    const src = `
+package Braking {
+  interface def Signal;
+  part def Pedal {
+    port out p : Signal;
+  }
+}
+`;
+    expect(hasCode(src, 'UNKNOWN_INTERFACE')).toBe(false);
+    expect(errors(src)).toHaveLength(0);
+  });
+
+  // ── Ambiguity at reference site ─────────────────────────────────────────
+
+  it('unqualified reference to name in two packages emits AMBIGUOUS_REFERENCE', () => {
+    const src = `
+package A {
+  interface def Signal;
+}
+package B {
+  interface def Signal;
+}
+part def Pedal {
+  port out p : Signal;
+}
+`;
+    // Signal exists in both A and B; unqualified reference from root is ambiguous
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(true);
+    expect(hasCode(src, 'UNKNOWN_INTERFACE')).toBe(false);
+  });
+
+  it('AMBIGUOUS_REFERENCE — ambiguous part type in composition', () => {
+    const src = `
+package A {
+  part def Wheel;
+}
+package B {
+  part def Wheel;
+}
+part def Car {
+  part w : Wheel;
+}
+`;
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(true);
+  });
+
+  it('qualified reference resolves even when short name is ambiguous', () => {
+    const src = `
+package A {
+  interface def Signal;
+}
+package B {
+  interface def Signal;
+}
+part def Pedal {
+  port out p : A::Signal;
+}
+`;
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(false);
+    expect(hasCode(src, 'UNKNOWN_INTERFACE')).toBe(false);
+    expect(errors(src)).toHaveLength(0);
+  });
+
+  // ── UNRESOLVED / UNKNOWN_* for truly missing names ──────────────────────
+
+  it('unresolved port type emits UNKNOWN_INTERFACE', () => {
+    const src = `
+part def Pedal {
+  port out p : NoSuchInterface;
+}
+`;
+    expect(hasCode(src, 'UNKNOWN_INTERFACE')).toBe(true);
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(false);
+  });
+
+  it('unresolved part type in composition emits UNKNOWN_PART', () => {
+    const src = `
+part def Car {
+  part w : NoSuchPart;
+}
+`;
+    expect(hasCode(src, 'UNKNOWN_PART')).toBe(true);
+  });
+
+  it('unresolved action type emits UNKNOWN_ACTION', () => {
+    const src = `
+behavior def B {
+  action a : NoSuchAction;
+}
+`;
+    expect(hasCode(src, 'UNKNOWN_ACTION')).toBe(true);
+  });
+
+  it('unresolved trace link source emits BROKEN_TRACE_LINK', () => {
+    const src = `
+requirement def R {
+  id   = "REQ-1"
+  text = "must work"
+}
+satisfy NoSuchElement satisfies R;
+`;
+    expect(hasCode(src, 'BROKEN_TRACE_LINK')).toBe(true);
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(false);
+  });
+
+  it('ambiguous trace link source emits AMBIGUOUS_REFERENCE not BROKEN_TRACE_LINK', () => {
+    const src = `
+package A {
+  part def Brake;
+}
+package B {
+  part def Brake;
+}
+requirement def R {
+  id   = "REQ-1"
+  text = "must work"
+}
+satisfy Brake satisfies R;
+`;
+    expect(hasCode(src, 'AMBIGUOUS_REFERENCE')).toBe(true);
+    expect(hasCode(src, 'BROKEN_TRACE_LINK')).toBe(false);
   });
 });

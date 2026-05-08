@@ -9,8 +9,18 @@
     "vscode": "^1.85.0"
   },
   "main": "./out-extension/src-vscode/extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:sysml",
+    "onCommand:sysmlVisualizer.openVisualizer"
+  ],
   "contributes": {
+    "languages": [
+      {
+        "id": "sysml",
+        "extensions": [".sysml"],
+        "aliases": ["SysML", "sysml"]
+      }
+    ],
     "commands": [
       {
         "command": "sysmlVisualizer.openVisualizer",
@@ -23,6 +33,10 @@
       {
         "command": "sysmlVisualizer.revealModelSource",
         "title": "SysML: Reveal Current Model Source"
+      },
+      {
+        "command": "sysmlVisualizer.debugSemanticTokens",
+        "title": "SysML: Debug Semantic Tokens"
       }
     ]
   },
