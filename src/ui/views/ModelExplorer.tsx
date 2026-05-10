@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ParseResult, SysMLNode, PackageDefNode } from '../../core/modelTypes';
+import type { VisualizerModel, VizNode, VizPackageNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 
 type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state' | 'requirements' | 'traceability';
@@ -7,7 +7,7 @@ type ViewTab = 'structure' | 'sequence' | 'json' | 'behavior' | 'state' | 'requi
 // ── Package tree node ─────────────────────────────────────────────────────────
 
 function PackageTreeNode({ pkg, depth, open, toggle, sel, onSelect }: {
-  pkg: PackageDefNode;
+  pkg: VizPackageNode;
   depth: number;
   open: Set<string>;
   toggle: (id: string) => void;
@@ -17,7 +17,7 @@ function PackageTreeNode({ pkg, depth, open, toggle, sel, onSelect }: {
   const ns = pkg.namespace ? `${pkg.namespace}::${pkg.name}` : pkg.name;
   const subId = `pkg-tree-${ns}`;
   const isOpen = open.has(subId);
-  const childPkgs = pkg.body.filter((n): n is PackageDefNode => n.kind === 'packageDef');
+  const childPkgs = pkg.body.filter((n): n is VizPackageNode => n.kind === 'packageDef');
   const childElems = pkg.body.filter(n => n.kind !== 'packageDef' && 'name' in n);
   const hasChildren = childPkgs.length > 0 || childElems.length > 0;
 
@@ -72,7 +72,7 @@ function PackageTreeNode({ pkg, depth, open, toggle, sel, onSelect }: {
 }
 
 interface Props {
-  result: ParseResult;
+  result: VisualizerModel;
   selectedOccurrence: string;
   selectedBehavior: string;
   selectedStateMachine: string;
@@ -85,20 +85,20 @@ interface Props {
   onCollapse?: () => void;
 }
 
-type IfaceDef    = Extract<SysMLNode, { kind: 'interfaceDef' }>;
-type PartDef     = Extract<SysMLNode, { kind: 'partDef' }>;
-type OccDef      = Extract<SysMLNode, { kind: 'occurrenceDef' }>;
-type PortNode    = Extract<SysMLNode, { kind: 'port' }>;
-type AliasNode   = Extract<SysMLNode, { kind: 'partAlias' }>;
-type ConnNode    = Extract<SysMLNode, { kind: 'connection' }>;
-type ActionDef   = Extract<SysMLNode, { kind: 'actionDef' }>;
-type BehaviorDef = Extract<SysMLNode, { kind: 'behaviorDef' }>;
-type ActionInst  = Extract<SysMLNode, { kind: 'actionInst' }>;
-type StateDef      = Extract<SysMLNode, { kind: 'stateDef' }>;
-type StateEntry    = Extract<SysMLNode, { kind: 'stateEntry' }>;
-type Transition    = Extract<SysMLNode, { kind: 'transition' }>;
-type RequirementDef = Extract<SysMLNode, { kind: 'requirementDef' }>;
-type TraceLinkNode  = Extract<SysMLNode, { kind: 'traceLink' }>;
+type IfaceDef    = Extract<VizNode,{ kind: 'interfaceDef' }>;
+type PartDef     = Extract<VizNode,{ kind: 'partDef' }>;
+type OccDef      = Extract<VizNode,{ kind: 'occurrenceDef' }>;
+type PortNode    = Extract<VizNode,{ kind: 'port' }>;
+type AliasNode   = Extract<VizNode,{ kind: 'partAlias' }>;
+type ConnNode    = Extract<VizNode,{ kind: 'connection' }>;
+type ActionDef   = Extract<VizNode,{ kind: 'actionDef' }>;
+type BehaviorDef = Extract<VizNode,{ kind: 'behaviorDef' }>;
+type ActionInst  = Extract<VizNode,{ kind: 'actionInst' }>;
+type StateDef      = Extract<VizNode,{ kind: 'stateDef' }>;
+type StateEntry    = Extract<VizNode,{ kind: 'stateEntry' }>;
+type Transition    = Extract<VizNode,{ kind: 'transition' }>;
+type RequirementDef = Extract<VizNode,{ kind: 'requirementDef' }>;
+type TraceLinkNode  = Extract<VizNode,{ kind: 'traceLink' }>;
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -151,7 +151,7 @@ export default function ModelExplorer({
   }
 
   const pkg = result.nodes.find(n => n.kind === 'package') as
-    Extract<SysMLNode, { kind: 'package' }> | undefined;
+    Extract<VizNode,{ kind: 'package' }> | undefined;
 
   const ifaceDefs    = result.nodes.filter((n): n is IfaceDef => n.kind === 'interfaceDef');
   const allPartDefs  = result.nodes.filter((n): n is PartDef  => n.kind === 'partDef');
@@ -270,7 +270,7 @@ export default function ModelExplorer({
                     {isOpen && ports.map(p => (
                       <SubItem
                         key={p.name}
-                        icon={p.direction === 'in' ? '◂' : '▸'}
+                        icon={p.direction === 'in' ? '◂' : p.direction === 'inout' ? '⇄' : '▸'}
                         text={p.name}
                         dim={`: ${p.portType}`}
                         selected={sel(`port-${n.name}-${p.name}`)}

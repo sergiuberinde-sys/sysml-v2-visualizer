@@ -1,3 +1,5 @@
+import type { ParserMode } from './parserMode';
+
 export interface ParseDiagnostic {
   line: number;
   column?: number;
@@ -15,11 +17,16 @@ export type SysMLNode =
   | { kind: 'package';        name: string;                                                                                         line: number }
   | { kind: 'packageDef';     name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'interfaceDef';   name: string; namespace: string;                                                                      line: number }
+  | { kind: 'portDef';        name: string; namespace: string;                                                                      line: number }
   | { kind: 'partDef';        name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
+  | { kind: 'itemDef';        name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
+  | { kind: 'partUsage';      name: string; namespace: string; type: string; body: SysMLNode[];                          line: number; endLine?: number }
+  | { kind: 'attributeDef';   name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
+  | { kind: 'attributeUsage'; name: string; type: string;                                                                line: number }
   | { kind: 'occurrenceDef';  name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
-  | { kind: 'port';           name: string; direction: 'in' | 'out'; portType: string;                                             line: number }
+  | { kind: 'port';           name: string; direction: 'in' | 'out' | 'inout'; portType: string;                                   line: number }
   | { kind: 'partAlias';      name: string; type: string;                                                                           line: number }
-  | { kind: 'connection';     fromPart: string; fromPort: string; toPart: string; toPort: string;                                   line: number }
+  | { kind: 'connection';     fromPart: string; fromPort: string; toPart: string; toPort: string; connType?: string;             line: number }
   | { kind: 'message';        name: string; from: string; to: string; occurrence: string; fromColumn?: number; toColumn?: number;  line: number }
   | { kind: 'actionDef';      name: string; namespace: string;                                                                      line: number }
   | { kind: 'behaviorDef';    name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
@@ -39,4 +46,9 @@ export interface ParseResult {
   /** Top-level packageDef nodes (tree, for the package explorer). */
   packages: PackageDefNode[];
   diagnostics: ParseDiagnostic[];
+  /**
+   * The parser mode that produced this result.
+   * Currently always 'legacySubset' — see parserMode.ts.
+   */
+  parserMode: ParserMode;
 }

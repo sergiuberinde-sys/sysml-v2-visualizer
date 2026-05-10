@@ -4,14 +4,14 @@ import {
   type Node, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import type { VisualizerModel, VizNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type BehaviorDef = Extract<SysMLNode, { kind: 'behaviorDef' }>;
-type ActionInst  = Extract<SysMLNode, { kind: 'actionInst' }>;
-type FlowEdge    = Extract<SysMLNode, { kind: 'flow' }>;
+type BehaviorDef = Extract<VizNode, { kind: 'behaviorDef' }>;
+type ActionInst  = Extract<VizNode, { kind: 'actionInst' }>;
+type FlowEdge    = Extract<VizNode, { kind: 'flow' }>;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -149,7 +149,7 @@ function buildGraph(behavior: BehaviorDef): { nodes: Node[]; edges: Edge[] } {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  result: ParseResult;
+  result: VisualizerModel;
   behaviorName: string;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;

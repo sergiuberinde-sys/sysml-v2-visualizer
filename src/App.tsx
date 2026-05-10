@@ -9,6 +9,7 @@ import ModelExplorer from './ui/views/ModelExplorer';
 import StructureView from './ui/views/StructureView';
 import SequenceView from './ui/views/SequenceView';
 import BehaviorView from './ui/views/BehaviorView';
+import OfficialBehaviorView from './ui/views/OfficialBehaviorView';
 import StateView from './ui/views/StateView';
 import RequirementsView from './ui/views/RequirementsView';
 import TraceabilityView from './ui/views/TraceabilityView';
@@ -19,7 +20,7 @@ import ProjectModal from './ui/components/ProjectModal';
 import ActionModal from './ui/components/ActionModal';
 import HistoryModal from './ui/components/HistoryModal';
 import ErrorBoundary from './ui/ErrorBoundary';
-import type { SysMLNode } from './core/modelTypes';
+import type { VisualizerModel, VizNode } from './core/visualizerModel';
 import type { SelectionState } from './app/selection';
 import type { Project } from './app/state';
 import {
@@ -27,6 +28,8 @@ import {
   setAutosave, generateId, makeTemplate,
   getInitialProjectState,
 } from './app/state';
+import { PARSER_MODE } from './core/parserMode';
+import type { ModelingMode } from './core/parserMode';
 import {
   makeSnapshot, MAX_HISTORY, HISTORY_DEBOUNCE_MS,
   type HistorySnapshot,
@@ -34,9 +37,22 @@ import {
 import { getVsCodeApi, getAppMode } from './ui/vscodeApi';
 import { findElementAtLine } from './app/sourceMatcher';
 import type { IncrementalEdit } from './core/editDescriptor';
+import { convert as toVisualizerModel } from './core/adapters/legacySubsetAdapter';
+import { convertGraph } from './core/adapters/officialSysMLAdapter';
+import type { SysMLV2ParseResult, BehaviorData } from './core/sysmlv2Official';
+import { HttpSysMLV2ParserService } from './core/sysmlv2Official';
+import ContainmentGraphView from './ui/views/ContainmentGraphView';
 import './App.css';
 
-type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json';
+// Empty model used in official mode until VisualizerModel mapping is implemented
+const OFFICIAL_EMPTY_VIZ_MODEL: VisualizerModel = {
+  parserMode: 'sysmlV2OfficialFuture',
+  nodes: [],
+  packages: [],
+  diagnostics: [],
+};
+
+type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json' | 'graph';
 
 const TAB_LABELS: Record<ViewTab, string> = {
   structure:    'Structure',
@@ -46,6 +62,7 @@ const TAB_LABELS: Record<ViewTab, string> = {
   requirements: 'Reqts',
   traceability: 'Trace',
   json:         'JSON',
+  graph:        'Graph',
 };
 
 // ── App mode — detected once at module load, stable for the page lifetime ────
@@ -76,9 +93,9 @@ export default function App() {
   const receivedFirstLoad                 = useRef(false);
   // Prevents echo-loop: set true when selection comes from revealElementAtSource
   const suppressRevealSource              = useRef(false);
-  // Latest result and selection for use inside stable message-handler closure.
+  // Latest vizModel and selection for use inside stable message-handler closure.
   // Initialized with null; kept current by direct assignment after useMemo below.
-  const resultRef                         = useRef<ReturnType<typeof parseAndValidate> | null>(null);
+  const vizModelRef                       = useRef<VisualizerModel | null>(null);
   const selectionRef                      = useRef<SelectionState>(null);
 
   // ── Panel visibility ───────────────────────────────────────────────────────
@@ -97,7 +114,7 @@ export default function App() {
   const [diagFilter, setDiagFilter]       = useState<'all' | 'error' | 'warning' | 'info'>('all');
 
   const [history, setHistory]             = useState<HistorySnapshot[]>(() => [
-    makeSnapshot(init.text, parseAndValidate(init.text)),
+    makeSnapshot(init.text, toVisualizerModel(parseAndValidate(init.text))),
   ]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const historyDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -105,36 +122,81 @@ export default function App() {
 
   const isUnsaved = !activeProject || source !== activeProject.sysmlText;
 
+  // ── Modeling mode (prototypeSubset vs officialSysMLV2) ─────────────────────
+  const [modelingMode, setModelingMode] = useState<ModelingMode>(() =>
+    (localStorage.getItem('sysmlv2-modeling-mode') as ModelingMode | null) ?? 'prototypeSubset'
+  );
+  const [serviceEndpoint, setServiceEndpoint] = useState(
+    () => localStorage.getItem('sysmlv2-service-endpoint')
+      ?? (import.meta.env['VITE_SYSML_V2_PARSER_URL'] as string | undefined)
+      ?? 'http://localhost:9001'
+  );
+  const [officialParseResult, setOfficialParseResult] = useState<SysMLV2ParseResult | null>(null);
+  const [officialParseLoading, setOfficialParseLoading] = useState(false);
+
   // ── Monaco refs ────────────────────────────────────────────────────────────
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
 
   // ── Parse + validate ──────────────────────────────────────────────────────
   const result = useMemo(() => parseAndValidate(source), [source]);
-  // Keep latest-ref copies for use inside stable closures (message handlers)
-  resultRef.current    = result;
   selectionRef.current = selection;
 
+  // ── Adapt to VisualizerModel (consumed by all views) ──────────────────────
+  const vizModel = useMemo(() => {
+    if (modelingMode === 'officialSysMLV2' && officialParseResult?.graph) {
+      return convertGraph(officialParseResult);
+    }
+    if (modelingMode === 'officialSysMLV2') return OFFICIAL_EMPTY_VIZ_MODEL;
+    return toVisualizerModel(result);
+  }, [modelingMode, result, officialParseResult]);
+  // Keep latest-ref copy for use inside stable closures (message handlers)
+  vizModelRef.current = vizModel;
+
   const behavioralOccurrences = useMemo(
-    () => result.nodes
-      .filter((n): n is Extract<SysMLNode, { kind: 'occurrenceDef' }> =>
+    () => vizModel.nodes
+      .filter((n): n is Extract<VizNode, { kind: 'occurrenceDef' }> =>
         n.kind === 'occurrenceDef' && n.body.some(b => b.kind === 'message'))
       .map(n => n.name),
-    [result],
+    [vizModel],
   );
 
-  const behaviorDefNames = useMemo(
-    () => result.nodes
-      .filter((n): n is Extract<SysMLNode, { kind: 'behaviorDef' }> => n.kind === 'behaviorDef')
-      .map(n => n.name),
-    [result],
-  );
+  const behaviorDefNames = useMemo(() => {
+    console.log('[App] mode:', modelingMode, 'behavior:', officialParseResult?.behavior);
+    // Official mode: only include ActionDefinitions that own at least one action instance.
+    // This prevents empty definitions (e.g. "action def ReadSensor;") from being auto-selected.
+    if (modelingMode === 'officialSysMLV2' && officialParseResult?.behavior) {
+      const beh = officialParseResult.behavior;
+      return beh.actions
+        .filter(a => a.type === 'ActionDefinition')
+        .filter(def => beh.actions.some(
+          a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.ownerId === def.id,
+        ))
+        .map(a => a.name);
+    }
+    return vizModel.nodes
+      .filter((n): n is Extract<VizNode, { kind: 'behaviorDef' }> => n.kind === 'behaviorDef')
+      .map(n => n.name);
+  }, [vizModel, modelingMode, officialParseResult]);
 
   const stateMachineNames = useMemo(
-    () => result.nodes
-      .filter((n): n is Extract<SysMLNode, { kind: 'stateDef' }> => n.kind === 'stateDef')
+    () => vizModel.nodes
+      .filter((n): n is Extract<VizNode, { kind: 'stateDef' }> => n.kind === 'stateDef')
       .map(n => n.name),
-    [result],
+    [vizModel],
+  );
+
+  // Unified diagnostics: from official service or from legacy parser
+  const activeDiagnostics = useMemo(
+    () => modelingMode === 'officialSysMLV2'
+      ? (officialParseResult?.diagnostics.map(d => ({
+          message:  d.message,
+          line:     d.line ?? 1,
+          column:   d.column,
+          severity: d.severity,
+        })) ?? [])
+      : result.diagnostics,
+    [modelingMode, officialParseResult, result.diagnostics],
   );
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -176,13 +238,40 @@ export default function App() {
     historyDebounce.current = setTimeout(() => {
       setHistory(prev => {
         if (prev.length > 0 && prev[prev.length - 1].text === source) return prev;
-        const next = [...prev, makeSnapshot(source, result)];
+        const next = [...prev, makeSnapshot(source, vizModel)];
         return next.length > MAX_HISTORY ? next.slice(-MAX_HISTORY) : next;
       });
     }, HISTORY_DEBOUNCE_MS);
-  }, [source, result]);
+  }, [source, vizModel]);
 
-  // Sync parser diagnostics → Monaco markers
+  // Official SysML v2 mode — call HTTP parser service when source/mode/endpoint changes
+  useEffect(() => {
+    if (modelingMode !== 'officialSysMLV2') {
+      setOfficialParseResult(null);
+      setOfficialParseLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setOfficialParseLoading(true);
+    const svc = new HttpSysMLV2ParserService(serviceEndpoint);
+    svc.parse(source).then(res => {
+      if (cancelled) return;
+      setOfficialParseResult(res);
+      setOfficialParseLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [source, modelingMode, serviceEndpoint]);
+
+  // Persist mode and endpoint selections across page loads
+  useEffect(() => {
+    localStorage.setItem('sysmlv2-modeling-mode', modelingMode);
+  }, [modelingMode]);
+
+  useEffect(() => {
+    localStorage.setItem('sysmlv2-service-endpoint', serviceEndpoint);
+  }, [serviceEndpoint]);
+
+  // Sync diagnostics → Monaco editor markers
   useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
@@ -191,7 +280,7 @@ export default function App() {
     if (!model) return;
     monaco.editor.setModelMarkers(
       model, 'sysml',
-      result.diagnostics.map(d => ({
+      activeDiagnostics.map(d => ({
         severity: d.severity === 'error'   ? monaco.MarkerSeverity.Error
                 : d.severity === 'warning' ? monaco.MarkerSeverity.Warning
                 : monaco.MarkerSeverity.Info,
@@ -203,12 +292,18 @@ export default function App() {
         message: d.message,
       })),
     );
-  }, [result.diagnostics]);
+  }, [activeDiagnostics]);
 
   // ── VS Code webview message bus ───────────────────────────────────────────
 
   // Signal readiness so the extension knows when to send the initial model
   useEffect(() => { getVsCodeApi()?.postMessage({ type: 'ready' }); }, []);
+
+  // Keep the extension in sync so it publishes official (not prototype) diagnostics
+  // when the user switches to official mode in the webview.
+  useEffect(() => {
+    getVsCodeApi()?.postMessage({ type: 'modelingModeChange', mode: modelingMode });
+  }, [modelingMode]);
 
   // Receive messages from the extension
   useEffect(() => {
@@ -217,6 +312,9 @@ export default function App() {
         type: string;
         text?: string;
         sourceLocation?: { line: number; column: number };
+        parserServiceUrl?: string;
+        graph?: SysMLV2ParseResult['graph'];
+        behavior?: BehaviorData;
       };
       if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
@@ -229,10 +327,21 @@ export default function App() {
         setSource(msg.text);
       } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
+      } else if (msg.type === 'parserServiceConfig' && typeof msg.parserServiceUrl === 'string') {
+        // VS Code extension sent the configured parser service URL from settings.
+        // This overrides the localStorage default so the extension config is authoritative.
+        setServiceEndpoint(msg.parserServiceUrl);
+      } else if (msg.type === 'updateGraph' && msg.graph) {
+        console.log('[App] received updateGraph, behavior:', msg.behavior);
+        setOfficialParseResult(prev =>
+          prev
+            ? { ...prev, graph: msg.graph, behavior: msg.behavior ?? prev.behavior }
+            : { success: true, diagnostics: [], graph: msg.graph, behavior: msg.behavior },
+        );
       } else if (msg.type === 'revealElementAtSource' && msg.sourceLocation) {
         const { line } = msg.sourceLocation;
-        if (!resultRef.current) return;
-        const found = findElementAtLine(line, resultRef.current);
+        if (!vizModelRef.current) return;
+        const found = findElementAtLine(line, vizModelRef.current);
         if (found !== null && found.id !== selectionRef.current?.id) {
           suppressRevealSource.current = true;
           setSelection(found);
@@ -446,9 +555,9 @@ export default function App() {
     monacoRef.current = monaco;
   };
 
-  const errCount  = result.diagnostics.filter(d => d.severity === 'error').length;
-  const warnCount = result.diagnostics.filter(d => d.severity === 'warning').length;
-  const infoCount = result.diagnostics.filter(d => d.severity === 'info').length;
+  const errCount  = activeDiagnostics.filter(d => d.severity === 'error').length;
+  const warnCount = activeDiagnostics.filter(d => d.severity === 'warning').length;
+  const infoCount = activeDiagnostics.filter(d => d.severity === 'info').length;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -490,7 +599,7 @@ export default function App() {
             <div className="panel editor-panel">
               <div className="panel-header">
                 <span>SysML v2 Source</span>
-                {result.diagnostics.length > 0 && (
+                {activeDiagnostics.length > 0 && (
                   <span className="diag-badge">
                     {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
                     {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
@@ -524,13 +633,13 @@ export default function App() {
                 />
               </div>
 
-              {result.diagnostics.length > 0 && (
+              {activeDiagnostics.length > 0 && (
                 <div className="diagnostics-panel">
                   <div className="diag-panel-hdr">
                     <span>Model Diagnostics</span>
                     <div className="diag-filter-bar">
                       {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                        const cnt = f === 'all' ? result.diagnostics.length
+                        const cnt = f === 'all' ? activeDiagnostics.length
                           : f === 'error'   ? errCount
                           : f === 'warning' ? warnCount
                           : infoCount;
@@ -547,7 +656,7 @@ export default function App() {
                       })}
                     </div>
                   </div>
-                  {result.diagnostics
+                  {activeDiagnostics
                     .filter(d => diagFilter === 'all' || d.severity === diagFilter)
                     .map((d, i) => (
                       <div
@@ -560,7 +669,7 @@ export default function App() {
                           {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
                         </span>
                         <span className="diag-loc">L{d.line}</span>
-                        {d.code && <span className="diag-code">{d.code}</span>}
+                        {'code' in d && d.code && <span className="diag-code">{d.code as string}</span>}
                         <span className="diag-msg">{d.message}</span>
                       </div>
                     ))}
@@ -572,7 +681,7 @@ export default function App() {
             <div className="panel editor-panel">
               <div className="panel-header">
                 <span>Model Diagnostics</span>
-                {result.diagnostics.length > 0 && (
+                {activeDiagnostics.length > 0 && (
                   <span className="diag-badge">
                     {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
                     {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
@@ -583,7 +692,7 @@ export default function App() {
               </div>
               <div className="diag-filter-bar diag-filter-bar-top">
                 {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                  const cnt = f === 'all' ? result.diagnostics.length
+                  const cnt = f === 'all' ? activeDiagnostics.length
                     : f === 'error'   ? errCount
                     : f === 'warning' ? warnCount
                     : infoCount;
@@ -599,9 +708,9 @@ export default function App() {
                   );
                 })}
               </div>
-              {result.diagnostics.length > 0 ? (
+              {activeDiagnostics.length > 0 ? (
                 <div className="diagnostics-panel diagnostics-panel-fill">
-                  {result.diagnostics
+                  {activeDiagnostics
                     .filter(d => diagFilter === 'all' || d.severity === diagFilter)
                     .map((d, i) => (
                       <div
@@ -613,7 +722,7 @@ export default function App() {
                           {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
                         </span>
                         <span className="diag-loc">L{d.line}</span>
-                        {d.code && <span className="diag-code">{d.code}</span>}
+                        {'code' in d && d.code && <span className="diag-code">{d.code as string}</span>}
                         <span className="diag-msg">{d.message}</span>
                       </div>
                     ))}
@@ -631,7 +740,7 @@ export default function App() {
             <span className="panel-tab-label">
               {APP_MODE === 'standalone'
                 ? 'Editor'
-                : `Model Diagnostics${result.diagnostics.length > 0 ? ` (${result.diagnostics.length})` : ''}`}
+                : `Model Diagnostics${activeDiagnostics.length > 0 ? ` (${activeDiagnostics.length})` : ''}`}
             </span>
           </button>
         )}
@@ -639,7 +748,7 @@ export default function App() {
         {/* Column 2: Model Explorer */}
         {explorerOpen ? (
           <ModelExplorer
-            result={result}
+            result={vizModel}
             selectedOccurrence={selectedOccurrence}
             selectedBehavior={selectedBehavior}
             selectedStateMachine={selectedStateMachine}
@@ -673,6 +782,57 @@ export default function App() {
                   {TAB_LABELS[t]}
                 </button>
               ))}
+              {modelingMode === 'officialSysMLV2' && (
+                <button
+                  className={`tab-btn${tab === 'graph' ? ' active' : ''}`}
+                  onClick={() => setTab('graph')}
+                  title="Containment graph from official SysML v2 parser"
+                >
+                  {TAB_LABELS.graph}
+                </button>
+              )}
+            </div>
+            {/* ── Parser mode selector ──────────────────────────────── */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 8 }}>
+              <label style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>Mode:</label>
+              <select
+                value={modelingMode}
+                onChange={e => setModelingMode(e.target.value as ModelingMode)}
+                style={{
+                  fontSize: 11, background: '#1e293b', color: '#e2e8f0',
+                  border: '1px solid #334155', borderRadius: 3, padding: '1px 4px',
+                  cursor: 'pointer',
+                }}
+              >
+                <option value="prototypeSubset">Prototype Subset</option>
+                <option value="officialSysMLV2">Official SysML v2</option>
+              </select>
+              {modelingMode === 'officialSysMLV2' && (
+                <input
+                  type="text"
+                  value={serviceEndpoint}
+                  onChange={e => setServiceEndpoint(e.target.value)}
+                  placeholder="http://localhost:9001"
+                  title="SysML v2 parser service endpoint URL"
+                  style={{
+                    fontSize: 11, background: '#1e293b', color: '#e2e8f0',
+                    border: '1px solid #334155', borderRadius: 3,
+                    padding: '1px 6px', width: 190,
+                  }}
+                />
+              )}
+              {modelingMode === 'prototypeSubset' && PARSER_MODE === 'legacySubset' && (
+                <span
+                  title="This tool uses a custom prototype language, not conformant SysML v2. The parser is frozen."
+                  style={{
+                    fontSize: 10, color: '#92400e', background: '#451a03',
+                    border: '1px solid #78350f', borderRadius: 3,
+                    padding: '1px 6px', cursor: 'default', whiteSpace: 'nowrap',
+                  }}
+                >
+                  Legacy Subset
+                </span>
+              )}
             </div>
             {tab === 'sequence' && behavioralOccurrences.length > 0 && (
               <div className="occurrence-selector">
@@ -718,15 +878,51 @@ export default function App() {
             )}
           </div>
           <div className="view-area">
+            {/* ── Official SysML v2 mode status banner ─────────────────── */}
+            {modelingMode === 'officialSysMLV2' && (
+              <div style={{
+                padding: '10px 16px',
+                background: '#0f172a',
+                borderBottom: '1px solid #1e293b',
+                fontFamily: 'monospace',
+                fontSize: 12,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 6,
+              }}>
+                {/* Always-visible setup requirement notice */}
+                <span style={{ color: '#64748b' }}>
+                  Official SysML v2 mode requires an external parser service. See{' '}
+                  <code style={{ color: '#94a3b8' }}>parser-service/README.md</code>.
+                </span>
+                {/* Service call status */}
+                {officialParseLoading && (
+                  <span style={{ color: '#94a3b8' }}>Parsing with official SysML v2 service…</span>
+                )}
+                {!officialParseLoading && officialParseResult?.error === 'SERVICE_UNAVAILABLE' && (
+                  <span style={{ color: '#ef4444' }}>
+                    Official SysML v2 parser service is not available. Check endpoint: {serviceEndpoint}
+                  </span>
+                )}
+                {!officialParseLoading && officialParseResult && officialParseResult.error !== 'SERVICE_UNAVAILABLE' && (
+                  <span style={{ color: officialParseResult.success ? '#4ade80' : '#fb923c' }}>
+                    {officialParseResult.success
+                      ? 'Parsed successfully.'
+                      : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported in the diagnostics panel.`}
+                    {officialParseResult.error && ` (${officialParseResult.error})`}
+                  </span>
+                )}
+              </div>
+            )}
             <ErrorBoundary label="Structure view error">
               {tab === 'structure' && (
-                <StructureView result={result} selection={selection} onSelect={setSelection} />
+                <StructureView result={vizModel} selection={selection} onSelect={setSelection} />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="Sequence view error">
               {tab === 'sequence' && (
                 <SequenceView
-                  result={result}
+                  result={vizModel}
                   occurrenceName={selectedOccurrence}
                   selection={selection}
                   onSelect={setSelection}
@@ -734,9 +930,17 @@ export default function App() {
               )}
             </ErrorBoundary>
             <ErrorBoundary label="Behavior view error">
-              {tab === 'behavior' && (
+              {tab === 'behavior' && modelingMode === 'officialSysMLV2' && (
+                <OfficialBehaviorView
+                  behavior={officialParseResult?.behavior}
+                  behaviorName={selectedBehavior}
+                  selection={selection}
+                  onSelect={setSelection}
+                />
+              )}
+              {tab === 'behavior' && modelingMode !== 'officialSysMLV2' && (
                 <BehaviorView
-                  result={result}
+                  result={vizModel}
                   behaviorName={selectedBehavior}
                   selection={selection}
                   onSelect={setSelection}
@@ -746,7 +950,7 @@ export default function App() {
             <ErrorBoundary label="State view error">
               {tab === 'state' && (
                 <StateView
-                  result={result}
+                  result={vizModel}
                   stateMachineName={selectedStateMachine}
                   selection={selection}
                   onSelect={setSelection}
@@ -755,16 +959,25 @@ export default function App() {
             </ErrorBoundary>
             <ErrorBoundary label="Requirements view error">
               {tab === 'requirements' && (
-                <RequirementsView result={result} selection={selection} onSelect={setSelection} />
+                <RequirementsView result={vizModel} selection={selection} onSelect={setSelection} />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="Traceability view error">
               {tab === 'traceability' && (
-                <TraceabilityView result={result} selection={selection} onSelect={setSelection} />
+                <TraceabilityView result={vizModel} selection={selection} onSelect={setSelection} />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="JSON view error">
-              {tab === 'json' && <JsonView result={result} />}
+              {tab === 'json' && <JsonView result={vizModel} />}
+            </ErrorBoundary>
+            <ErrorBoundary label="Containment graph error">
+              {tab === 'graph' && (
+                officialParseResult?.graph
+                  ? <ContainmentGraphView graph={officialParseResult.graph} />
+                  : <div style={{ padding: 24, color: '#64748b', fontFamily: 'monospace', fontSize: 13 }}>
+                      No graph data yet. Switch to Official SysML v2 mode and parse a file.
+                    </div>
+              )}
             </ErrorBoundary>
           </div>
         </div>
@@ -773,7 +986,7 @@ export default function App() {
         {inspectorOpen ? (
           <InspectorPanel
             selection={selection}
-            result={result}
+            result={vizModel}
             source={source}
             onSourceChange={
               APP_MODE === 'vscode'
