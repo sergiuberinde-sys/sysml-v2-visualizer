@@ -11,11 +11,22 @@ import {
 } from '../src/core/analyzer/analyzeSysML';
 import { getCompletions } from '../src/core/language/completions';
 import type { SysMLCompletion } from '../src/core/language/completions';
+import { formatSysML } from '../src/core/language/formatter';
 import type { SysMLNode } from '../src/core/modelTypes';
+import { buildContainmentGraph } from '../src/core/adapters/officialSysMLAdapter';
+import type { ModelNode } from '../src/core/sysmlv2Official/ModelNode';
 
 export function activate(context: vscode.ExtensionContext): void {
   let currentSysmlUri: vscode.Uri | undefined;
   let currentSysmlText: string | undefined;
+
+  // The currently open visualizer panel, if any.
+  // Captured by publishDiagnosticsOfficial via closure so it can post graph data.
+  let activePanel: vscode.WebviewPanel | undefined;
+
+  // Mirrors the webview's modelingMode so prototype diagnostics are suppressed
+  // in official mode without requiring a separate VS Code setting change.
+  let webviewModelingMode: 'prototypeSubset' | 'officialSysMLV2' = 'prototypeSubset';
 
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
   context.subscriptions.push(diagnosticCollection);
@@ -40,11 +51,24 @@ export function activate(context: vscode.ExtensionContext): void {
                                       vscode.DiagnosticSeverity.Information;
   }
 
-  // Synchronous — receives an already-open TextDocument, parses it, and
-  // publishes diagnostics using document.uri directly.
+  // Publishes diagnostics for a .sysml document.
+  // In official mode, calls the parser-service; otherwise uses the prototype parser.
   function publishDiagnosticsForDocument(document: vscode.TextDocument): void {
     if (!document.fileName.endsWith('.sysml')) return;
 
+    const cfg = vscode.workspace.getConfiguration('sysmlVisualizer');
+    const officialMode = cfg.get<boolean>('officialParserMode', false);
+
+    // Use official diagnostics when either the VS Code setting is on OR the webview
+    // has switched to official mode — prototype diagnostics are obsolete in that context.
+    if (officialMode || webviewModelingMode === 'officialSysMLV2') {
+      void publishDiagnosticsOfficial(document);
+    } else {
+      publishDiagnosticsPrototype(document);
+    }
+  }
+
+  function publishDiagnosticsPrototype(document: vscode.TextDocument): void {
     const analysis    = analyzeSysML(document.getText());
     const diagnostics = getDiagnostics(analysis).map(d => {
       const range = toVsCodeRange(document, d.line, d.column);
@@ -53,9 +77,58 @@ export function activate(context: vscode.ExtensionContext): void {
       vd.code     = d.code;
       return vd;
     });
-
     diagnosticCollection.set(document.uri, diagnostics);
-    console.log('Publishing SysML diagnostics', document.uri.toString(), diagnostics.length);
+    console.log('[sysml-visualizer] prototype diagnostics:', document.uri.toString(), diagnostics.length);
+  }
+
+  async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('sysmlVisualizer');
+    const serviceUrl = cfg.get<string>('parserServiceUrl', 'http://localhost:9001').replace(/\/$/, '');
+    const uri = document.uri;
+
+    let raw: unknown;
+    try {
+      const res = await fetch(`${serviceUrl}/parse`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: document.getText() }),
+      });
+      raw = await res.json();
+    } catch (err) {
+      console.error('[sysml-visualizer] parser-service unreachable:', err);
+      const vd = new vscode.Diagnostic(
+        new vscode.Range(0, 0, 0, 0),
+        `SysML parser service unreachable at ${serviceUrl}. Start parser-service or disable officialParserMode.`,
+        vscode.DiagnosticSeverity.Warning,
+      );
+      vd.source = 'SysML v2 Visualizer';
+      diagnosticCollection.set(uri, [vd]);
+      return;
+    }
+
+    const rawRecord = raw as Record<string, unknown>;
+    const result = raw as {
+      success?: boolean;
+      diagnostics?: Array<{ message: string; severity: string; line?: number; column?: number }>;
+      model?: ModelNode[];
+    };
+    const diags = (result.diagnostics ?? []).map(d => {
+      const range = toVsCodeRange(document, d.line, d.column);
+      const vd    = new vscode.Diagnostic(range, d.message, mapSeverity(d));
+      vd.source   = 'SysML v2 (official)';
+      return vd;
+    });
+    diagnosticCollection.set(uri, diags);
+    console.log('[sysml-visualizer] official diagnostics:', uri.toString(), diags.length);
+
+    if (activePanel && Array.isArray(result.model)) {
+      const graph    = buildContainmentGraph(result.model);
+      const behavior = rawRecord['behavior'] ?? null;
+      console.log('[sysml-visualizer] behavior from parser-service:',
+        JSON.stringify(behavior)?.slice(0, 300));
+      void activePanel.webview.postMessage({ type: 'updateGraph', graph, behavior });
+      console.log(`[sysml-visualizer] updateGraph sent: ${graph.nodes.length} nodes, behavior=${behavior != null}`);
+    }
   }
 
   // ── Activation-level listeners ────────────────────────────────────────────────
@@ -152,6 +225,7 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     panel.webview.html = getWebviewContent(panel.webview, context.extensionUri);
+    activePanel = panel;
 
     const disposables: vscode.Disposable[] = [];
 
@@ -183,6 +257,7 @@ export function activate(context: vscode.ExtensionContext): void {
     panel.webview.onDidReceiveMessage(async (msg: {
       type: string;
       newText?: string;
+      mode?: string;
       edit?: {
         kind: 'insert' | 'replace' | 'delete';
         position?: { line: number; column: number };
@@ -194,6 +269,14 @@ export function activate(context: vscode.ExtensionContext): void {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
       if (msg.type === 'ready') {
+        // Send the configured parser service URL so the webview uses VS Code
+        // settings rather than its localStorage default.
+        const parserServiceUrl = vscode.workspace
+          .getConfiguration('sysmlVisualizer')
+          .get<string>('parserServiceUrl', 'http://localhost:9000');
+        panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl });
+        console.log(`[sysml-visualizer] parserServiceUrl sent: ${parserServiceUrl}`);
+
         // If there is a tracked .sysml file, open it (makes VS Code register the
         // document) and publish fresh diagnostics before sending the model.
         if (currentSysmlUri) {
@@ -274,6 +357,15 @@ export function activate(context: vscode.ExtensionContext): void {
           vscode.TextEditorRevealType.InCenterIfOutsideViewport,
         );
         console.log(`[sysml-visualizer] revealSource — line ${line}, col ${column}`);
+
+      } else if (msg.type === 'modelingModeChange') {
+        const newMode = msg.mode as 'prototypeSubset' | 'officialSysMLV2';
+        webviewModelingMode = newMode;
+        console.log(`[sysml-visualizer] modelingModeChange → ${newMode}`);
+        if (currentSysmlUri) {
+          const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
+          publishDiagnosticsForDocument(doc);
+        }
       }
     }, undefined, disposables);
 
@@ -328,7 +420,20 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }, undefined, disposables);
 
+    // ── VS Code settings changes → webview ───────────────────────────────────
+
+    vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('sysmlVisualizer.parserServiceUrl')) {
+        const url = vscode.workspace
+          .getConfiguration('sysmlVisualizer')
+          .get<string>('parserServiceUrl', 'http://localhost:9000');
+        panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl: url });
+        console.log(`[sysml-visualizer] parserServiceUrl updated: ${url}`);
+      }
+    }, undefined, disposables);
+
     panel.onDidDispose(() => {
+      if (activePanel === panel) activePanel = undefined;
       disposables.forEach(d => d.dispose());
       if (editorSyncSuppressTimer) clearTimeout(editorSyncSuppressTimer);
       if (editorSyncDebounce) clearTimeout(editorSyncDebounce);
@@ -696,6 +801,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
+  // ── Format document (Shift+Alt+F) ────────────────────────────────────────────
+
+  context.subscriptions.push(
+    vscode.languages.registerDocumentFormattingEditProvider({ language: 'sysml' }, {
+      provideDocumentFormattingEdits(document) {
+        if (!document.fileName.endsWith('.sysml')) return [];
+        const original  = document.getText();
+        const formatted = formatSysML(original);
+        if (formatted === original) return [];
+        const fullRange = new vscode.Range(
+          document.positionAt(0),
+          document.positionAt(original.length),
+        );
+        return [vscode.TextEdit.replace(fullRange, formatted)];
+      },
+    }),
+  );
+
   // ── Document symbols / Outline (Ctrl+Shift+O) ────────────────────────────────
 
   context.subscriptions.push(
@@ -1016,6 +1139,10 @@ function getWebviewContent(webview: vscode.Webview, extensionUri: vscode.Uri): s
     `worker-src blob:`,
     `img-src ${webview.cspSource} data:`,
     `font-src ${webview.cspSource} data:`,
+    // Allow fetch() calls to the external SysML v2 parser service.
+    // The URL is user-configurable (sysmlVisualizer.parserServiceUrl), so
+    // wildcard is required. Only applies when Official SysML v2 mode is active.
+    `connect-src *`,
   ].join('; ');
 
   html = html.replace(
