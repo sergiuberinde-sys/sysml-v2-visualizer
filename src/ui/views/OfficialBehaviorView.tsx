@@ -51,6 +51,13 @@ const THEN_COLOR  = '#4ade80';    // green — [true] / then branch
 const ELSE_COLOR  = '#f87171';    // red   — [false] / else branch
 const LOOP_EDGE   = '#818cf8';    // indigo — loop body edge
 
+const CTRL_BG     = '#0d1a14';    // dark teal — control flow nodes
+const CTRL_BORDER = '#2dd4bf';    // teal
+const CTRL_STEREO = '#5eead4';
+const CTRL_NAME   = '#ccfbf1';
+
+const CTRL_FLOW_TYPES = new Set(['DecisionNode', 'MergeNode', 'ForkNode', 'JoinNode']);
+
 // ── Topological sort (Kahn's algorithm) ──────────────────────────────────────
 
 function assignLevels(
@@ -114,9 +121,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
     );
     if (!def) return { rfNodes: [], rfEdges: [] };
 
-    // Collect action instances owned by this definition.
+    // Collect action instances and control-flow nodes owned by this definition.
     const actionUsages = behavior.actions.filter(
-      a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.ownerId === def.id,
+      a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL_FLOW_TYPES.has(a.type)) && a.ownerId === def.id,
     );
 
     // Collect conditionals owned by this definition.
@@ -193,10 +200,24 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
 
     // ── Action nodes ───────────────────────────────────────────────────────────
 
+    const CTRL_STEREO_MAP: Record<string, string> = {
+      DecisionNode: '«decide»',
+      MergeNode:    '«merge»',
+      ForkNode:     '«fork»',
+      JoinNode:     '«join»',
+    };
+
     const actNodes: Node[] = actionUsages.map(a => {
       const nodeId   = `oact-${behaviorName}-${a.name}`;
       const targets  = outgoing.get(a.name) ?? [];
       const isBranch = targets.length > 1;
+      const isCtrl   = CTRL_FLOW_TYPES.has(a.type);
+
+      const bg      = isCtrl ? CTRL_BG     : ACT_BG;
+      const border  = isCtrl ? CTRL_BORDER : (isBranch ? BRANCH_COLOR : ACT_BORDER);
+      const stereo  = isCtrl ? (CTRL_STEREO_MAP[a.type] ?? '«control»') : '«action»';
+      const nameClr = isCtrl ? CTRL_NAME   : ACT_NAME;
+      const stereoClr = isCtrl ? CTRL_STEREO : ACT_STEREO;
 
       return {
         id:       nodeId,
@@ -204,9 +225,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
         data: {
           label: (
             <div style={{ textAlign: 'center', lineHeight: 1.35 }}>
-              <div style={{ fontSize: 9, color: ACT_STEREO, letterSpacing: '0.4px' }}>«action»</div>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: ACT_NAME }}>{a.name}</div>
-              {isBranch && (
+              <div style={{ fontSize: 9, color: stereoClr, letterSpacing: '0.4px' }}>{stereo}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: nameClr }}>{a.name}</div>
+              {!isCtrl && isBranch && (
                 <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
                   <span style={{ display: 'inline-block', width: 6, height: 6, background: BRANCH_COLOR, transform: 'rotate(45deg)' }} />
                   <span style={{ fontSize: 8.5, color: BRANCH_COLOR, letterSpacing: '0.3px' }}>
@@ -227,9 +248,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
           } satisfies SelectionState,
         },
         style: {
-          background:     ACT_BG,
-          border:         `1px solid ${isBranch ? BRANCH_COLOR : ACT_BORDER}`,
-          borderRadius:   7,
+          background:     bg,
+          border:         `1px solid ${border}`,
+          borderRadius:   isCtrl ? 3 : 7,
           padding:        '6px 10px',
           width:          NODE_W,
           height:         NODE_H,
