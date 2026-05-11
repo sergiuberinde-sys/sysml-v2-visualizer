@@ -21,16 +21,17 @@ import type { SelectionState } from '../../app/selection';
 // ── Layout constants (matches BehaviorView palette) ───────────────────────────
 
 const NODE_W  = 164;
-const NODE_H  = 60;
-const H_GAP   = 88;
-const V_GAP   = 28;
+const NODE_H  = 68;
+const H_GAP   = 96;
+const V_GAP   = 32;
 const START_X = 48;
 const START_Y = 48;
 
-const ACT_BG     = '#09213a';
-const ACT_BORDER = '#38bdf8';
-const ACT_STEREO = '#7dd3fc';
-const ACT_NAME   = '#bae6fd';
+const ACT_BG       = '#09213a';
+const ACT_BORDER   = '#38bdf8';
+const ACT_STEREO   = '#7dd3fc';
+const ACT_NAME     = '#bae6fd';
+const BRANCH_COLOR = '#fbbf24';
 
 // ── Topological sort (Kahn's algorithm) ──────────────────────────────────────
 
@@ -105,9 +106,16 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
 
     if (actionUsages.length === 0) return { rfNodes: [], rfEdges: [] };
 
+    // Outgoing targets per action (used for branch badge and Inspector).
+    const outgoing = new Map<string, string[]>();
+    for (const f of resolvedFlows) {
+      if (!outgoing.has(f.source)) outgoing.set(f.source, []);
+      outgoing.get(f.source)!.push(f.target);
+    }
+
     // Topological layout.
-    const names   = actionUsages.map(a => a.name);
-    const level   = assignLevels(names, resolvedFlows.map(f => ({ source: f.source, target: f.target })));
+    const names    = actionUsages.map(a => a.name);
+    const level    = assignLevels(names, resolvedFlows.map(f => ({ source: f.source, target: f.target })));
     const levelIdx = new Map<number, number>();
     const positions = new Map<string, { x: number; y: number }>();
 
@@ -123,7 +131,10 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
 
     // Build ReactFlow nodes.
     const rfNodes: Node[] = actionUsages.map(a => {
-      const nodeId = `oact-${behaviorName}-${a.name}`;
+      const nodeId     = `oact-${behaviorName}-${a.name}`;
+      const targets    = outgoing.get(a.name) ?? [];
+      const isBranch   = targets.length > 1;
+
       return {
         id:       nodeId,
         position: positions.get(a.name)!,
@@ -132,18 +143,32 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
             <div style={{ textAlign: 'center', lineHeight: 1.35 }}>
               <div style={{ fontSize: 9, color: ACT_STEREO, letterSpacing: '0.4px' }}>«action»</div>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: ACT_NAME }}>{a.name}</div>
+              {isBranch && (
+                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+                  <span style={{
+                    display: 'inline-block', width: 6, height: 6,
+                    background: BRANCH_COLOR, transform: 'rotate(45deg)',
+                  }} />
+                  <span style={{ fontSize: 8.5, color: BRANCH_COLOR, letterSpacing: '0.3px' }}>
+                    {targets.length} branches
+                  </span>
+                </div>
+              )}
             </div>
           ),
           _sel: {
             id:   nodeId,
             type: 'actionInst',
             name: a.name,
-            extra: { behavior: behaviorName },
+            extra: {
+              behavior: behaviorName,
+              ...(targets.length > 0 ? { outgoingTargets: targets.join(',') } : {}),
+            },
           } satisfies SelectionState,
         },
         style: {
           background:     ACT_BG,
-          border:         `1px solid ${ACT_BORDER}`,
+          border:         `1px solid ${isBranch ? BRANCH_COLOR : ACT_BORDER}`,
           borderRadius:   7,
           padding:        '6px 10px',
           width:          NODE_W,
@@ -158,14 +183,17 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
     // Build ReactFlow edges (only for flows whose both ends exist as positioned nodes).
     const rfEdges: Edge[] = resolvedFlows
       .filter(f => positions.has(f.source) && positions.has(f.target))
-      .map(f => ({
-        id:       `oflow-${behaviorName}-${f.source}-${f.target}`,
-        source:   `oact-${behaviorName}-${f.source}`,
-        target:   `oact-${behaviorName}-${f.target}`,
-        type:     'smoothstep',
-        style:    { stroke: ACT_BORDER, strokeWidth: 1.5 },
-        markerEnd: { type: MarkerType.ArrowClosed, color: ACT_BORDER, width: 14, height: 14 },
-      }));
+      .map(f => {
+        const srcBranch = (outgoing.get(f.source)?.length ?? 0) > 1;
+        return {
+          id:       `oflow-${behaviorName}-${f.source}-${f.target}`,
+          source:   `oact-${behaviorName}-${f.source}`,
+          target:   `oact-${behaviorName}-${f.target}`,
+          type:     'smoothstep',
+          style:    { stroke: srcBranch ? BRANCH_COLOR : ACT_BORDER, strokeWidth: 1.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: srcBranch ? BRANCH_COLOR : ACT_BORDER, width: 14, height: 14 },
+        };
+      });
 
     return { rfNodes, rfEdges };
   }, [behavior, behaviorName]);
