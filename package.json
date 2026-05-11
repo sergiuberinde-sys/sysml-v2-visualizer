@@ -17,8 +17,13 @@
     "languages": [
       {
         "id": "sysml",
-        "extensions": [".sysml"],
-        "aliases": ["SysML", "sysml"]
+        "extensions": [
+          ".sysml"
+        ],
+        "aliases": [
+          "SysML",
+          "sysml"
+        ]
       }
     ],
     "commands": [
@@ -38,22 +43,45 @@
         "command": "sysmlVisualizer.debugSemanticTokens",
         "title": "SysML: Debug Semantic Tokens"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "SysML v2 Visualizer",
+      "properties": {
+        "sysmlVisualizer.parserServiceUrl": {
+          "type": "string",
+          "default": "http://localhost:9001",
+          "markdownDescription": "URL of the official SysML v2 parser service. Used when **Official SysML v2** mode is selected in the visualizer tab bar.\n\nThe service must implement `POST /parse` and `GET /health`. See `parser-service/README.md` for setup instructions.",
+          "scope": "window",
+          "order": 1
+        },
+        "sysmlVisualizer.officialParserMode": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When enabled, VS Code Problems panel diagnostics are sourced from the official SysML v2 parser service (`parserServiceUrl`) instead of the built-in prototype parser.\n\nRequires the parser service to be running. See `parser-service/README.md`.",
+          "scope": "window",
+          "order": 2
+        }
+      }
+    }
   },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && npm --prefix parser-service test",
     "test:watch": "vitest",
     "compile:extension": "tsc -p tsconfig.extension.json && node scripts/write-extension-pkg.cjs",
     "watch:extension": "tsc -p tsconfig.extension.json --watch",
-    "package:extension": "vsce package"
+    "package:extension": "vsce package",
+    "parser:dev": "npm --prefix parser-service install && npm --prefix parser-service run dev",
+    "parser:build": "npm --prefix parser-service install && npm --prefix parser-service run build",
+    "parser:start": "npm --prefix parser-service run start"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.10.2",
+    "elkjs": "^0.11.1",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5"

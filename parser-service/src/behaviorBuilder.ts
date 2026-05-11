@@ -33,10 +33,9 @@ import type {
   ModelNode, BehaviorAction, BehaviorFlow, BehaviorConditional, BehaviorData,
 } from './types';
 
-const ACTION_USAGE_TYPES   = new Set(['ActionUsage', 'PerformActionUsage']);
-const SUCCESSION_TYPES     = new Set(['Succession', 'SuccessionAsUsage']);
-const CONTROL_FLOW_TYPES   = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
-const CONDITIONAL_TYPES    = new Set(['IfActionUsage', 'WhileLoopActionUsage']);
+const ACTION_USAGE_TYPES = new Set(['ActionUsage', 'PerformActionUsage']);
+const SUCCESSION_TYPES   = new Set(['Succession', 'SuccessionAsUsage']);
+const CONTROL_FLOW_TYPES = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
 
 // ── Guard extraction (TransitionUsage) ────────────────────────────────────────
 
@@ -200,34 +199,24 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
 
     // ── TransitionUsage (guarded succession: first a if guard then b;) ─────
     if (node.type === 'TransitionUsage') {
-      const childTypes = node.children.map(c => `${c.type}(${c.name ?? ''})`).join(', ');
-      console.log(`[behaviorBuilder] TransitionUsage @ ${path} children: [${childTypes}]`);
-
       // Source: first Membership child (cross-ref resolved by Java wrapper)
       const srcMembership = node.children.find(c => c.type === 'Membership');
       const sourceName    = srcMembership?.name ?? null;
-      console.log(`[behaviorBuilder]   source membership: ${srcMembership?.type ?? 'NOT FOUND'}, name=${sourceName}`);
 
       // Guard: TransitionFeatureMembership → FeatureReferenceExpression → Membership
       const guard = extractGuardName(node);
-      console.log(`[behaviorBuilder]   guard: ${guard ?? 'none'}`);
 
       // Target: OwningMembership → SuccessionAsUsage → ReferenceSubsetting
       const owningMembership = node.children.find(c => c.type === 'OwningMembership');
       const succession       = owningMembership?.children.find(c => SUCCESSION_TYPES.has(c.type));
       const targetRefs       = succession ? extractEndpointNames(succession) : [];
       const targetName       = targetRefs[0] ?? null;
-      console.log(`[behaviorBuilder]   owningMembership found: ${!!owningMembership}, succession found: ${!!succession}, targetRefs: [${targetRefs.join(', ')}], targetName: ${targetName}`);
 
       const flowId = `flow:${path}`;
       if (sourceName && targetName) {
-        const flow = { id: flowId, source: sourceName, target: targetName, type: 'transition' as const, ...(guard !== undefined ? { guard } : {}) };
-        console.log(`[behaviorBuilder]   emitting resolved transition flow:`, flow);
-        flows.push(flow);
+        flows.push({ id: flowId, source: sourceName, target: targetName, type: 'transition' as const, ...(guard !== undefined ? { guard } : {}) });
       } else {
-        const flow = { id: flowId, sourceName: sourceName ?? '', targetName: targetName ?? '', type: 'transition' as const, ...(guard !== undefined ? { guard } : {}), unresolved: true as const };
-        console.log(`[behaviorBuilder]   emitting UNRESOLVED transition flow:`, flow);
-        flows.push(flow);
+        flows.push({ id: flowId, sourceName: sourceName ?? '', targetName: targetName ?? '', type: 'transition' as const, ...(guard !== undefined ? { guard } : {}), unresolved: true as const });
       }
       return;
     }
