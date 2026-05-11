@@ -391,3 +391,63 @@ describe('DecisionNode outgoing succession — unresolved', () => {
     expect(flows).toBeDefined();
   });
 });
+
+// ── 8. Structural ownership: ActionDefinition inside PartDefinition ────────────
+//
+// EMF structure (validated against Pilot 0.59.0-SNAPSHOT, §ComponentBehaviorExample):
+//   PartDefinition "Controller"
+//     OwningMembership
+//       ActionDefinition "Startup"
+//         FeatureMembership → ActionUsage "read"
+//         FeatureMembership → ActionUsage "evaluate"
+//         ...
+//
+// Expected: ActionDefinition entry carries owningDefName='Controller', owningDefType='PartDefinition'
+
+describe('structural ownership — ActionDefinition inside PartDefinition', () => {
+  const startupDef = actionDef('Startup', [
+    fm(actionUsage('read')),
+    fm(actionUsage('evaluate')),
+    fm(actionUsage('activate')),
+    fm(successionNode('read', 'evaluate')),
+    fm(successionNode('evaluate', 'activate')),
+  ]);
+
+  const controllerDef: ModelNode = n('PartDefinition', 'Controller', [
+    n('OwningMembership', null, [startupDef]),
+  ]);
+
+  const { actions, flows } = buildBehavior([controllerDef]);
+
+  it('emits the ActionDefinition with owningDefName = Controller', () => {
+    const def = actions.find(a => a.type === 'ActionDefinition' && a.name === 'Startup');
+    expect(def).toBeDefined();
+    expect(def?.owningDefName).toBe('Controller');
+  });
+
+  it('emits the ActionDefinition with owningDefType = PartDefinition', () => {
+    const def = actions.find(a => a.type === 'ActionDefinition' && a.name === 'Startup');
+    expect(def?.owningDefType).toBe('PartDefinition');
+  });
+
+  it('emits action instances with correct ownerId', () => {
+    const def   = actions.find(a => a.type === 'ActionDefinition' && a.name === 'Startup')!;
+    const names = actions.filter(a => a.ownerId === def.id).map(a => a.name);
+    expect(names).toContain('read');
+    expect(names).toContain('evaluate');
+    expect(names).toContain('activate');
+  });
+
+  it('emits resolved succession flows', () => {
+    const readToEval = flows.find(f => 'source' in f && f.source === 'read' && f.target === 'evaluate');
+    const evalToAct  = flows.find(f => 'source' in f && f.source === 'evaluate' && f.target === 'activate');
+    expect(readToEval).toBeDefined();
+    expect(evalToAct).toBeDefined();
+  });
+
+  it('does not set owningDefName on top-level ActionDefinitions (no structural parent)', () => {
+    const bare = buildBehavior([actionDef('Bare', [fm(actionUsage('a'))])]);
+    const def  = bare.actions.find(a => a.type === 'ActionDefinition');
+    expect(def?.owningDefName).toBeUndefined();
+  });
+});

@@ -115,9 +115,15 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
   const { rfNodes, rfEdges } = useMemo(() => {
     if (!behavior || !behaviorName) return { rfNodes: [], rfEdges: [] };
 
-    // Find the ActionDefinition with this name.
-    const def = behavior.actions.find(
-      a => a.type === 'ActionDefinition' && a.name === behaviorName,
+    // behaviorName may be 'Controller::Startup' (qualified) or 'Startup' (unqualified).
+    const colonIdx  = behaviorName.indexOf('::');
+    const ownerPart = colonIdx >= 0 ? behaviorName.slice(0, colonIdx) : null;
+    const defPart   = colonIdx >= 0 ? behaviorName.slice(colonIdx + 2) : behaviorName;
+
+    const def = behavior.actions.find(a =>
+      a.type === 'ActionDefinition' &&
+      a.name === defPart &&
+      (ownerPart === null || a.owningDefName === ownerPart),
     );
     if (!def) return { rfNodes: [], rfEdges: [] };
 

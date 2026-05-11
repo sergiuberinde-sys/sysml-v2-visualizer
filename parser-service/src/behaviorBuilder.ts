@@ -33,9 +33,20 @@ import type {
   ModelNode, BehaviorAction, BehaviorFlow, BehaviorConditional, BehaviorData,
 } from './types';
 
-const ACTION_USAGE_TYPES = new Set(['ActionUsage', 'PerformActionUsage']);
-const SUCCESSION_TYPES   = new Set(['Succession', 'SuccessionAsUsage']);
-const CONTROL_FLOW_TYPES = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
+const ACTION_USAGE_TYPES   = new Set(['ActionUsage', 'PerformActionUsage']);
+const SUCCESSION_TYPES     = new Set(['Succession', 'SuccessionAsUsage']);
+const CONTROL_FLOW_TYPES   = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
+
+// Structural definition types that can own ActionDefinitions in official SysML v2.
+// When the traversal enters one of these, its name/type are recorded as the owner context
+// so that the contained ActionDefinition entries carry owningDefName / owningDefType.
+const STRUCTURAL_DEF_TYPES = new Set([
+  'PartDefinition', 'ItemDefinition', 'ConnectionDefinition',
+  'PortDefinition', 'InterfaceDefinition', 'AllocationDefinition',
+  'OccurrenceDefinition',
+]);
+
+interface OwnerCtx { name: string; type: string; }
 
 // ── Guard extraction (TransitionUsage) ────────────────────────────────────────
 
@@ -127,6 +138,7 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
    * @param ownerDefId   id of the enclosing ActionDefinition, or null if at package level
    * @param conditionalId  id of the enclosing IfActionUsage/WhileLoop, if any
    * @param branch         which branch of a conditional we're currently in
+   * @param ownerCtx     nearest enclosing structural definition (PartDefinition etc.), if any
    */
   function visit(
     node: ModelNode,
@@ -134,14 +146,29 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
     ownerDefId: string | null,
     conditionalId?: string,
     branch?: 'then' | 'else' | 'loop',
+    ownerCtx: OwnerCtx | null = null,
   ): void {
+
+    // ── Structural definition types (record as owner context for contained ActionDefs) ──
+    if (STRUCTURAL_DEF_TYPES.has(node.type)) {
+      const ctx: OwnerCtx = { name: node.name ?? node.type, type: node.type };
+      for (let i = 0; i < node.children.length; i++) {
+        visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ctx);
+      }
+      return;
+    }
 
     // ── ActionDefinition ────────────────────────────────────────────────────
     if (node.type === 'ActionDefinition') {
       const name = node.name ?? node.type;
-      actions.push({ id: path, name, type: 'ActionDefinition' });
+      const defEntry: BehaviorAction = { id: path, name, type: 'ActionDefinition' };
+      if (ownerCtx) {
+        defEntry.owningDefName = ownerCtx.name;
+        defEntry.owningDefType = ownerCtx.type;
+      }
+      actions.push(defEntry);
       for (let i = 0; i < node.children.length; i++) {
-        visit(node.children[i], `${path}.${i}`, path);
+        visit(node.children[i], `${path}.${i}`, path, undefined, undefined, ownerCtx);
       }
       return;
     }
@@ -152,7 +179,7 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       // These are transparent — recurse into their children without creating an action entry.
       if (node.name === null && node.direction === 'in') {
         for (let i = 0; i < node.children.length; i++) {
-          visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch);
+          visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx);
         }
         return;
       }
@@ -234,7 +261,7 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       if (thenContainer) {
         const before = actions.length;
         for (let i = 0; i < thenContainer.children.length; i++) {
-          visit(thenContainer.children[i], `${path}.then.${i}`, ownerDefId, path, 'then');
+          visit(thenContainer.children[i], `${path}.then.${i}`, ownerDefId, path, 'then', ownerCtx);
         }
         for (let j = before; j < actions.length; j++) thenIds.push(actions[j].id);
       }
@@ -244,7 +271,7 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       if (elseContainer) {
         const before = actions.length;
         for (let i = 0; i < elseContainer.children.length; i++) {
-          visit(elseContainer.children[i], `${path}.else.${i}`, ownerDefId, path, 'else');
+          visit(elseContainer.children[i], `${path}.else.${i}`, ownerDefId, path, 'else', ownerCtx);
         }
         for (let j = before; j < actions.length; j++) elseIds.push(actions[j].id);
       }
@@ -278,7 +305,7 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       if (bodyContainer) {
         const before = actions.length;
         for (let i = 0; i < bodyContainer.children.length; i++) {
-          visit(bodyContainer.children[i], `${path}.loop.${i}`, ownerDefId, path, 'loop');
+          visit(bodyContainer.children[i], `${path}.loop.${i}`, ownerDefId, path, 'loop', ownerCtx);
         }
         for (let j = before; j < actions.length; j++) loopIds.push(actions[j].id);
       }
@@ -296,7 +323,7 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
 
     // ── Transparent wrapper (OwningMembership, FeatureMembership, ParameterMembership, etc.) ──
     for (let i = 0; i < node.children.length; i++) {
-      visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch);
+      visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx);
     }
   }
 

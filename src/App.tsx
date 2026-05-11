@@ -162,17 +162,18 @@ export default function App() {
   );
 
   const behaviorDefNames = useMemo(() => {
-    console.log('[App] mode:', modelingMode, 'behavior:', officialParseResult?.behavior);
-    // Official mode: only include ActionDefinitions that own at least one action instance.
-    // This prevents empty definitions (e.g. "action def ReadSensor;") from being auto-selected.
+    // Official mode: only include ActionDefinitions that own at least one renderable child
+    // (ActionUsage, PerformActionUsage, or a control-flow node).
     if (modelingMode === 'officialSysMLV2' && officialParseResult?.behavior) {
       const beh = officialParseResult.behavior;
+      const CTRL = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
       return beh.actions
         .filter(a => a.type === 'ActionDefinition')
-        .filter(def => beh.actions.some(
-          a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.ownerId === def.id,
+        .filter(def => beh.actions.some(a =>
+          (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL.has(a.type)) &&
+          a.ownerId === def.id,
         ))
-        .map(a => a.name);
+        .map(a => a.owningDefName ? `${a.owningDefName}::${a.name}` : a.name);
     }
     return vizModel.nodes
       .filter((n): n is Extract<VizNode, { kind: 'behaviorDef' }> => n.kind === 'behaviorDef')
