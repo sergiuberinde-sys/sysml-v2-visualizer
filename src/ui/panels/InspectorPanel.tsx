@@ -593,6 +593,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     requirement:     '«requirement def»',
     traceLink:       'trace link',
     packageDef:      '«package»',
+    condition:       '«condition»',
   };
 
   let inspBody: React.ReactNode = null;

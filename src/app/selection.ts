@@ -3,7 +3,7 @@ export type SelectionState = {
   type:
     | 'interface' | 'part' | 'port' | 'systemPart' | 'instance'
     | 'occurrence' | 'message' | 'connection'
-    | 'action' | 'behavior' | 'actionInst' | 'behaviorFlow'
+    | 'action' | 'behavior' | 'actionInst' | 'behaviorFlow' | 'condition'
     | 'stateMachine' | 'stateEntry' | 'stateTransition'
     | 'requirement' | 'traceLink'
     | 'packageDef';
