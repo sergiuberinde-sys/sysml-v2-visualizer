@@ -309,7 +309,9 @@ emitted as `{ type: 'transition', source, target }` — no guard label, but the 
    `BehaviorConditional` entries by `behaviorBuilder.ts`.
 
 3. **`DecisionNode`/`MergeNode`/`ForkNode`/`JoinNode`** — ✅ implemented.  Extracted as
-   `BehaviorAction` entries.
+   `BehaviorAction` entries and rendered in `OfficialBehaviorView` as teal `«decide»` /
+   `«fork»` / `«join»` / `«merge»` nodes.  Outgoing edges from `DecisionNode` remain
+   unresolved (see §6, §10) and are filtered out of the renderer.
 
 4. **`LiteralBoolean` guard values** — ✅ implemented.  The Java wrapper resolves
    `LiteralBoolean.value → name`; `extractGuardName()` reads it directly.
@@ -329,3 +331,155 @@ emitted as `{ type: 'transition', source, target }` — no guard label, but the 
   that were not set by the Java wrapper from official EMF attributes.
 - Do not enable `DecisionNode`-originating `SuccessionAsUsage` flow extraction until the
   Pilot Implementation NPE is fixed upstream.
+
+---
+
+## 10. Control node validation (Pilot Implementation 0.59.0-SNAPSHOT)
+
+Validated against the standalone JAR with `--debug`.  All four node types were confirmed
+to parse without errors and traverse without NPE.
+
+### Examples used
+
+**ForkNode / JoinNode** — smallest passing example:
+
+```sysml
+package ForkTest {
+    action def A; action def B; action def C; action def D;
+    action def Flow {
+        action a : A;
+        fork;
+        action b : B;
+        action c : C;
+        join;
+        action d : D;
+    }
+}
+```
+
+Parser result: `success: true`, zero diagnostics.
+
+**MergeNode** — smallest passing example:
+
+```sysml
+package MergeTest {
+    action def A; action def B; action def C;
+    action def Flow {
+        action a : A;
+        action b : B;
+        merge;
+        action c : C;
+    }
+}
+```
+
+Parser result: `success: true`, zero diagnostics.
+
+**DecisionNode (unnamed, no successions)** — smallest passing example:
+
+```sysml
+package DecideSolo {
+    action def A;
+    action def Flow {
+        action a : A;
+        decide;
+    }
+}
+```
+
+Parser result: `success: true`, zero diagnostics.
+
+**DecisionNode (named, with explicit successions)** — successor-edge stress test:
+
+```sysml
+package Decision5 {
+    action def A; action def B; action def C;
+    action def Flow {
+        action a : A;
+        decide d;
+        action b : B;
+        action c : C;
+        succession first a then d;
+        succession first d then b;
+        succession first d then c;
+    }
+}
+```
+
+Parser result: `success: true`, zero diagnostics.
+
+---
+
+### EMF structure — all four node types
+
+All four appear identically inside the model tree: wrapped in a `FeatureMembership`
+with no children.
+
+```
+FeatureMembership
+  ForkNode      (name: null)     ← or JoinNode / MergeNode / DecisionNode
+```
+
+Named variants (`decide d;`) carry `name: "d"`.
+
+---
+
+### `--debug` traversal safety
+
+| Node type | With successions? | Debug traversal | NPE? |
+|---|---|---|---|
+| `ForkNode` | no | ✅ clean | no |
+| `JoinNode` | no | ✅ clean | no |
+| `MergeNode` | no | ✅ clean | no |
+| `DecisionNode` | no (solo `decide;`) | ✅ clean | no |
+| `DecisionNode` | yes — outgoing only | ✅ clean (try-catch skips empty subtrees) | adapter-level only |
+
+The Pilot NPE documented in §6 occurs inside EMF adapter initialization, not in
+the `eContents()` traversal our wrapper performs.  The try-catch guards in
+`collectDebugEntries()` and `buildNode()` are sufficient mitigation — the wrapper
+completes traversal and the node is present in the model output.
+
+---
+
+### What the outgoing DecisionNode SuccessionAsUsage looks like
+
+`succession first d then b;` (outgoing from a `DecisionNode`) produces:
+
+```
+SuccessionAsUsage
+  EndFeatureMembership   ← empty, no ReferenceUsage child
+  EndFeatureMembership   ← empty, no ReferenceUsage child
+```
+
+Both endpoint memberships are empty — `extractEndpointNames()` returns `[]`.
+The flow is pushed as `{ unresolved: true }` and is **filtered out** of the
+renderer (only resolved flows with `source` and `target` are drawn).
+
+The **incoming** succession `succession first a then d;` resolves normally:
+
+```
+SuccessionAsUsage
+  EndFeatureMembership → ReferenceUsage → ReferenceSubsetting "a"
+  EndFeatureMembership → ReferenceUsage → ReferenceSubsetting "d"
+```
+
+---
+
+### Invalid syntax rejected
+
+`decide; then action b; else action c;` — **not valid SysML v2 syntax**.  The
+parser rejects the `then` and `else` keywords; they are not part of the
+`ActionBodyStatement` grammar rule.  Do not use this form.
+
+---
+
+### What is safely rendered
+
+| Control node | Syntax | Rendered? | Edges rendered? |
+|---|---|---|---|
+| `ForkNode` | `fork;` | ✅ as `«fork»` node | ❌ no implicit edges extracted |
+| `JoinNode` | `join;` | ✅ as `«join»` node | ❌ no implicit edges extracted |
+| `MergeNode` | `merge;` | ✅ as `«merge»` node | ❌ no implicit edges extracted |
+| `DecisionNode` (no successions) | `decide;` | ✅ as `«decide»` node | ❌ no edges |
+| `DecisionNode` (incoming succession) | `succession first a then d;` | ✅ node + edge `a → d` | ✅ incoming edge safe |
+| `DecisionNode` (outgoing successions) | `succession first d then b;` | ✅ node only | ❌ outgoing edges unresolved — filtered out |
