@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { ParseResult, SysMLNode, PackageDefNode, ParseDiagnostic } from '../../core/modelTypes';
+import type { VisualizerModel, VizNode, VizPackageNode, VizDiagnostic } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 import { elementLines } from '../../core/validator';
 import ActionModal, { type FieldDef } from '../components/ActionModal';
@@ -19,7 +19,7 @@ import type { IncrementalEdit } from '../../core/editDescriptor';
 
 interface Props {
   selection: SelectionState;
-  result: ParseResult;
+  result: VisualizerModel;
   source: string;
   onSourceChange: (s: string) => void;
   onIncrementalEdit?: (edit: IncrementalEdit) => void;
@@ -79,12 +79,12 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
   // ── Derived model data for validation ──────────────────────────────────────
 
-  type PD = Extract<SysMLNode, { kind: 'partDef' }>;
-  type OD = Extract<SysMLNode, { kind: 'occurrenceDef' }>;
-  type PortN  = Extract<SysMLNode, { kind: 'port' }>;
-  type AliasN = Extract<SysMLNode, { kind: 'partAlias' }>;
-  type ConnN  = Extract<SysMLNode, { kind: 'connection' }>;
-  type MsgN   = Extract<SysMLNode, { kind: 'message' }>;
+  type PD = Extract<VizNode,{ kind: 'partDef' }>;
+  type OD = Extract<VizNode,{ kind: 'occurrenceDef' }>;
+  type PortN  = Extract<VizNode,{ kind: 'port' }>;
+  type AliasN = Extract<VizNode,{ kind: 'partAlias' }>;
+  type ConnN  = Extract<VizNode,{ kind: 'connection' }>;
+  type MsgN   = Extract<VizNode,{ kind: 'message' }>;
 
   const partDefs = result.nodes.filter((n): n is PD => n.kind === 'partDef');
   const occDefs  = result.nodes.filter((n): n is OD => n.kind === 'occurrenceDef');
@@ -111,7 +111,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
   // Interfaces for type hints
   const ifaceNames = result.nodes
     .filter(n => n.kind === 'interfaceDef')
-    .map(n => (n as Extract<SysMLNode, { kind: 'interfaceDef' }>).name);
+    .map(n => (n as Extract<VizNode,{ kind: 'interfaceDef' }>).name);
 
   // Instances inside the selected system part
   const systemInstances = selectedSystemName
@@ -321,8 +321,8 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
   // ── SM-related derived data (used in field hints and inspBody) ─────────────
 
-  type SMDef  = Extract<SysMLNode, { kind: 'stateDef' }>;
-  type SEntry = Extract<SysMLNode, { kind: 'stateEntry' }>;
+  type SMDef  = Extract<VizNode,{ kind: 'stateDef' }>;
+  type SEntry = Extract<VizNode,{ kind: 'stateEntry' }>;
   const smDefs = result.nodes.filter((n): n is SMDef => n.kind === 'stateDef');
 
   // ── Modal field definitions ─────────────────────────────────────────────────
@@ -370,7 +370,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
     { key: 'event', label: 'Event (optional)', type: 'text', placeholder: 'e.g. pedalPressed' },
   ];
 
-  type ReqDef = Extract<SysMLNode, { kind: 'requirementDef' }>;
+  type ReqDef = Extract<VizNode,{ kind: 'requirementDef' }>;
   const reqDefs    = result.nodes.filter((n): n is ReqDef => n.kind === 'requirementDef');
   const reqNames   = reqDefs.map(r => r.name);
   const reqNameHint = reqNames.length > 0 ? `Requirements: ${reqNames.join(', ')}` : undefined;
@@ -569,8 +569,8 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
   // ── Inspector body ──────────────────────────────────────────────────────────
 
-  type BehDef   = Extract<SysMLNode, { kind: 'behaviorDef' }>;
-  type AInstN   = Extract<SysMLNode, { kind: 'actionInst' }>;
+  type BehDef   = Extract<VizNode,{ kind: 'behaviorDef' }>;
+  type AInstN   = Extract<VizNode,{ kind: 'actionInst' }>;
 
   const behaviorDefs = result.nodes.filter((n): n is BehDef => n.kind === 'behaviorDef');
 
@@ -746,11 +746,27 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
       inspBody = null;
 
     } else if (selection.type === 'actionInst') {
+      const outgoingTargets = selection.extra?.outgoingTargets
+        ? selection.extra.outgoingTargets.split(',').filter(Boolean)
+        : [];
       inspBody = (
-        <div className="insp-section">
-          {selection.extra?.actionType && <KV label="Type"        value={selection.extra.actionType} />}
-          {selection.extra?.behavior   && <KV label="Behavior"    value={selection.extra.behavior} />}
-        </div>
+        <>
+          <div className="insp-section">
+            {selection.extra?.actionType && <KV label="Type"     value={selection.extra.actionType} />}
+            {selection.extra?.behavior   && <KV label="Behavior" value={selection.extra.behavior} />}
+          </div>
+          {outgoingTargets.length > 0 && (
+            <div className="insp-section">
+              <div className="insp-section-label">Flows to ({outgoingTargets.length})</div>
+              {outgoingTargets.map(t => (
+                <div key={t} className="insp-detail-row">
+                  <span style={{ fontSize: 10, color: '#fbbf24', marginRight: 4 }}>→</span>
+                  <span className="insp-detail-name">{t}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       );
 
     } else if (selection.type === 'behaviorFlow') {
@@ -804,7 +820,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
     } else if (selection.type === 'requirement') {
       const req     = reqDefs.find(r => r.name === selection.name);
-      type TL       = Extract<SysMLNode, { kind: 'traceLink' }>;
+      type TL       = Extract<VizNode,{ kind: 'traceLink' }>;
       const inLinks = result.nodes.filter((n): n is TL => n.kind === 'traceLink' && n.target === selection.name);
       inspBody = (
         <>
@@ -842,10 +858,10 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
       );
 
     } else if (selection.type === 'packageDef') {
-      function findPkgNode(pkgs: PackageDefNode[], name: string, ns: string): PackageDefNode | undefined {
+      function findPkgNode(pkgs: VizPackageNode[], name: string, ns: string): VizPackageNode | undefined {
         for (const p of pkgs) {
           if (p.name === name && p.namespace === ns) return p;
-          const nested = p.body.filter((n): n is PackageDefNode => n.kind === 'packageDef');
+          const nested = p.body.filter((n): n is VizPackageNode => n.kind === 'packageDef');
           const found  = findPkgNode(nested, name, ns);
           if (found) return found;
         }
@@ -867,7 +883,7 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
 
   // ── Related diagnostics ─────────────────────────────────────────────────────
 
-  const relatedDiags: ParseDiagnostic[] = (() => {
+  const relatedDiags: VizDiagnostic[] = (() => {
     if (!selection) return [];
     const lines = elementLines(
       selection.name,
