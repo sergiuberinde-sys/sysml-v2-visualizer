@@ -275,7 +275,14 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
 
     // ── WhileLoopActionUsage ────────────────────────────────────────────────
     if (node.type === 'WhileLoopActionUsage') {
-      const condition = extractCondition(node.children[0]);
+      // Two syntactic forms map differently:
+      //   while cond { body }        → condition at children[0], body at children[1]
+      //   loop { body } until cond   → empty ReferenceUsage at children[0],
+      //                                body at children[1], until-condition at children[2]
+      let condition = extractCondition(node.children[0]);
+      if (condition.text === undefined && node.children[2] !== undefined) {
+        condition = extractCondition(node.children[2]);
+      }
 
       const loopIds: string[] = [];
       const bodyContainer = node.children[1]?.children[0];

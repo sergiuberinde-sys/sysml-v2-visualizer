@@ -94,34 +94,90 @@ The guard is surfaced via `TransitionFeatureMembership`, not a direct attribute.
 
 ---
 
-## 4. Conditional blocks — `IfActionUsage` / `WhileLoopActionUsage`
+## 4. Conditional and loop blocks — `IfActionUsage` / `WhileLoopActionUsage`
 
-Separately confirmed (earlier research, also integrated into `behaviorBuilder.ts`):
+### IfActionUsage — validated structure
 
-| Syntax | EMF type |
-|---|---|
-| `if cond { … } else { … }` | `IfActionUsage` |
-| `loop { … } until cond` | `WhileLoopActionUsage` |
-
-Structure for `IfActionUsage`:
+Syntax: `if cond { … } else { … }`
 
 ```
 IfActionUsage
-  ParameterMembership[0]                  ← condition expression
-    LiteralBoolean  name="true"/"false"
+  ParameterMembership[0]                  ← condition (FeatureReferenceExpression [in])
+    FeatureReferenceExpression [in]
+      Membership "ready"                  ← cross-ref resolved to feature name
     — OR —
-    FeatureReferenceExpression
-      Membership  name="<feature>"
+    LiteralBoolean "true"/"false"         ← direct child of ParameterMembership[0]
   ParameterMembership[1]                  ← then-block
     ActionUsage [in] (anonymous)          ← transparent container
-      ActionUsage 'doSomething'
-      SuccessionAsUsage …
+      FeatureMembership
+        ActionUsage "ok"                  ← real then-action
   ParameterMembership[2]  (optional)      ← else-block
     ActionUsage [in] (anonymous)
+      FeatureMembership
+        ActionUsage "fault"               ← real else-action
 ```
 
+Note: the condition is a `FeatureReferenceExpression [in]` (with `direction: 'in'`), not a
+bare `FeatureReferenceExpression`.  `extractCondition()` matches on `type` only, so the
+direction field is irrelevant.  Branch actions are wrapped in `FeatureMembership`, not
+direct children of the anonymous container — handled transparently by `visit()`.
+
+### WhileLoopActionUsage — two syntactic forms
+
+Both forms share `WhileLoopActionUsage` as the EMF type, but the condition position differs.
+
+#### Form 1 — `while cond { body }` (pre-condition)
+
+```
+WhileLoopActionUsage
+  ParameterMembership[0]                  ← while-condition
+    FeatureReferenceExpression [in]
+      Membership "ready"
+  ParameterMembership[1]                  ← loop body
+    ActionUsage [in] (anonymous)
+      FeatureMembership
+        ActionUsage "step"
+```
+
+Condition is at `children[0]`.
+
+#### Form 2 — `loop { body } until cond` (post-condition / do-while)
+
+```
+WhileLoopActionUsage
+  ParameterMembership[0]                  ← empty "while" param — always a ReferenceUsage [in]
+    ReferenceUsage [in]
+  ParameterMembership[1]                  ← loop body (same position as Form 1)
+    ActionUsage [in] (anonymous)
+      FeatureMembership
+        ActionUsage "step"
+  ParameterMembership[2]                  ← until-condition
+    FeatureReferenceExpression [in]
+      Membership "done"
+```
+
+Condition is at `children[2]`.  `children[0]` is a placeholder `ReferenceUsage [in]`
+(its `name` is `null`); `extractCondition()` returns `{ kind: 'Expression', text: undefined }`
+for it, signalling the fallback to `children[2]`.
+
+#### Extraction rule in `behaviorBuilder.ts`
+
+```typescript
+let condition = extractCondition(node.children[0]);
+if (condition.text === undefined && node.children[2] !== undefined) {
+  condition = extractCondition(node.children[2]);  // 'loop ... until' form
+}
+```
+
+Both forms produce identical `BehaviorConditional` entries — the consumer cannot tell which
+form was used.  Body is always at `children[1]` for both forms.
+
+### Anonymous container transparency
+
 Anonymous `ActionUsage` nodes with `direction: 'in'` and `name: null` are transparent
-branch containers and should NOT be extracted as action entries.
+in `visit()` — they are never pushed as action entries.  Direct body actions are wrapped
+in `FeatureMembership` inside the container; the transparent wrapper case in `visit()`
+recurses through it automatically.
 
 ---
 
