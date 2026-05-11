@@ -38,6 +38,30 @@ const SUCCESSION_TYPES     = new Set(['Succession', 'SuccessionAsUsage']);
 const CONTROL_FLOW_TYPES   = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
 const CONDITIONAL_TYPES    = new Set(['IfActionUsage', 'WhileLoopActionUsage']);
 
+// ── Guard extraction (TransitionUsage) ────────────────────────────────────────
+
+/**
+ * Extract the guard feature name from a TransitionFeatureMembership child.
+ * Supports FeatureReferenceExpression and LiteralBoolean guards.
+ */
+function extractGuardName(transitionNode: ModelNode): string | undefined {
+  const tfm = transitionNode.children.find(c => c.type === 'TransitionFeatureMembership');
+  if (!tfm) return undefined;
+
+  // FeatureReferenceExpression → Membership (cross-ref resolved to feature name)
+  const fre = tfm.children.find(c => c.type === 'FeatureReferenceExpression');
+  if (fre) {
+    const m = fre.children.find(c => c.type === 'Membership');
+    if (m?.name) return m.name;
+  }
+
+  // LiteralBoolean (e.g. if true then …)
+  const lit = tfm.children.find(c => c.type === 'LiteralBoolean');
+  if (lit?.name) return lit.name;
+
+  return undefined;
+}
+
 // ── Endpoint extraction ───────────────────────────────────────────────────────
 
 /**
@@ -171,6 +195,30 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       if (branch)              action.branch = branch;
       actions.push(action);
       // Don't recurse — control-flow nodes have no meaningful children.
+      return;
+    }
+
+    // ── TransitionUsage (guarded succession: first a if guard then b;) ─────
+    if (node.type === 'TransitionUsage') {
+      // Source: first Membership child (cross-ref resolved by Java wrapper)
+      const srcMembership = node.children.find(c => c.type === 'Membership');
+      const sourceName    = srcMembership?.name ?? null;
+
+      // Guard: TransitionFeatureMembership → FeatureReferenceExpression → Membership
+      const guard = extractGuardName(node);
+
+      // Target: OwningMembership → SuccessionAsUsage → ReferenceSubsetting
+      const owningMembership = node.children.find(c => c.type === 'OwningMembership');
+      const succession       = owningMembership?.children.find(c => SUCCESSION_TYPES.has(c.type));
+      const targetRefs       = succession ? extractEndpointNames(succession) : [];
+      const targetName       = targetRefs[0] ?? null;
+
+      const flowId = `flow:${path}`;
+      if (sourceName && targetName) {
+        flows.push({ id: flowId, source: sourceName, target: targetName, type: 'transition', ...(guard !== undefined ? { guard } : {}) });
+      } else {
+        flows.push({ id: flowId, sourceName: sourceName ?? '', targetName: targetName ?? '', type: 'transition', ...(guard !== undefined ? { guard } : {}), unresolved: true });
+      }
       return;
     }
 

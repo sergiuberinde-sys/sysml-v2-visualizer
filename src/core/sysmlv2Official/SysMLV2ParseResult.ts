@@ -22,7 +22,9 @@ export interface BehaviorAction {
 
 export type BehaviorFlow =
   | { id: string; source: string; target: string; type: 'succession' }
-  | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true };
+  | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true }
+  | { id: string; source: string; target: string; type: 'transition'; guard?: string }
+  | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true };
 
 /**
  * A conditional or loop construct discovered in the model.
