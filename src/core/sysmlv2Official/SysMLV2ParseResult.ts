@@ -18,6 +18,10 @@ export interface BehaviorAction {
   conditionalId?: string;
   /** which branch this action lives in */
   branch?: 'then' | 'else' | 'loop';
+  /** For ActionDefinition entries: name of the directly enclosing structural definition (e.g. "Controller") */
+  owningDefName?: string;
+  /** For ActionDefinition entries: EMF type of the enclosing structural definition (e.g. "PartDefinition") */
+  owningDefType?: string;
 }
 
 export type BehaviorFlow =
