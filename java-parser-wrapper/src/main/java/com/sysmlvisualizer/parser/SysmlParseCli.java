@@ -193,9 +193,12 @@ public class SysmlParseCli {
 
         out.add(new DebugEntry(path, eClass, features));
 
-        List<EObject> contents = obj.eContents();
+        List<EObject> contents;
+        try { contents = obj.eContents(); } catch (Exception e) { return; }
         for (int i = 0; i < contents.size(); i++) {
-            collectDebugEntries(contents.get(i), path + "." + i, out, visited);
+            try {
+                collectDebugEntries(contents.get(i), path + "." + i, out, visited);
+            } catch (Exception e) { /* skip subtrees that trigger NPE in adapters */ }
         }
     }
 
