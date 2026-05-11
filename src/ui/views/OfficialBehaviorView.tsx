@@ -27,11 +27,12 @@ const V_GAP   = 32;
 const START_X = 48;
 const START_Y = 48;
 
-const ACT_BG       = '#09213a';
-const ACT_BORDER   = '#38bdf8';
-const ACT_STEREO   = '#7dd3fc';
-const ACT_NAME     = '#bae6fd';
-const BRANCH_COLOR = '#fbbf24';
+const ACT_BG        = '#09213a';
+const ACT_BORDER    = '#38bdf8';
+const ACT_STEREO    = '#7dd3fc';
+const ACT_NAME      = '#bae6fd';
+const BRANCH_COLOR  = '#fbbf24';
+const GUARD_COLOR   = '#a3e635';
 
 // ── Topological sort (Kahn's algorithm) ──────────────────────────────────────
 
@@ -98,11 +99,12 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
     );
     console.log('[OfficialBehaviorView] actionUsages for', behaviorName, ':', actionUsages.map(a => a.name));
 
-    // Collect resolved succession flows (drop unresolved ones — they have no source/target).
+    // Collect resolved flows (succession + transition); drop unresolved (no source/target).
+    type ResolvedFlow = Extract<NonNullable<typeof behavior>['flows'][number], { source: string }>;
     const resolvedFlows = behavior.flows.filter(
-      (f): f is { id: string; source: string; target: string; type: 'succession' } => 'source' in f,
+      (f): f is ResolvedFlow => 'source' in f,
     );
-    console.log('[OfficialBehaviorView] flows:', resolvedFlows.map(f => `${f.source}→${f.target}`));
+    console.log('[OfficialBehaviorView] flows:', resolvedFlows.map(f => `${f.source}→${f.target}${f.type === 'transition' && 'guard' in f && f.guard ? `[${f.guard}]` : ''}`));
 
     if (actionUsages.length === 0) return { rfNodes: [], rfEdges: [] };
 
@@ -185,13 +187,20 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
       .filter(f => positions.has(f.source) && positions.has(f.target))
       .map(f => {
         const srcBranch = (outgoing.get(f.source)?.length ?? 0) > 1;
+        const isGuarded = f.type === 'transition' && f.guard !== undefined;
+        const edgeColor = isGuarded ? GUARD_COLOR : (srcBranch ? BRANCH_COLOR : ACT_BORDER);
         return {
-          id:       `oflow-${behaviorName}-${f.source}-${f.target}`,
-          source:   `oact-${behaviorName}-${f.source}`,
-          target:   `oact-${behaviorName}-${f.target}`,
-          type:     'smoothstep',
-          style:    { stroke: srcBranch ? BRANCH_COLOR : ACT_BORDER, strokeWidth: 1.5 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: srcBranch ? BRANCH_COLOR : ACT_BORDER, width: 14, height: 14 },
+          id:        `oflow-${behaviorName}-${f.source}-${f.target}`,
+          source:    `oact-${behaviorName}-${f.source}`,
+          target:    `oact-${behaviorName}-${f.target}`,
+          type:      'smoothstep',
+          ...(isGuarded ? {
+            label:        `[${f.guard}]`,
+            labelStyle:   { fill: GUARD_COLOR, fontSize: 10, fontWeight: 600, fontFamily: 'monospace' },
+            labelBgStyle: { fill: '#0b1e0b', fillOpacity: 0.9, rx: 3, ry: 3 },
+          } : {}),
+          style:     { stroke: edgeColor, strokeWidth: 1.5 },
+          markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 14, height: 14 },
         };
       });
 
