@@ -374,6 +374,21 @@ public class SysmlParseCli {
         if ("FeatureChaining".equals(emfType) && name == null) {
             name = crossRefName(obj, "chainingFeature");
         }
+        // LiteralBoolean/Integer/String — emit the literal value as the name so callers can read it.
+        if ("LiteralBoolean".equals(emfType) && name == null) {
+            name = literalValue(obj, "value");
+        }
+        if ("LiteralInteger".equals(emfType) && name == null) {
+            name = literalValue(obj, "value");
+        }
+        if ("LiteralString".equals(emfType) && name == null) {
+            name = literalValue(obj, "value");
+        }
+        // Membership.memberElement cross-reference resolves the referenced element name
+        // (used inside FeatureReferenceExpression conditions).
+        if ("Membership".equals(emfType) && name == null) {
+            name = crossRefName(obj, "memberElement");
+        }
 
         // Feature.direction attribute (FeatureDirectionKind enum: in, out, inout, none).
         // Emit when explicitly set to a directional value; omit for "none" (unset).
@@ -388,8 +403,18 @@ public class SysmlParseCli {
         }
 
         List<Node> children = new ArrayList<>();
-        for (EObject child : obj.eContents()) {
-            children.add(buildNode(child, visited));
+        List<EObject> contents;
+        try {
+            contents = obj.eContents();
+        } catch (Exception e) {
+            contents = List.of();
+        }
+        for (EObject child : contents) {
+            try {
+                children.add(buildNode(child, visited));
+            } catch (Exception e) {
+                // Skip individual children that trigger NPE in Pilot Implementation adapters.
+            }
         }
         return new Node(emfType, name, direction, children);
     }
@@ -404,11 +429,29 @@ public class SysmlParseCli {
     private static String crossRefName(EObject obj, String featureName) {
         EStructuralFeature f = obj.eClass().getEStructuralFeature(featureName);
         if (f == null) return null;
-        Object val = obj.eGet(f);
-        if (val instanceof EObject ref && !ref.eIsProxy()) {
-            return nameOf(ref);
+        try {
+            Object val = obj.eGet(f);
+            if (val instanceof EObject ref && !ref.eIsProxy()) {
+                return nameOf(ref);
+            }
+        } catch (Exception e) {
+            // Known Pilot Implementation bug: lazy type resolution for DecisionNode endpoints
+            // can trigger NPE inside SuccessionAsUsageAdapter.  Swallow and return null.
         }
         return null;
+    }
+
+    /** Read a scalar attribute value (Boolean, Integer, String) and return it as a String. */
+    private static String literalValue(EObject obj, String featureName) {
+        EStructuralFeature f = obj.eClass().getEStructuralFeature(featureName);
+        if (f == null) return null;
+        try {
+            Object val = obj.eGet(f);
+            if (val == null) return null;
+            return val.toString();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ── stdout helpers ────────────────────────────────────────────────────────

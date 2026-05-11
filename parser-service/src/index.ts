@@ -70,7 +70,7 @@ app.post('/parse', async (req: Request, res: Response): Promise<void> => {
     result.behavior = buildBehavior(result.model);
   } else {
     if (!result.graph)    result.graph    = { nodes: [], edges: [] };
-    if (!result.behavior) result.behavior = { actions: [], flows: [] };
+    if (!result.behavior) result.behavior = { actions: [], flows: [], conditionals: [] };
   }
 
   res.json(result);
