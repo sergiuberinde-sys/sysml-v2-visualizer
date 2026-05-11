@@ -10,19 +10,41 @@ import type { ContainmentGraph } from './ContainmentGraph';
 export interface BehaviorAction {
   id: string;
   name: string;
-  /** EMF type: 'ActionDefinition' | 'ActionUsage' | 'PerformActionUsage' */
+  /** EMF type: ActionUsage | PerformActionUsage | ActionDefinition | DecisionNode | ForkNode | JoinNode | MergeNode */
   type: string;
-  /** id of the owning ActionDefinition (absent for top-level definitions) */
+  /** id of the owning ActionDefinition */
   ownerId?: string;
+  /** id of the enclosing IfActionUsage or WhileLoopActionUsage, if any */
+  conditionalId?: string;
+  /** which branch this action lives in */
+  branch?: 'then' | 'else' | 'loop';
 }
 
 export type BehaviorFlow =
   | { id: string; source: string; target: string; type: 'succession' }
   | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true };
 
+/**
+ * A conditional or loop construct discovered in the model.
+ * Extracted from IfActionUsage and WhileLoopActionUsage EMF nodes.
+ */
+export interface BehaviorConditional {
+  id: string;
+  type: 'ifThenElse' | 'whileLoop';
+  ownerId: string | null;
+  conditionKind: 'LiteralBoolean' | 'FeatureReference' | 'Expression';
+  conditionText?: string;
+  /** ids of BehaviorAction entries in the then-branch / loop-body */
+  thenActionIds: string[];
+  /** ids of BehaviorAction entries in the else-branch (ifThenElse only) */
+  elseActionIds?: string[];
+}
+
 export interface BehaviorData {
   actions: BehaviorAction[];
   flows:   BehaviorFlow[];
+  /** Conditional / loop structures found in the model */
+  conditionals: BehaviorConditional[];
 }
 
 /**
