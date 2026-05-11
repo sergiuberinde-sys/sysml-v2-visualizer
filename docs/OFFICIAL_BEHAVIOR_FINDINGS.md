@@ -21,7 +21,9 @@ package MinimalConditionalBehavior {
 }
 ```
 
-Parser result: `success: true`, zero diagnostics.
+Parser result: `success: false` (cross-reference to `ScalarValues::Boolean` cannot be resolved
+without the standard library), zero diagnostics, model fully present.
+The `TransitionUsage` node is extracted correctly regardless of success flag.
 
 ### Syntax rule
 
@@ -155,28 +157,119 @@ is silently skipped rather than crashing the whole parse.
 
 ---
 
-## 7. What can safely be extracted next
+## 7. Guard expression variants tested
 
-1. **`TransitionUsage` → guarded flow** — extract `source`, `guardName`, and `target` names.
-   Results in a new `BehaviorFlow` variant, e.g. `{ type: 'transition', source, target, guard }`.
+All four variants were run through the Java wrapper (`--debug` mode) to inspect raw EMF features.
+`success: false` in cases below is due to the standalone JAR not loading the SysML standard
+library (`ScalarValues`); the guard expression itself parses correctly in all cases.
 
-2. **`IfActionUsage` / `WhileLoopActionUsage`** — already fully extracted into
-   `BehaviorConditional` by `behaviorBuilder.ts`.
+### Results table
 
-3. **`DecisionNode`/`MergeNode`/`ForkNode`/`JoinNode`** — already extracted as
-   `BehaviorAction` entries with their EMF type as the `type` field.
+| Guard form | Syntax example | `success` | EMF structure | Extractable now | Guard text |
+|---|---|---|---|---|---|
+| Feature reference | `if ready then` | false* | `FeatureReferenceExpression → Membership "ready"` | ✅ | `"ready"` |
+| Boolean literal | `if true then` | **true** | `LiteralBoolean "true"` (direct child of TFM) | ✅ | `"true"` |
+| Negated reference | `if not ready then` | false* | `OperatorExpression(operator="not") → … → "ready"` | ❌ now | future |
+| Comparison | `if value > limit then` | false* | `OperatorExpression(operator=">") → "value", "limit"` | ❌ now | future |
 
-4. **Guard literal values** (`LiteralBoolean true/false`) — already resolved by the
-   Java wrapper and surfaced as `Membership.name`.
+\* `success: false` due to missing `ScalarValues` library, not an error in the guard expression.
+
+### EMF details — feature reference guard (already supported)
+
+```
+TransitionFeatureMembership
+  FeatureReferenceExpression
+    Membership "ready"          ← name resolved via memberElement cross-ref
+```
+
+### EMF details — boolean literal guard (already supported)
+
+```
+TransitionFeatureMembership
+  LiteralBoolean "true"         ← name resolved via literalValue("value")
+```
+
+Note: `LiteralBoolean` is a **direct** child of `TransitionFeatureMembership`, NOT nested inside
+`FeatureReferenceExpression`.  The current `extractGuardName()` handles this via a fallback check.
+
+### EMF details — negated reference guard (future work)
+
+```
+TransitionFeatureMembership
+  OperatorExpression                        ← no name in containment tree
+    ParameterMembership
+      Feature [in]
+        FeatureValue
+          FeatureReferenceExpression
+            Membership "ready"
+```
+
+Debug `--debug` reveals `OperatorExpression.features.operator = "not"` — a native EMF string
+attribute.  To surface this in the normal parse output, the Java wrapper would need:
+
+```java
+if ("OperatorExpression".equals(emfType) && name == null) {
+    name = literalValue(obj, "operator");   // emits "not" as the node name
+}
+```
+
+With that, `extractGuardName()` could reconstruct `"not ready"` from the operator node name
+plus the first operand's `FeatureReferenceExpression → Membership.name`.
+
+### EMF details — comparison guard (future work)
+
+```
+TransitionFeatureMembership
+  OperatorExpression                        ← operator = ">"
+    ParameterMembership                     ← operand 1
+      Feature [in]
+        FeatureValue
+          FeatureReferenceExpression
+            Membership "value"
+    ParameterMembership                     ← operand 2
+      Feature [in]
+        FeatureValue
+          FeatureReferenceExpression
+            Membership "limit"
+```
+
+`OperatorExpression.features.operator = ">"`.  With the same Java wrapper change above,
+`extractGuardName()` could produce `"value > limit"` from operator + two operand names.
+
+### What the current `extractGuardName()` does for unknown forms
+
+When neither `FeatureReferenceExpression` nor `LiteralBoolean` is a direct child of
+`TransitionFeatureMembership`, `extractGuardName()` returns `undefined`.  The flow is still
+emitted as `{ type: 'transition', source, target }` — no guard label, but the edge renders.
 
 ---
 
-## 8. What NOT to implement yet
+## 8. What can safely be extracted next
+
+1. **`TransitionUsage` → guarded flow** — ✅ implemented.  Emits
+   `{ type: 'transition', source, target, guard? }`.
+
+2. **`IfActionUsage` / `WhileLoopActionUsage`** — ✅ implemented.  Extracted into
+   `BehaviorConditional` entries by `behaviorBuilder.ts`.
+
+3. **`DecisionNode`/`MergeNode`/`ForkNode`/`JoinNode`** — ✅ implemented.  Extracted as
+   `BehaviorAction` entries.
+
+4. **`LiteralBoolean` guard values** — ✅ implemented.  The Java wrapper resolves
+   `LiteralBoolean.value → name`; `extractGuardName()` reads it directly.
+
+5. **`OperatorExpression` guards** (future) — requires adding
+   `name = literalValue(obj, "operator")` to the Java wrapper's `buildNode()` for
+   `OperatorExpression` nodes, then extending `extractGuardName()` to recurse into
+   operand `FeatureReferenceExpression` children.
+
+---
+
+## 9. What NOT to implement
 
 - Do not invent `guard` fields on `SuccessionAsUsage` — unguarded successions never carry
   a guard in the EMF model.
-- Do not attempt to parse `TransitionUsage` guard expressions beyond `FeatureReferenceExpression`
-  and `LiteralBoolean` — arbitrary expressions (e.g. comparisons) are not yet seen in
-  validated examples.
+- Do not emit guard text by string-scanning source text or by parsing node `name` fields
+  that were not set by the Java wrapper from official EMF attributes.
 - Do not enable `DecisionNode`-originating `SuccessionAsUsage` flow extraction until the
   Pilot Implementation NPE is fixed upstream.
