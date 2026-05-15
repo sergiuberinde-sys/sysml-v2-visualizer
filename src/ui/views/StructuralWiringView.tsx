@@ -772,8 +772,13 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         const isEdgeSel = flowNode
           ? selection?.extra?.graphId === flowNode.id || selection?.id === `wflow-${flowNode.id}`
           : selection?.id === `wconn-${conn.id}`;
+        // Highlight edges connected to the selected node (part or scope-port).
+        // srcRf / tgtRf are the React Flow node ids; selection.id for a node click
+        // is set to the same id (wpart-* or wsport-*), so the check is exact.
+        const isConnected = !isEdgeSel && (selection?.id === srcRf || selection?.id === tgtRf);
+        const highlightEdge = isEdgeSel || isConnected;
 
-        const edgeC = isEdgeSel ? EDGE_SEL_C : CONN_C;
+        const edgeC = highlightEdge ? EDGE_SEL_C : CONN_C;
 
         // Route edges to port-handle squares.
         // Always exit from the outgoing (right/-out) handle and enter at the
@@ -801,7 +806,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace' },
           labelBgStyle:    { fill: '#030c06', fillOpacity: 0.95, rx: 3, ry: 3 },
           labelBgPadding:  [3, 4] as [number, number],
-          style:           { stroke: edgeC, strokeWidth: isEdgeSel ? 2.5 : 1.5 },
+          style:           { stroke: edgeC, strokeWidth: highlightEdge ? 2.5 : 1.5 },
           markerEnd:       { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 },
           // Smooth rounded corners on the orthogonal bends
           pathOptions:     { borderRadius: 12 },
