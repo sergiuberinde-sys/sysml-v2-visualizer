@@ -764,6 +764,10 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           const srcRf = graphIdToRfId.get(edge.source);
           const tgtRf = graphIdToRfId.get(edge.target);
           if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
+          // inst-* nodes are inside parent groups — their edges bypass ELK
+          // routing and draw uncontrolled curves; the type is already visible
+          // in the instance label so these edges add no information.
+          if (srcRf.startsWith('inst-') || tgtRf.startsWith('inst-')) continue;
           const edgeId = `typedby-${edge.id}`;
           if (addedEdgeIds.has(edgeId)) continue;
           addedEdgeIds.add(edgeId);
@@ -785,9 +789,10 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           const srcRf = graphIdToRfId.get(edge.source) ?? portToOwnerRfId.get(edge.source);
           const tgtRf = graphIdToRfId.get(edge.target) ?? portToOwnerRfId.get(edge.target);
           if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
-          // Skip connections whose both endpoints are composition instances —
-          // those are already rendered by Section 2 from VisualizerModel data.
-          if (srcRf.startsWith('inst-') && tgtRf.startsWith('inst-')) continue;
+          // Skip connections involving inst-* (inside composition groups) —
+          // intra-group connections come from Section 2 already; cross-group
+          // connections bypass ELK and draw unrouted curves over other nodes.
+          if (srcRf.startsWith('inst-') || tgtRf.startsWith('inst-')) continue;
           const edgeId = `conn-graph-${edge.id}`;
           if (addedEdgeIds.has(edgeId)) continue;
           addedEdgeIds.add(edgeId);

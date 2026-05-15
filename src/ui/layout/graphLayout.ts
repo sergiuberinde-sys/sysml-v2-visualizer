@@ -136,14 +136,23 @@ export async function applyElkLayout(
       return pos ? { ...n, position: pos } : n;
     });
 
-    // Extract ELK-computed bend points per edge.
-    // These are in the same world-coordinate space as node positions and can
-    // be passed directly to a React Flow custom edge renderer.
+    // Extract ELK-computed routes per edge.
+    //
+    // We store the FULL route: [startPoint, ...bendPoints, endPoint].
+    // The caller prepends the React Flow source handle and appends the target
+    // handle.  Because ELK attaches startPoint/endPoint to the same node face
+    // that React Flow uses for handles, the connecting arms are always
+    // axis-aligned (same x in LR, same y in TB), keeping the whole path
+    // orthogonal with no diagonal segments crossing node boxes.
     const edgeRoutes: ElkRouteMap = new Map();
     for (const e of (laid.edges ?? [])) {
       const section = e.sections?.[0];
       if (!section) continue;
-      edgeRoutes.set(e.id, section.bendPoints ?? []);
+      edgeRoutes.set(e.id, [
+        section.startPoint,
+        ...(section.bendPoints ?? []),
+        section.endPoint,
+      ]);
     }
 
     return { nodes: positionedNodes, edgeRoutes };
