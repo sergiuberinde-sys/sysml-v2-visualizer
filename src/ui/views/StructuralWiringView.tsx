@@ -188,6 +188,7 @@ interface Props {
 export default function StructuralWiringView({ graph, selection, onSelect }: Props) {
   const [scopeName, setScopeName] = useState('');
   const [layoutVersion, setLayoutVersion] = useState(0);
+  const [fitMode, setFitMode] = useState(false);
 
   // ── Drag-position persistence ────────────────────────────────────────────────
   // displayNodes is the source-of-truth for React Flow; it is initialised from
@@ -952,12 +953,16 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
             onNodesChange={handleNodesChange}
             fitView
             fitViewOptions={{ padding: 0.3 }}
-            nodesDraggable={true}
+            nodesDraggable={!fitMode}
             nodesConnectable={false}
+            panOnDrag={!fitMode}
+            zoomOnScroll={!fitMode}
+            zoomOnPinch={!fitMode}
+            zoomOnDoubleClick={!fitMode}
           >
             <Background color="#1a2a3a" gap={24} />
-            <Controls />
-            <FitPanel padding={0.3} />
+            <Controls showFitView={false} />
+            <FitPanel padding={0.3} active={fitMode} onToggle={() => setFitMode(v => !v)} />
           </ReactFlow>
         </div>
       ) : (

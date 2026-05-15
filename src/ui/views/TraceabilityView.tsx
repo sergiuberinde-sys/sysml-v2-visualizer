@@ -1,14 +1,17 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
-  type Node, type Edge,
+  applyNodeChanges,
+  type Node, type Edge, type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import type { VisualizerModel, VizNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
+import type { TrlcData } from '../../core/trlc/types';
+import { FitPanel } from '../layout/FitPanel';
 
-type RD = Extract<SysMLNode, { kind: 'requirementDef' }>;
-type TL = Extract<SysMLNode, { kind: 'traceLink' }>;
+type RD = Extract<VizNode, { kind: 'requirementDef' }>;
+type TL = Extract<VizNode, { kind: 'traceLink' }>;
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -138,19 +141,121 @@ function buildGraph(
   return { nodes, edges };
 }
 
+const ASIL_COLOR: Record<string, string> = {
+  D: '#f87171', C: '#fb923c', B: '#facc15', A: '#a3e635', QM: '#64748b',
+};
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  result: ParseResult;
+  result: VisualizerModel;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
+  trlcData?: TrlcData;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TraceabilityView({ result, selection, onSelect }: Props) {
+export default function TraceabilityView({ result, selection, onSelect, trlcData }: Props) {
   const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef');
   const links = result.nodes.filter((n): n is TL => n.kind === 'traceLink');
+  const isOfficial = result.parserMode === 'sysmlV2OfficialFuture';
+
+  // Official mode: render TRLC trace matrix
+  if (isOfficial) {
+    if (!trlcData) {
+      return (
+        <div className="behavior-placeholder">
+          <div>No TRLC requirements loaded.</div>
+          <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>
+            Use the <code>Import TRLC</code> button to load a requirements JSON file.
+          </div>
+        </div>
+      );
+    }
+
+    // Group traces by requirement
+    const byReq = new Map<string, string[]>();
+    for (const t of trlcData.traces) {
+      if (!byReq.has(t.requirementId)) byReq.set(t.requirementId, []);
+      byReq.get(t.requirementId)!.push(t.elementName);
+    }
+
+    return (
+      <div style={{
+        height: '100%', overflowY: 'auto',
+        padding: '16px 24px',
+        background: '#0d1117',
+        fontFamily: 'monospace',
+      }}>
+        <div style={{
+          marginBottom: 16, fontSize: 10, color: '#475569',
+          textTransform: 'uppercase', letterSpacing: '0.08em',
+          borderBottom: '1px solid #1e2d3d', paddingBottom: 8,
+        }}>
+          Requirement Traces ({trlcData.requirements.length} reqts · {trlcData.traces.length} links)
+        </div>
+        {trlcData.requirements.map(req => {
+          const elements = byReq.get(req.id) ?? [];
+          const selId = `trlc-req-${req.id}`;
+          const isSelected = selection?.id === selId;
+          return (
+            <div
+              key={req.id}
+              style={{
+                marginBottom: 12,
+                padding: '10px 14px',
+                background: isSelected ? '#0f1f3a' : '#0d1f2d',
+                border: `1px solid ${isSelected ? '#60a5fa' : '#1e3a5f'}`,
+                borderRadius: 7,
+                cursor: 'pointer',
+              }}
+              onClick={() => onSelect({
+                id: selId, type: 'requirement', name: req.id,
+                extra: { reqId: req.id, text: req.text, title: req.title, ...(req.asil ? { asil: req.asil } : {}) },
+              })}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600 }}>{req.id}</span>
+                <span style={{ fontSize: 12, color: '#e2e8f0' }}>{req.title}</span>
+                {req.asil && (
+                  <span style={{ fontSize: 10, color: ASIL_COLOR[req.asil] ?? '#64748b', marginLeft: 'auto' }}>
+                    ASIL-{req.asil}
+                  </span>
+                )}
+              </div>
+              {elements.length > 0 ? (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {elements.map(el => {
+                    const elSelId = `trlc-el-${req.id}-${el}`;
+                    return (
+                      <span
+                        key={el}
+                        style={{
+                          fontSize: 10, padding: '2px 7px',
+                          background: '#0f172a', border: '1px solid #334155',
+                          borderRadius: 4, color: '#94a3b8',
+                          cursor: 'pointer',
+                        }}
+                        onClick={e => {
+                          e.stopPropagation();
+                          onSelect({ id: elSelId, type: 'part', name: el });
+                        }}
+                      >
+                        {el}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <span style={{ fontSize: 10, color: '#334155', fontStyle: 'italic' }}>no traced elements</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   const kindOf = useMemo(() => {
     const m = new Map<string, string>();
@@ -188,6 +293,20 @@ export default function TraceabilityView({ result, selection, onSelect }: Props)
     return { rfNodes, rfEdges };
   }, [baseNodes, baseEdges, selection]);
 
+  // Drag support
+  const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
+  const [fitMode, setFitMode] = useState(false);
+
+  useEffect(() => {
+    // When the model changes, reset to computed positions (preserving nothing).
+    setDisplayNodes(rfNodes);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseNodes]);
+
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    setDisplayNodes(prev => applyNodeChanges(changes, prev));
+  }, []);
+
   const handleNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
     const s = node.data?._sel as SelectionState;
     if (s) onSelect(s);
@@ -210,15 +329,22 @@ export default function TraceabilityView({ result, selection, onSelect }: Props)
   return (
     <div style={{ width: '100%', height: '100%' }}>
       <ReactFlow
-        nodes={rfNodes}
+        nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
         edges={rfEdges}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
+        onNodesChange={handleNodesChange}
         fitView
         fitViewOptions={{ padding: 0.25 }}
+        nodesDraggable={!fitMode}
+        panOnDrag={!fitMode}
+        zoomOnScroll={!fitMode}
+        zoomOnPinch={!fitMode}
+        zoomOnDoubleClick={!fitMode}
       >
         <Background color="#0a0a1e" gap={24} />
-        <Controls />
+        <Controls showFitView={false} />
+        <FitPanel padding={0.25} active={fitMode} onToggle={() => setFitMode(v => !v)} />
       </ReactFlow>
     </div>
   );

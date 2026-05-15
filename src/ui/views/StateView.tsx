@@ -1,17 +1,18 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
   type Node, type Edge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import { FitPanel } from '../layout/FitPanel';
+import type { VisualizerModel, VizNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type StateDef    = Extract<SysMLNode, { kind: 'stateDef' }>;
-type StateEntry  = Extract<SysMLNode, { kind: 'stateEntry' }>;
-type Transition  = Extract<SysMLNode, { kind: 'transition' }>;
+type StateDef    = Extract<VizNode, { kind: 'stateDef' }>;
+type StateEntry  = Extract<VizNode, { kind: 'stateEntry' }>;
+type Transition  = Extract<VizNode, { kind: 'transition' }>;
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -193,7 +194,7 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  result: ParseResult;
+  result: VisualizerModel;
   stateMachineName: string;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
@@ -202,6 +203,8 @@ interface Props {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function StateView({ result, stateMachineName, selection, onSelect }: Props) {
+  const [fitMode, setFitMode] = useState(false);
+
   const sm = useMemo(
     () => result.nodes.find(
       (n): n is StateDef => n.kind === 'stateDef' && n.name === stateMachineName,
@@ -283,9 +286,15 @@ export default function StateView({ result, stateMachineName, selection, onSelec
         onEdgeClick={handleEdgeClick}
         fitView
         fitViewOptions={{ padding: 0.2 }}
+        nodesDraggable={!fitMode}
+        panOnDrag={!fitMode}
+        zoomOnScroll={!fitMode}
+        zoomOnPinch={!fitMode}
+        zoomOnDoubleClick={!fitMode}
       >
         <Background color="#0a1e1e" gap={24} />
-        <Controls />
+        <Controls showFitView={false} />
+        <FitPanel padding={0.2} active={fitMode} onToggle={() => setFitMode(v => !v)} />
       </ReactFlow>
     </div>
   );
