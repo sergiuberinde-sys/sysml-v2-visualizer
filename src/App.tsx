@@ -8,6 +8,7 @@ import { SYSML_TOKENS, SYSML_THEME } from './ui/sysmlLanguage';
 import ModelExplorer from './ui/views/ModelExplorer';
 import StructureView from './ui/views/StructureView';
 import SequenceView from './ui/views/SequenceView';
+import SysMLSequenceView from './ui/views/SysMLSequenceView';
 
 import OfficialBehaviorView from './ui/views/OfficialBehaviorView';
 import StateView from './ui/views/StateView';
@@ -60,7 +61,7 @@ const CURSOR_SYNC_TYPES = new Set([
   'InterfaceDefinition', 'InterfaceUsage',
   'ConnectionDefinition', 'ConnectionUsage',
   'FlowUsage', 'FlowConnectionUsage', 'SuccessionItemFlow',
-  'OccurrenceDefinition', 'OccurrenceUsage',
+  'OccurrenceDefinition', 'OccurrenceUsage', 'EventOccurrenceUsage',
   'BehaviorDefinition', 'StateDefinition',
   'RequirementDefinition', 'RequirementUsage',
   'AllocationDefinition', 'UseCaseDefinition',
@@ -79,7 +80,7 @@ function nodeTypeToSelType(type: string): NonNullable<SelectionState>['type'] {
   if (type === 'Package' || type === 'Namespace') return 'packageDef';
   if (type === 'StateDefinition') return 'stateMachine';
   if (type === 'RequirementDefinition' || type === 'RequirementUsage') return 'requirement';
-  if (FLOW_TYPES.has(type)) return 'connection';
+  if (FLOW_TYPES.has(type) || type === 'EventOccurrenceUsage') return 'connection';
   return 'part';
 }
 
@@ -215,10 +216,17 @@ function findElementAtLineOfficial(
         }
       }
     }
+  } else if (best.type === 'EventOccurrenceUsage') {
+    suggestTab = 'sequence';
+  } else if (FLOW_TYPES.has(best.type)) {
+    // A FlowUsage with ParameterMembership children is a sequence message; otherwise structural.
+    const isSeqMsg = graph.edges.some(
+      e => e.type === 'contains' && e.source === best.id &&
+           (graph.nodes.find(n => n.id === e.target)?.type === 'ParameterMembership'),
+    );
+    suggestTab = isSeqMsg ? 'sequence' : 'flow';
   } else if (STRUCT_TYPES.has(best.type)) {
     suggestTab = 'structure';
-  } else if (FLOW_TYPES.has(best.type)) {
-    suggestTab = 'flow';
   }
 
   console.log('[CursorSync] editor→visualizer line', line, '→', best.type, best.label,
@@ -257,6 +265,7 @@ type ViewTab = 'structure' | 'flow' | 'sequence' | 'behavior' | 'state' | 'requi
 const OFFICIAL_TAB_LABELS: Partial<Record<ViewTab, string>> = {
   structure:    'General',
   flow:         'Interconnect',
+  sequence:     'Sequence',
 };
 
 const TAB_LABELS: Record<ViewTab, string> = {
@@ -271,7 +280,7 @@ const TAB_LABELS: Record<ViewTab, string> = {
   graph:        'Graph',
 };
 
-const OFFICIAL_TABS: ViewTab[] = ['structure', 'flow', 'behavior', 'requirements', 'traceability'];
+const OFFICIAL_TABS: ViewTab[] = ['structure', 'flow', 'sequence', 'behavior', 'requirements', 'traceability'];
 
 // ── App mode — detected once at module load, stable for the page lifetime ────
 
@@ -1279,12 +1288,18 @@ export default function App() {
             </ErrorBoundary>
             <ErrorBoundary label="Sequence view error">
               {tab === 'sequence' && (
-                <SequenceView
-                  result={vizModel}
-                  occurrenceName={selectedOccurrence}
-                  selection={selection}
-                  onSelect={setSelection}
-                />
+                officialParseResult
+                  ? <SysMLSequenceView
+                      graph={officialParseResult.graph}
+                      selection={selection}
+                      onSelect={setSelection}
+                    />
+                  : <SequenceView
+                      result={vizModel}
+                      occurrenceName={selectedOccurrence}
+                      selection={selection}
+                      onSelect={setSelection}
+                    />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="Structural wiring error">
