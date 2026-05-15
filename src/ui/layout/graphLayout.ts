@@ -5,6 +5,10 @@
  * Nodes with parentId (composition-group instances) keep their relative
  * positions unchanged — they are already arranged inside their parent by the
  * manual layout logic in StructureView.
+ *
+ * Edge routes: ELK computes obstacle-avoiding bend points for every edge.
+ * These are returned in `edgeRoutes` so the caller can pass them to a custom
+ * edge renderer that draws the ELK-computed polyline instead of a naive curve.
  */
 
 import ELK, { type ElkNode, type ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
@@ -20,6 +24,9 @@ export const LAYOUT_LABELS: Record<LayoutMode, string> = {
   compact: 'Compact LR',
   manual:  'Manual',
 };
+
+/** Map from React Flow edge id → ELK bend points (world-coordinate waypoints). */
+export type ElkRouteMap = Map<string, { x: number; y: number }[]>;
 
 // ── ELK instance (shared, stateless between layout calls) ─────────────────────
 
@@ -80,9 +87,9 @@ function elkOptions(mode: Exclude<LayoutMode, 'manual'>): Record<string, string>
 /**
  * Apply an ELK layout to a set of React Flow nodes and edges.
  *
- * - mode === 'manual': returns `nodes` unchanged (caller uses the existing positions).
- * - Otherwise: runs ELK and returns a new node array with updated positions for
- *   top-level nodes.  Nodes with `parentId` are returned unchanged.
+ * Returns:
+ *   nodes      – repositioned Node array (top-level nodes moved; parentId nodes unchanged)
+ *   edgeRoutes – ELK-computed bend points per edge id; empty map on 'manual' or error
  *
  * Never throws: falls back to the original positions on ELK errors.
  */
@@ -90,8 +97,9 @@ export async function applyElkLayout(
   nodes: Node[],
   edges: Edge[],
   mode: LayoutMode,
-): Promise<Node[]> {
-  if (mode === 'manual') return nodes;
+): Promise<{ nodes: Node[]; edgeRoutes: ElkRouteMap }> {
+  const empty: ElkRouteMap = new Map();
+  if (mode === 'manual') return { nodes, edgeRoutes: empty };
 
   const topNodes = nodes.filter(n => !n.parentId);
   const topIds   = new Set(topNodes.map(n => n.id));
@@ -122,13 +130,25 @@ export async function applyElkLayout(
       (laid.children ?? []).map(c => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]),
     );
 
-    return nodes.map(n => {
+    const positionedNodes = nodes.map(n => {
       if (n.parentId) return n;               // keep relative position inside parent
       const pos = posMap.get(n.id);
       return pos ? { ...n, position: pos } : n;
     });
+
+    // Extract ELK-computed bend points per edge.
+    // These are in the same world-coordinate space as node positions and can
+    // be passed directly to a React Flow custom edge renderer.
+    const edgeRoutes: ElkRouteMap = new Map();
+    for (const e of (laid.edges ?? [])) {
+      const section = e.sections?.[0];
+      if (!section) continue;
+      edgeRoutes.set(e.id, section.bendPoints ?? []);
+    }
+
+    return { nodes: positionedNodes, edgeRoutes };
   } catch (err) {
     console.error('[sysml-viz] ELK layout error:', err);
-    return nodes;                             // fall back to original positions
+    return { nodes, edgeRoutes: empty };     // fall back to original positions
   }
 }

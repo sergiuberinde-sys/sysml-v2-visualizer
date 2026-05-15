@@ -13,6 +13,7 @@ import type { SelectionState } from '../../app/selection';
 import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGraph';
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
+import { ElkEdge } from '../layout/ElkEdge';
 import { applyElkLayout, LAYOUT_LABELS, type LayoutMode } from '../layout/graphLayout';
 
 // ── Layout direction context (consumed by custom node type) ───────────────────
@@ -229,6 +230,7 @@ interface Props {
 export default function StructureView({ result, graph, selection, onSelect }: Props) {
   const [layoutMode,     setLayoutMode]     = useState<LayoutMode>('lr');
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
+  const [displayEdges,   setDisplayEdges]   = useState<Edge[]>([]);
   const [savedPositions, setSavedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
   const [layoutKey,      setLayoutKey]      = useState(0);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
@@ -238,8 +240,9 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   const savedPositionsRef = useRef(savedPositions);
   savedPositionsRef.current = savedPositions;
 
-  // nodeTypes is stable — defined once outside component, but we need context so use useMemo
+  // nodeTypes / edgeTypes are stable references
   const nodeTypes = useMemo(() => ({ sysmlPart: SysmlPartNode }), []);
+  const edgeTypes = useMemo(() => ({ elkEdge: ElkEdge }), []);
 
   // ── Pass 1: manual layout (recomputes when model changes) ─────────────────
   const { baseNodes, baseEdges } = useMemo(() => {
@@ -570,15 +573,16 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         const typeDef = partDefMap.get(alias.type);
         const ports   = typeDef ? typeDef.body.filter((b): b is PortLike => b.kind === 'port') : [];
         const stereo  = `${alias.name} : ${alias.type}`;
-        const instW   = nodeWidth(stereo, '', [], undefined);
+        // Each instance gets its own content-fitted width — no forced uniformity.
+        const instW   = Math.max(nodeWidth(stereo, '', [], undefined), MIN_NODE_W);
         return { alias, ports, h: partH(ports.length), instW };
       });
       const maxInstH = instanceMeta.reduce((m, d) => Math.max(m, d.h), PART_BASE_H);
-      // All instances share the same width so the group grid stays regular.
-      const instW  = Math.max(...instanceMeta.map(m => m.instW), MIN_NODE_W);
 
       const nInst  = aliases.length;
-      const groupW = 2 * GRP_PAD_X + nInst * instW + (nInst - 1) * INST_GAP;
+      const groupW = 2 * GRP_PAD_X
+        + instanceMeta.reduce((s, m) => s + m.instW, 0)
+        + Math.max(0, nInst - 1) * INST_GAP;
       const groupH = GRP_PAD_TOP + maxInstH + GRP_PAD_BOT;
       const groupX = -(groupW / 2);
 
@@ -607,15 +611,15 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         zIndex: -1,
       });
 
-      instanceMeta.forEach(({ alias, ports, h }, idx) => {
-        const relX = GRP_PAD_X + idx * (instW + INST_GAP);
-        const instGid = partUsageGid(alias.name);
+      let runX = GRP_PAD_X;
+      for (const { alias, ports, h, instW: iW } of instanceMeta) {
+        const instGid  = partUsageGid(alias.name);
         const instRfId = `inst-${compDef.name}-${alias.name}`;
         regGid(instGid, instRfId);
         baseNodes.push(
           makePartNode(
             instRfId,
-            { x: relX, y: GRP_PAD_TOP },
+            { x: runX, y: GRP_PAD_TOP },
             `${alias.name} : ${alias.type}`,
             '',
             ports,
@@ -625,7 +629,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
               extent: 'parent',
               style: {
                 background: PAL.inst.bg, border: `1px solid ${PAL.inst.border}`,
-                borderRadius: 7, padding: '6px 10px', width: instW, height: h,
+                borderRadius: 7, padding: '6px 10px', width: iW, height: h,
               },
             },
             {
@@ -637,7 +641,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
             },
           ),
         );
-      });
+        runX += iW + INST_GAP;
+      }
 
       for (const conn of connections) {
         const edgeId = `conn-${compDef.name}-${conn.fromPart}.${conn.fromPort}-${conn.toPart}.${conn.toPort}`;
@@ -809,7 +814,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   useEffect(() => {
     let cancelled = false;
 
-    applyElkLayout(baseNodes, baseEdges, layoutMode).then(positioned => {
+    applyElkLayout(baseNodes, baseEdges, layoutMode).then(({ nodes: positioned, edgeRoutes }) => {
       if (cancelled) return;
       const newPositions = new Map(savedPositionsRef.current);
       for (const n of positioned) {
@@ -818,6 +823,13 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       setSavedPositions(newPositions);
       // Keep explicit draggable: false on group containers; enable on all other nodes.
       setDisplayNodes(positioned.map(n => ({ ...n, draggable: n.draggable !== false })));
+      // Apply ELK obstacle-avoiding routes to edges so they render as polylines
+      // that stay clear of every node face, not as naive smoothstep curves.
+      setDisplayEdges(baseEdges.map(e => {
+        const waypoints = edgeRoutes.get(e.id);
+        if (!waypoints) return e;   // intra-group straight edges — keep as-is
+        return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints } };
+      }));
       setAutoFitVersion(v => v + 1);
     });
 
@@ -843,8 +855,9 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   // ── Pass 2: apply selection highlight ────────────────────────────────────────
   const { rfNodes, rfEdges } = useMemo(() => {
     const nodes = displayNodes.length > 0 ? displayNodes : baseNodes;
+    const edges = displayEdges.length > 0 ? displayEdges : baseEdges;
 
-    if (!selection) return { rfNodes: nodes, rfEdges: baseEdges };
+    if (!selection) return { rfNodes: nodes, rfEdges: edges };
 
     const rfNodes = nodes.map(n => {
       if (n.id !== selection.id) return n;
@@ -858,7 +871,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       };
     });
 
-    const rfEdges = baseEdges.map(e => {
+    const rfEdges = edges.map(e => {
       if (e.id !== selection.id) return e;
       return {
         ...e,
@@ -869,7 +882,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     });
 
     return { rfNodes, rfEdges };
-  }, [displayNodes, baseNodes, baseEdges, selection]);
+  }, [displayNodes, displayEdges, baseNodes, baseEdges, selection]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handleNodeClick = useCallback((_e: ReactMouseEvent, node: Node) => {
@@ -927,6 +940,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
             nodes={rfNodes}
             edges={rfEdges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onNodesChange={handleNodesChange}
             onNodeClick={handleNodeClick}
             onEdgeClick={handleEdgeClick}
