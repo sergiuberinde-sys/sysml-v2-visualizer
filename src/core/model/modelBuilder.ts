@@ -83,6 +83,18 @@ function astToSysMLNode(node: ASTNode, namespaceStack: string[]): SysMLNode | nu
     case 'port':
       return { kind: 'port', name: node.name, direction: node.direction, portType: node.portType, line: node.line };
 
+    case 'itemDef': {
+      const childSysMLNodes: SysMLNode[] = [];
+      for (const child of node.children) {
+        const sysmlChild = astToSysMLNode(child, namespaceStack);
+        if (sysmlChild !== null) childSysMLNodes.push(sysmlChild);
+      }
+      return { kind: 'itemDef', name: node.name, namespace: ns, body: childSysMLNodes, line: node.line, endLine: node.endLine };
+    }
+
+    case 'itemAlias':
+      return { kind: 'itemAlias', name: node.name, type: node.type, line: node.line };
+
     case 'partAlias':
       return { kind: 'partAlias', name: node.name, type: node.type, line: node.line };
 

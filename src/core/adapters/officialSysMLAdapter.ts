@@ -47,7 +47,7 @@ const MEMBERSHIP_WRAPPERS = new Set([
 ]);
 
 // Usage kinds for which we create typedBy edges (per requirements §3).
-const TYPED_USAGE_TYPES = new Set(['PartUsage', 'AttributeUsage', 'PortUsage', 'ActionUsage', 'PerformActionUsage']);
+const TYPED_USAGE_TYPES = new Set(['PartUsage', 'AttributeUsage', 'PortUsage', 'ActionUsage', 'PerformActionUsage', 'RequirementUsage']);
 
 // Definition kinds that are valid targets for typedBy edges.
 const TYPED_DEF_TYPES = new Set([
@@ -68,6 +68,10 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
     const id = path;
     const gn: GraphNode = { id, label: node.name ?? node.type, type: node.type };
     if (node.direction != null) gn.direction = node.direction;
+    if (node.startLine != null && node.startLine > 0) {
+      gn.startLine = node.startLine;
+      gn.endLine   = node.endLine;
+    }
     nodes.push(gn);
 
     if (parentId !== null) {
@@ -222,6 +226,166 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
     edges.push({ id: edgeId, source: portAId, target: portBId, type: 'connection' });
   }
 
+  // ── Shared: PartUsage index + typedBy lookup (used by Pass 4 and Pass 5) ──────
+
+  const partUsagesByNameBCG = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.type === 'PartUsage' && n.label !== n.type) {
+      const list = partUsagesByNameBCG.get(n.label) ?? [];
+      list.push(n.id);
+      partUsagesByNameBCG.set(n.label, list);
+    }
+  }
+
+  const typedByBySourceBCG = new Map<string, string>();
+  for (const e of edges) {
+    if (e.type === 'typedBy') typedByBySourceBCG.set(e.source, e.target);
+  }
+
+  // ── FlowUsage connection edges via FlowEnd endpoints ──────────────────────────
+  //
+  // 'flow ... from part.port to part.port' creates a FlowUsage with two
+  // EndFeatureMembership children. Under each EndFeatureMembership sits a FlowEnd:
+  //   ReferenceSubsetting (label = part name)
+  //   FeatureMembership → ReferenceUsage (label = port name)
+
+  function collectFlowEndChainsBCG(flowId: string): string[][] {
+    const chains: string[][] = [];
+    for (const kid of childrenOfContainment.get(flowId) ?? []) {
+      const emNode = nodeById.get(kid);
+      if (!emNode || emNode.type !== 'EndFeatureMembership') continue;
+      for (const kid2 of childrenOfContainment.get(kid) ?? []) {
+        const feNode = nodeById.get(kid2);
+        if (!feNode || feNode.type !== 'FlowEnd') continue;
+        let partName: string | null = null;
+        let portName: string | null = null;
+        for (const kid3 of childrenOfContainment.get(kid2) ?? []) {
+          const n3 = nodeById.get(kid3);
+          if (!n3) continue;
+          if (n3.type === 'ReferenceSubsetting' && n3.label !== n3.type) {
+            partName = n3.label;
+          } else if (n3.type === 'FeatureMembership') {
+            for (const kid4 of childrenOfContainment.get(kid3) ?? []) {
+              const n4 = nodeById.get(kid4);
+              if (n4 && n4.type === 'ReferenceUsage' && n4.label !== n4.type) {
+                portName = n4.label;
+              }
+            }
+          }
+        }
+        const chain: string[] = [];
+        if (partName) chain.push(partName);
+        if (portName) chain.push(portName);
+        if (chain.length > 0) chains.push(chain);
+      }
+    }
+    return chains;
+  }
+
+  const seenFlow = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'FlowUsage') continue;
+
+    const chains = collectFlowEndChainsBCG(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    const srcId = resolveFlowChainBCG(chainA);
+    const tgtId = resolveFlowChainBCG(chainB);
+
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const flowName    = n.label !== n.type ? n.label : undefined;
+    const payloadType = findFlowTypeNameBCG(n.id);
+    const label       = flowName && payloadType ? `${flowName} : ${payloadType}`
+                      : flowName ?? payloadType;
+    const edgeId = `flow:${srcId}:${tgtId}`;
+    if (seenFlow.has(edgeId)) continue;
+    seenFlow.add(edgeId);
+
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
+  }
+
+  // ── Pass 5: FlowConnectionUsage / SuccessionItemFlow ─────────────────────────
+  // Same structure as ConnectionUsage (EndFeatureMembership+FeatureChaining)
+  // but with type-aware port resolution to handle ambiguous port names.
+
+  function findFlowTypeNameBCG(id: string): string | undefined {
+    for (const kid of childrenOfContainment.get(id) ?? []) {
+      const n = nodeById.get(kid);
+      if (!n) continue;
+      if (n.type === 'FeatureTyping' && n.label !== n.type) return n.label;
+      if (MEMBERSHIP_WRAPPERS.has(n.type)) {
+        const f = findFlowTypeNameBCG(kid);
+        if (f) return f;
+      }
+    }
+    return undefined;
+  }
+
+  // Collect full FeatureChaining chains from all EndFeatureMembership children.
+  function collectEndpointFullChains(connId: string): string[][] {
+    const chains: string[][] = [];
+    for (const kid of childrenOfContainment.get(connId) ?? []) {
+      const n = nodeById.get(kid);
+      if (!n || n.type !== 'EndFeatureMembership') continue;
+      const chain = collectEndpointChain(kid);
+      if (chain.length > 0) chains.push(chain);
+    }
+    return chains;
+  }
+
+  function resolveFlowChainBCG(chain: string[]): string | null {
+    if (chain.length === 0) return null;
+    const portName   = chain[chain.length - 1];
+    const candidates = portUsagesByName.get(portName);
+    if (!candidates?.length) return null;
+    if (candidates.length === 1) return candidates[0];
+
+    if (chain.length >= 2) {
+      const partName = chain[0];
+      const partIds  = partUsagesByNameBCG.get(partName) ?? [];
+      for (const partId of partIds) {
+        const defId = typedByBySourceBCG.get(partId);
+        if (!defId) continue;
+        for (const portId of candidates) {
+          let id: string | undefined = parentOf.get(portId);
+          while (id !== undefined) {
+            if (id === defId) return portId;
+            const n = nodeById.get(id);
+            if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
+            id = parentOf.get(id);
+          }
+        }
+      }
+    }
+
+    return candidates[0];
+  }
+
+  for (const n of nodes) {
+    if (n.type !== 'FlowConnectionUsage' && n.type !== 'SuccessionItemFlow') continue;
+
+    const chains = collectEndpointFullChains(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    const srcId = resolveFlowChainBCG(chainA);
+    const tgtId = resolveFlowChainBCG(chainB);
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const flowName    = n.label !== n.type ? n.label : undefined;
+    const payloadType = findFlowTypeNameBCG(n.id);
+    const label       = flowName && payloadType ? `${flowName} : ${payloadType}`
+                      : flowName ?? payloadType;
+
+    const edgeId = `flow:${srcId}:${tgtId}`;
+    if (seenFlow.has(edgeId)) continue;
+    seenFlow.add(edgeId);
+
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
+  }
+
   return { nodes, edges };
 }
 
@@ -295,7 +459,7 @@ function toVizNode(
   body: SysMLNode[],
   typeName: string,
   portDirection?: 'in' | 'out' | 'inout',
-  portItemType?: string,
+  _portItemType?: string,
 ): SysMLNode | null {
   const name = gNode.label; // already name ?? type from buildContainmentGraph
 
@@ -326,6 +490,8 @@ function toVizNode(
         : { kind: 'partAlias', name, type: typeName, line: 0 };
 
     case 'ItemUsage':
+      return { kind: 'itemAlias', name, type: typeName, line: 0 };
+
     case 'OccurrenceUsage':
       return { kind: 'partAlias', name, type: typeName, line: 0 };
 
@@ -344,8 +510,8 @@ function toVizNode(
       return {
         kind: 'port',
         name,
-        direction: portDirection ?? 'in',
-        portType:  portItemType || typeName,
+        direction: portDirection ?? '',
+        portType:  typeName || '',   // portDef type name for typing-edge lookup & display
         line: 0,
       };
 
@@ -445,8 +611,11 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
       const g = nodeIndex.get(kid);
       if (!g) continue;
       if (g.type === 'ItemUsage' && g.direction && g.direction !== 'none') {
-        const itemType = typedByLabel.get(kid) ?? findTypeName(kid);
-        if (itemType) return { direction: g.direction, itemType };
+        // Use typedBy → FeatureTyping DFS → item label as successive fallbacks.
+        // For "in item SensorDataEntry;" the label IS the item name even though
+        // there's no FeatureTyping node, so the label is always a valid type hint.
+        const itemType = (typedByLabel.get(kid) ?? findTypeName(kid)) || g.label;
+        return { direction: g.direction, itemType };
       }
       if (TRANSPARENT_TYPES.has(g.type)) {
         const found = findItemFlowInDef(kid);
@@ -544,6 +713,42 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
   }
 
   /**
+   * Extract flow endpoints from a FlowUsage by finding its EventOccurrenceUsage children
+   * and collecting their FeatureChaining chains (e.g. ["acpdCdd", "callCollectInputData"]).
+   */
+  function extractFlowEndpoints(flowId: string): Extract<SysMLNode, { kind: 'connection' }> | null {
+    const chains: string[][] = [];
+
+    function findEvents(id: string): void {
+      for (const kid of childrenOf.get(id) ?? []) {
+        const n = nodeIndex.get(kid);
+        if (!n) continue;
+        if (n.type === 'EventOccurrenceUsage') {
+          const chain = collectFeatureChainingNames(kid);
+          if (chain.length > 0) chains.push(chain);
+        } else if (TRANSPARENT_TYPES.has(n.type)) {
+          findEvents(kid);
+        }
+      }
+    }
+
+    findEvents(flowId);
+    if (chains.length < 2) return null;
+
+    const [a, b] = chains;
+    const flowNode = nodeIndex.get(flowId);
+    return {
+      kind:     'connection',
+      fromPart: a.length >= 2 ? a[0] : '',
+      fromPort: a.length >= 2 ? a[1] : a[0],
+      toPart:   b.length >= 2 ? b[0] : '',
+      toPort:   b.length >= 2 ? b[1] : b[0],
+      connType: (flowNode && flowNode.label !== flowNode.type) ? flowNode.label : undefined,
+      line:     0,
+    };
+  }
+
+  /**
    * Extract predecessor and successor action names from a Succession node.
    *
    * A Succession has two endpoint references, each encoded as a ReferenceSubsetting
@@ -602,7 +807,12 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
    *
    * Package nodes are pushed to result.packages[] instead of result.nodes[].
    */
-  function traverse(ids: string[], namespace: string): SysMLNode[] {
+  // parentIsPackage = true when the parent node in the EMF tree is a Package.
+  // Propagated through transparent membership wrappers so that package-scope
+  // PartUsage nodes (e.g. "part acpdCdd : AcpdCdd;") are promoted from
+  // body-only partAlias to partUsage in result.nodes[] and become visible in
+  // the Structure view.
+  function traverse(ids: string[], namespace: string, parentIsPackage = false): SysMLNode[] {
     const body: SysMLNode[] = [];
 
     for (const id of ids) {
@@ -612,8 +822,20 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
       const kids = childrenOf.get(id) ?? [];
 
       if (TRANSPARENT_TYPES.has(gNode.type)) {
-        // Fold children into the current scope
-        body.push(...traverse(kids, namespace));
+        // Fold children into the current scope, preserving package-scope context
+        // so that PartUsage inside OwningMembership inside Package is still promoted.
+        body.push(...traverse(kids, namespace, parentIsPackage));
+        continue;
+      }
+
+      // FlowConnectionUsage: extract via EndFeatureMembership+FeatureChaining
+      // (same structure as ConnectionUsage; also carries payload type as connType).
+      if (gNode.type === 'FlowConnectionUsage' || gNode.type === 'SuccessionItemFlow') {
+        const conn = extractConnectionEndpoints(id);
+        if (conn) {
+          const flowName = gNode.label !== gNode.type ? gNode.label : undefined;
+          body.push({ ...conn, connType: flowName ?? conn.connType });
+        }
         continue;
       }
 
@@ -622,6 +844,13 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
         const conn = extractConnectionEndpoints(id);
         if (conn) body.push(conn);
         // else: skip silently (endpoints not resolvable via FeatureChaining)
+        continue;
+      }
+
+      // FlowUsage: extract flow endpoints from EventOccurrenceUsage children.
+      if (gNode.type === 'FlowUsage') {
+        const conn = extractFlowEndpoints(id);
+        if (conn) body.push(conn);
         continue;
       }
 
@@ -639,31 +868,53 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
           ? gNode.label
           : namespace;
 
-      const bodyItems = traverse(kids, childNs);
+      const isPackage = gNode.type === 'Package' || gNode.type === 'LibraryPackage';
+      const bodyItems = traverse(kids, childNs, isPackage);
       // Resolve type name: typedBy edge (authoritative) → fallback to FeatureTyping DFS.
       const typeName  = typedByLabel.get(id) ?? findTypeName(id);
-      // For PortUsage, look up flow semantics from the port definition.
+      // For PortUsage, check gNode.direction first (direct declaration), then
+      // fall back to looking up flow semantics from the port definition type.
       let portDirection: 'in' | 'out' | 'inout' | undefined;
       let portItemType: string | undefined;
-      if (gNode.type === 'PortUsage' && typeName) {
-        const flowInfo = portDefFlowInfo.get(typeName);
-        if (flowInfo) { portDirection = flowInfo.direction; portItemType = flowInfo.itemType; }
+      if (gNode.type === 'PortUsage') {
+        const rawDir = gNode.direction;
+        if (rawDir === 'in' || rawDir === 'out' || rawDir === 'inout') portDirection = rawDir;
+        if (!portDirection && typeName) {
+          const flowInfo = portDefFlowInfo.get(typeName);
+          if (flowInfo) { portDirection = flowInfo.direction; portItemType = flowInfo.itemType; }
+        }
       }
       const node      = toVizNode(gNode, namespace, bodyItems, typeName, portDirection, portItemType);
       if (!node) continue;
 
-      console.log(`[convertGraph] ${gNode.type}[${gNode.label}] → kind:${node.kind}` +
+      // Promote package-scope PartUsage from partAlias to partUsage so it appears
+      // in result.nodes[] and is visible as a standalone box in the Structure view.
+      // Nested PartUsage (inside a PartDef) stays as partAlias and remains body-only
+      // (it is rendered as a composition instance, not as an independent node).
+      let finalNode: typeof node = node;
+      if (node.kind === 'partAlias' && gNode.type === 'PartUsage' && parentIsPackage) {
+        finalNode = {
+          kind: 'partUsage',
+          name: node.name,
+          namespace,
+          type: node.type,
+          body: bodyItems,
+          line: 0,
+        };
+      }
+
+      console.log(`[convertGraph] ${gNode.type}[${gNode.label}] → kind:${finalNode.kind}` +
         (typeName ? ` typeName:${typeName}` : ''));
 
-      if (node.kind === 'packageDef') {
-        packages.push(node);
+      if (finalNode.kind === 'packageDef') {
+        packages.push(finalNode);
         // Package children were already added to nodes[] inside traverse(kids)
       } else {
-        body.push(node);
+        body.push(finalNode);
         // Named PartUsage with body (partUsage kind) joins nodes[] alongside
         // definition types so StructureView can render it as a composed block.
-        if (DEFINITION_TYPES.has(gNode.type) || node.kind === 'partUsage' || node.kind === 'itemDef') {
-          nodes.push(node);
+        if (DEFINITION_TYPES.has(gNode.type) || finalNode.kind === 'partUsage' || finalNode.kind === 'itemDef') {
+          nodes.push(finalNode);
         }
       }
     }
@@ -671,7 +922,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
     return body;
   }
 
-  traverse(roots, '');
+  traverse(roots, '', false);
 
   console.log('[convertGraph] nodes[]:', nodes.map(n => {
     const any = n as Record<string, unknown>;
