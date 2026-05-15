@@ -35,7 +35,7 @@ export interface PortDisplay {
 // Import PORT_MARKER_COLOR and makeBoundaryPortDisplay from this file rather than
 // duplicating the style logic in each view.
 
-export const PORT_MARKER_COLOR = '#7dd3fc';
+export const PORT_MARKER_COLOR = '#64748b';
 
 function portMarkerSvg(direction: string): ReactNode {
   const c = PORT_MARKER_COLOR;
@@ -89,17 +89,15 @@ export function makeBoundaryPortDisplay(
   portType:  string,
 ): PortDisplay {
   direction = resolvePortDirection(label, direction);
-  const isOut = direction === 'out';
   return {
     id, label, direction, portType,
     squareStyle: {
       background: 'transparent',
-      border:     `1.5px solid ${PORT_MARKER_COLOR}`,
-      ...(isOut ? { right: -6 } : { left: -6 }),
+      border:     `1.5px dashed ${PORT_MARKER_COLOR}`,
+      borderRadius: 0,
       zIndex:     20,
     },
     labelStyle: {
-      ...(isOut ? { right: -18 } : { left: -18 }),
       color: PORT_MARKER_COLOR,
     },
     svgContent: portMarkerSvg(direction),
@@ -109,9 +107,9 @@ export function makeBoundaryPortDisplay(
 // ── Direction utilities ────────────────────────────────────────────────────────
 
 const DIR_HANDLE_COLORS: Record<string, string> = {
-  in:    '#7dd3fc',
-  out:   '#fbbf24',
-  inout: '#c084fc',
+  in:    '#64748b',
+  out:   '#64748b',
+  inout: '#64748b',
 };
 
 export function portHandleColor(d: string): string {
@@ -170,21 +168,23 @@ export function PortHandles(props: PortHandlesProps) {
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { left: _sl, right: _sr, ...squareVisual } = p.squareStyle ?? {};
 
+        // SysML v2 §8.2.3.6: port = small dashed-border rectangle straddling the boundary.
+        // 18×10 px so it is wider than tall (landscape orientation, matching spec diagrams).
+        // Centered on the boundary edge: left: -9 puts the midpoint exactly on the border.
         const sqBase: CSSProperties = {
-          width: 12, height: 12,
-          background: color, border: '1.5px solid rgba(0,0,0,0.55)',
-          borderRadius: 2,
+          width: 18, height: 10,
+          background: 'transparent',
+          border: `1.5px dashed ${PORT_MARKER_COLOR}`,
+          borderRadius: 0,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: 6.5, color: 'rgba(0,0,0,0.75)', lineHeight: 1, cursor: 'default',
+          fontSize: 6.5, color: PORT_MARKER_COLOR, lineHeight: 1, cursor: 'default',
           ...squareVisual,
         };
-        // Override RF class transform so the handle center lands ±6px outside the boundary.
-        // left: -12 → center at -6px (6px left of boundary)
-        // right: -12 → center at containerWidth+6px (6px right of boundary)
-        const sqL:   CSSProperties = { ...sqBase,  top: topPx, left:  -12, transform: 'translateY(-50%)' };
-        const sqR:   CSSProperties = { ...sqBase,  top: topPx, right: -12, transform: 'translateY(-50%)' };
-        const hideL: CSSProperties = { top: topPx, left:  -12, width: 12, height: 12, opacity: 0, pointerEvents: 'none', transform: 'translateY(-50%)' };
-        const hideR: CSSProperties = { top: topPx, right: -12, width: 12, height: 12, opacity: 0, pointerEvents: 'none', transform: 'translateY(-50%)' };
+        // left: -9 / right: -9 centers the 18 px-wide handle on the node boundary.
+        const sqL:   CSSProperties = { ...sqBase,  top: topPx, left:   -9, transform: 'translateY(-50%)' };
+        const sqR:   CSSProperties = { ...sqBase,  top: topPx, right:  -9, transform: 'translateY(-50%)' };
+        const hideL: CSSProperties = { top: topPx, left:   -9, width: 18, height: 10, opacity: 0, pointerEvents: 'none', transform: 'translateY(-50%)' };
+        const hideR: CSSProperties = { top: topPx, right:  -9, width: 18, height: 10, opacity: 0, pointerEvents: 'none', transform: 'translateY(-50%)' };
 
         // Labels are positioned OUTSIDE the node boundary so they never overlap
         // items/actions content. The node must have overflow: visible.
@@ -197,8 +197,8 @@ export function PortHandles(props: PortHandlesProps) {
           whiteSpace: 'nowrap',
           zIndex:     10,
           ...(d === 'out'
-            ? { right: -6, top: topPx, transform: 'translate(100%, -50%)' }
-            : { left:  -6, top: topPx, transform: 'translate(-100%, -50%)' }
+            ? { right: -12, top: topPx, transform: 'translate(100%, -50%)' }
+            : { left:  -12, top: topPx, transform: 'translate(-100%, -50%)' }
           ),
           ...p.labelStyle,
         };

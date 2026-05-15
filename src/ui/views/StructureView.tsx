@@ -54,12 +54,21 @@ const PAL: Record<string, Palette> = {
   scen:    { bg: '#2a1200', border: '#f97316', name: '#fed7aa', stereo: '#fb923c', sep: '#c2410c', port: '#fdba74' },
 };
 
-// ── FeatureTyping custom edge ─────────────────────────────────────────────────
-// Renders <defs> INSIDE ReactFlow's SVG (critical: url(#id) only resolves within
-// the same <svg> element in Chrome). Each edge instance writes its own marker
-// using a unique id to avoid duplicate-id conflicts across edge instances.
+// ── Custom edge types (SysML v2 spec §8.2.3.6) ───────────────────────────────
+//
+// Markers are rendered INSIDE ReactFlow's SVG via custom edge components.
+// url(#id) only resolves within the same <svg> in Chrome, so each edge
+// component writes its own <defs> block; unique ids prevent conflicts.
+//
+// Spec-decoded geometry (vector path analysis from PDF):
+//   FeatureTyping / Subclassification / Subsetting:
+//     solid line + hollow closed triangle (3-segment, ~11pt × 5.4pt, no fill)
+//   Composite-feature-membership (Composition):
+//     solid line + filled black diamond (~11pt × 6pt) at OWNER (source) end
+//   Connection (ConnectionUsage):
+//     plain solid line, small open arrowhead
 
-const FT_COLOR = '#94a3b8';
+const FT_STROKE  = '#64748b';   // FeatureTyping / subclassification / subsetting
 
 function FeatureTypingEdge({
   id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
@@ -73,16 +82,17 @@ function FeatureTypingEdge({
   return (
     <g>
       <defs>
-        {/* Closed arrowhead with two preceding dots — official SysML v2 FeatureTyping */}
-        <marker id={mid} viewBox="-2 -5 20 10" refX="16" refY="0"
-          markerWidth="18" markerHeight="10" orient="auto" markerUnits="userSpaceOnUse">
-          <path d="M 6,-4 L 16,0 L 6,4 Z" fill={FT_COLOR} />
-          <circle cx="2"  cy="0" r="1.8" fill={FT_COLOR} />
-          <circle cx="-1" cy="0" r="1.8" fill={FT_COLOR} />
+        {/* SysML v2 8.2.3.6: hollow closed triangle at the type/definition end.
+            Same arrowhead for FeatureTyping, Subclassification, and Subsetting.
+            fill="none" = transparent interior (hollow), matching spec's open triangle. */}
+        <marker id={mid} viewBox="0 0 14 12" refX="13" refY="6"
+          markerWidth="14" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M 0,1 L 13,6 L 0,11 Z"
+            fill="none" stroke={FT_STROKE} strokeWidth="1.5" strokeLinejoin="round"/>
         </marker>
       </defs>
       <BaseEdge id={id} path={edgePath}
-        style={{ stroke: FT_COLOR, strokeWidth: 1 }}
+        style={{ stroke: FT_STROKE, strokeWidth: 1 }}
         markerEnd={`url(#${mid})`}
       />
     </g>
@@ -92,32 +102,39 @@ function FeatureTypingEdge({
 // ── Legend panel ──────────────────────────────────────────────────────────────
 
 function StructureLegend() {
-  const row = (color: string, label: string, marker: 'ft' | 'arrow' | 'diamond') => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
-      <svg width="34" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
-        <line x1="2" y1="6" x2={marker === 'ft' ? 18 : 26} y2="6" stroke={color} strokeWidth="1.2" />
-        {marker === 'ft' && <>
-          {/* Closed arrow tip */}
-          <polygon points="34,6 22,2.5 22,9.5" fill={color} />
-          {/* Two dots */}
-          <circle cx="20" cy="6" r="1.5" fill={color} />
-          <circle cx="17" cy="6" r="1.5" fill={color} />
-        </>}
-        {marker === 'arrow' && <polygon points="32,6 26,3 26,9" fill={color} />}
-        {marker === 'diamond' && <polygon points="2,6 8,3 14,6 8,9" fill={color} />}
-      </svg>
-      <span>{label}</span>
-    </div>
-  );
   return (
     <div style={{
       background: 'rgba(15,17,26,0.88)', border: '1px solid #1e2535',
       borderRadius: 6, padding: '7px 11px', display: 'flex', flexDirection: 'column', gap: 5,
     }}>
       <div style={{ fontSize: 9, color: '#475569', letterSpacing: '0.5px', marginBottom: 1 }}>NOTATION</div>
-      {row(FT_COLOR,   'FeatureTyping  (usage → type)', 'ft')}
-      {row('#4ade80',  'Connection',                     'arrow')}
-      {row('#22c55e',  'Composition  (◆ at owner)',      'diamond')}
+
+      {/* FeatureTyping: solid line + hollow closed triangle (spec §8.2.3.6) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <line x1="2" y1="6" x2="22" y2="6" stroke={FT_STROKE} strokeWidth="1.2" />
+          <path d="M 22,2 L 34,6 L 22,10 Z" fill="none" stroke={FT_STROKE} strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+        <span>FeatureTyping  (usage → type)</span>
+      </div>
+
+      {/* Connection: solid line + small open arrowhead */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <line x1="2" y1="6" x2="26" y2="6" stroke="#4ade80" strokeWidth="1.2" />
+          <polyline points="26,3 34,6 26,9" fill="none" stroke="#4ade80" strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+        <span>Connection</span>
+      </div>
+
+      {/* Composition: solid line + filled black diamond at owner end (spec §8.2.3.6) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <polygon points="2,6 9,3 16,6 9,9" fill="#94a3b8" />
+          <line x1="16" y1="6" x2="34" y2="6" stroke="#94a3b8" strokeWidth="1.2" />
+        </svg>
+        <span>Composition  (◆ at owner)</span>
+      </div>
     </div>
   );
 }
@@ -183,7 +200,7 @@ function makePartNode(
 ): Node {
   const w = nodeWidth(stereotype, name, attrs, forceWidth);
   const h = (ports.length > 0 || attrs.length > 0) ? partH(ports.length, attrs.length) : PART_BASE_H;
-  const radius = shape === 'usage' ? 12 : 2;
+  const radius = shape === 'usage' ? 12 : 0;
   return {
     id,
     type: 'sysmlPart',
@@ -646,7 +663,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         style: {
           width: groupW, height: groupH,
           background: '#040f08', border: '1.5px solid #22c55e',
-          borderRadius: compDef.isDefinition ? 2 : 12,
+          borderRadius: compDef.isDefinition ? 0 : 12,
           fontSize: 10.5, color: '#4ade80', fontStyle: 'italic',
           display: 'flex', alignItems: 'flex-start', padding: '8px 12px',
           cursor: 'pointer',
