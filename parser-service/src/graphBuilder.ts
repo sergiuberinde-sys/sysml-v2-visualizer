@@ -21,6 +21,8 @@ export interface GraphNode {
   label: string;
   type: string;
   direction?: string;
+  startLine?: number;
+  endLine?: number;
 }
 
 export interface GraphEdge {
@@ -47,7 +49,7 @@ const MEMBERSHIP_WRAPPERS = new Set([
   'MembershipExpose', 'NamespaceExpose', 'ViewRenderingMembership',
 ]);
 
-const TYPED_USAGE_TYPES = new Set(['PartUsage', 'AttributeUsage', 'PortUsage', 'ActionUsage', 'PerformActionUsage']);
+const TYPED_USAGE_TYPES = new Set(['PartUsage', 'ItemUsage', 'AttributeUsage', 'PortUsage', 'ActionUsage', 'PerformActionUsage', 'RequirementUsage']);
 
 const TYPED_DEF_TYPES = new Set([
   'PartDefinition', 'AttributeDefinition', 'PortDefinition',
@@ -69,6 +71,10 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     const label = node.name ?? node.type;
     const n: GraphNode = { id: path, label, type: node.type };
     if (node.direction != null) n.direction = node.direction;
+    if (node.startLine != null && node.startLine > 0) {
+      n.startLine = node.startLine;
+      n.endLine   = node.endLine;
+    }
     nodes.push(n);
 
     if (parentId !== null) {
@@ -243,6 +249,162 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     seenConn.add(edgeId);
 
     edges.push({ id: edgeId, source: sourceId, target: targetId, type: 'connection', label: 'connect' });
+  }
+
+  // ── Shared: PartUsage index + typedBy lookup + type-aware port resolution ─────
+
+  const partUsagesByName = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.type === 'PartUsage' && n.label !== n.type) {
+      const list = partUsagesByName.get(n.label) ?? [];
+      list.push(n.id);
+      partUsagesByName.set(n.label, list);
+    }
+  }
+
+  // Build usageId → defId from all typedBy edges emitted in Pass 2.
+  const typedByBySource = new Map<string, string>();
+  for (const e of edges) {
+    if (e.type === 'typedBy') typedByBySource.set(e.source, e.target);
+  }
+
+  // Find the first named FeatureTyping label in a subtree (the payload type).
+  function findFlowTypeName(id: string): string | undefined {
+    for (const kid of childrenOf.get(id) ?? []) {
+      const n = nodeById.get(kid);
+      if (!n) continue;
+      if (n.type === 'FeatureTyping' && n.label !== n.type) return n.label;
+      if (MEMBERSHIP_WRAPPERS.has(n.type)) {
+        const found = findFlowTypeName(kid);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  }
+
+  // Type-aware chain resolution: disambiguates same-named ports across PartDefs
+  // by following PartUsage → typedBy → PartDef → PortUsage ancestry.
+  function resolveFlowChain(chain: string[]): string | null {
+    if (chain.length === 0) return null;
+    const portName = chain[chain.length - 1];
+    const candidates = portUsagesByName.get(portName);
+    if (!candidates?.length) return null;
+    if (candidates.length === 1) return candidates[0];
+
+    if (chain.length >= 2) {
+      const partName = chain[0];
+      const partIds  = partUsagesByName.get(partName) ?? [];
+      for (const partId of partIds) {
+        const defId = typedByBySource.get(partId);
+        if (!defId) continue;
+        for (const portId of candidates) {
+          let id: string | undefined = parentOf.get(portId);
+          while (id !== undefined) {
+            if (id === defId) return portId;
+            const n = nodeById.get(id);
+            if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
+            id = parentOf.get(id);
+          }
+        }
+      }
+    }
+
+    return candidates[0]; // fallback
+  }
+
+  // ── Pass 4: connection edges via FlowUsage (FlowEnd endpoints) ───────────────
+  //
+  // 'flow ... from part.port to part.port' creates a FlowUsage with two
+  // EndFeatureMembership children. Under each EndFeatureMembership sits a FlowEnd:
+  //   ReferenceSubsetting (label = part name)
+  //   FeatureMembership → ReferenceUsage (label = port name)
+  // We build a [partName, portName] chain per end and resolve via resolveFlowChain.
+
+  function collectFlowEndChains(flowId: string): string[][] {
+    const chains: string[][] = [];
+    for (const kid of childrenOf.get(flowId) ?? []) {
+      const emNode = nodeById.get(kid);
+      if (!emNode || emNode.type !== 'EndFeatureMembership') continue;
+      for (const kid2 of childrenOf.get(kid) ?? []) {
+        const feNode = nodeById.get(kid2);
+        if (!feNode || feNode.type !== 'FlowEnd') continue;
+        let partName: string | null = null;
+        let portName: string | null = null;
+        for (const kid3 of childrenOf.get(kid2) ?? []) {
+          const n3 = nodeById.get(kid3);
+          if (!n3) continue;
+          if (n3.type === 'ReferenceSubsetting' && n3.label !== n3.type) {
+            partName = n3.label;
+          } else if (n3.type === 'FeatureMembership') {
+            for (const kid4 of childrenOf.get(kid3) ?? []) {
+              const n4 = nodeById.get(kid4);
+              if (n4 && n4.type === 'ReferenceUsage' && n4.label !== n4.type) {
+                portName = n4.label;
+              }
+            }
+          }
+        }
+        const chain: string[] = [];
+        if (partName) chain.push(partName);
+        if (portName) chain.push(portName);
+        if (chain.length > 0) chains.push(chain);
+      }
+    }
+    return chains;
+  }
+
+  for (const n of nodes) {
+    if (n.type !== 'FlowUsage') continue;
+
+    const chains = collectFlowEndChains(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    const srcId = resolveFlowChain(chainA);
+    const tgtId = resolveFlowChain(chainB);
+
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const edgeId = `flow:${srcId}:${tgtId}`;
+    if (seenConn.has(edgeId)) continue;
+    seenConn.add(edgeId);
+
+    const flowName    = n.label !== n.type ? n.label : undefined;
+    const payloadType = findFlowTypeName(n.id);
+    const label       = flowName && payloadType ? `${flowName} : ${payloadType}`
+                      : flowName ?? payloadType;
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
+  }
+
+  // ── Pass 5: connection edges via FlowConnectionUsage / SuccessionItemFlow ─────
+  //
+  // These use EndFeatureMembership + FeatureChaining (same as ConnectionUsage).
+  // resolveFlowChain disambiguates port names via the typedBy → PartDef path.
+
+  const FLOW_CONN_TYPES = new Set(['FlowConnectionUsage', 'SuccessionItemFlow']);
+
+  for (const n of nodes) {
+    if (!FLOW_CONN_TYPES.has(n.type)) continue;
+
+    const chains = collectEndpointChains(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    const srcId = resolveFlowChain(chainA);
+    const tgtId = resolveFlowChain(chainB);
+
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const edgeId = `flow:${srcId}:${tgtId}`;
+    if (seenConn.has(edgeId)) continue;
+    seenConn.add(edgeId);
+
+    const flowName    = n.label !== n.type ? n.label : undefined;
+    const payloadType = findFlowTypeName(n.id);
+    const label       = flowName && payloadType ? `${flowName} : ${payloadType}`
+                      : flowName ?? payloadType;
+
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
   }
 
   return { nodes, edges };
