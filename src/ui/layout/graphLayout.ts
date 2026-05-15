@@ -1,14 +1,12 @@
 /**
- * ELK-based automatic graph layout for the Structure View.
+ * ELK-based edge routing for the Structure View.
  *
- * Only top-level React Flow nodes (no parentId) are positioned by ELK.
- * Nodes with parentId (composition-group instances) keep their relative
- * positions unchanged — they are already arranged inside their parent by the
- * manual layout logic in StructureView.
+ * Node positions come from StructureView's manual section layout (rows of defs
+ * above rows of composition groups).  ELK's `fixed` algorithm keeps those
+ * positions and computes obstacle-avoiding ORTHOGONAL routes for every edge,
+ * returning bend points that ElkEdge renders as axis-aligned polylines.
  *
- * Edge routes: ELK computes obstacle-avoiding bend points for every edge.
- * These are returned in `edgeRoutes` so the caller can pass them to a custom
- * edge renderer that draws the ELK-computed polyline instead of a naive curve.
+ * The LayoutMode type and LAYOUT_LABELS are kept for API compatibility.
  */
 
 import ELK, { type ElkNode, type ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
@@ -32,66 +30,25 @@ export type ElkRouteMap = Map<string, { x: number; y: number }[]>;
 
 const elk = new ELK();
 
-// ── Layout options per mode ───────────────────────────────────────────────────
+// ── ELK options: fixed positions, orthogonal routing ─────────────────────────
 
-function elkOptions(mode: Exclude<LayoutMode, 'manual'>): Record<string, string> {
-  //
-  // Strategy: ELK layered algorithm, ORTHOGONAL routing.
-  //
-  // Key settings for clean, overlap-free layout:
-  //   thoroughness=64          – maximum crossing-minimisation iterations
-  //   edgeNode spacing=30      – edges stay 30 px clear of every node face,
-  //                              preventing routes from visually crossing text
-  //   edgeEdge spacing=10      – parallel edges don't touch each other
-  //   separateConnectedComponents – isolated sub-graphs don't interleave
-  //   unnecessaryBendpoints    – strips redundant bends from ORTHOGONAL routes
-  //   nodePlacement=BRANDES_KOEPF – x-coordinates minimise edge length and bends
-  //
-  const base: Record<string, string> = {
-    'elk.algorithm':                                       'layered',
-    'elk.edgeRouting':                                     'ORTHOGONAL',
-    'elk.layered.nodePlacement.strategy':                  'BRANDES_KOEPF',
-    'elk.layered.nodePlacement.bk.fixedAlignment':         'BALANCED',
-    'elk.layered.crossingMinimization.strategy':           'LAYER_SWEEP',
-    'elk.layered.thoroughness':                            '64',
-    'elk.layered.unnecessaryBendpoints':                   'true',
-    'elk.layered.considerModelOrder.strategy':             'PREFER_NODES',
-    'elk.layered.mergeEdges':                              'false',
-    'elk.separateConnectedComponents':                     'true',
-    'elk.spacing.edgeNode':                                '30',
-    'elk.spacing.edgeEdge':                                '10',
-    'elk.spacing.portPort':                                '8',
-  };
-
-  if (mode === 'compact') {
-    return {
-      ...base,
-      'elk.direction':                                    'RIGHT',
-      'elk.spacing.nodeNode':                             '40',
-      'elk.layered.spacing.nodeNodeBetweenLayers':        '80',
-    };
-  }
-
-  return {
-    ...base,
-    'elk.direction':                                    mode === 'lr' ? 'RIGHT' : 'DOWN',
-    'elk.spacing.nodeNode':                             '80',
-    // Generous inter-layer gap: gives ORTHOGONAL routing room to route
-    // cross-layer edges cleanly without clipping over node content.
-    'elk.layered.spacing.nodeNodeBetweenLayers':        '160',
-  };
-}
+// 'fixed' algorithm keeps every node at the position we supply and only
+// computes obstacle-avoiding ORTHOGONAL routes for the edges.
+// edgeNode=40 keeps routes 40 px clear of every node face.
+const FIXED_ROUTING_OPTIONS: Record<string, string> = {
+  'elk.algorithm':        'fixed',
+  'elk.edgeRouting':      'ORTHOGONAL',
+  'elk.spacing.edgeNode': '28',   // clearance from node face — tighter to leave room for parallel routes
+  'elk.spacing.edgeEdge': '14',   // gap between parallel edge segments — wide enough to see separately
+};
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Apply an ELK layout to a set of React Flow nodes and edges.
+ * Route edges around nodes using ELK's `fixed` algorithm.
  *
- * Returns:
- *   nodes      – repositioned Node array (top-level nodes moved; parentId nodes unchanged)
- *   edgeRoutes – ELK-computed bend points per edge id; empty map on 'manual' or error
- *
- * Never throws: falls back to the original positions on ELK errors.
+ * Node positions are taken from the input unchanged — only edge routes are
+ * computed.  Falls back to the original nodes (smoothstep edges) on error.
  */
 export async function applyElkLayout(
   nodes: Node[],
@@ -106,10 +63,13 @@ export async function applyElkLayout(
 
   const style = (n: Node) => n.style as Record<string, unknown> | undefined;
 
+  // Pass current positions so the `fixed` algorithm keeps them.
   const elkChildren: ElkNode[] = topNodes.map(n => ({
     id:     n.id,
     width:  Number(style(n)?.['width']  ?? 172),
     height: Number(style(n)?.['height'] ?? 48),
+    x:      n.position.x,
+    y:      n.position.y,
   }));
 
   // Only include edges whose both endpoints are top-level nodes.
@@ -119,31 +79,18 @@ export async function applyElkLayout(
 
   const graph: ElkNode = {
     id:            'root',
-    layoutOptions: elkOptions(mode),
+    layoutOptions: FIXED_ROUTING_OPTIONS,
     children:      elkChildren,
     edges:         elkEdges,
   };
 
   try {
-    const laid   = await elk.layout(graph);
-    const posMap = new Map(
-      (laid.children ?? []).map(c => [c.id, { x: c.x ?? 0, y: c.y ?? 0 }]),
-    );
-
-    const positionedNodes = nodes.map(n => {
-      if (n.parentId) return n;               // keep relative position inside parent
-      const pos = posMap.get(n.id);
-      return pos ? { ...n, position: pos } : n;
-    });
+    const laid = await elk.layout(graph);
 
     // Extract ELK-computed routes per edge.
-    //
-    // We store the FULL route: [startPoint, ...bendPoints, endPoint].
-    // The caller prepends the React Flow source handle and appends the target
-    // handle.  Because ELK attaches startPoint/endPoint to the same node face
-    // that React Flow uses for handles, the connecting arms are always
-    // axis-aligned (same x in LR, same y in TB), keeping the whole path
-    // orthogonal with no diagonal segments crossing node boxes.
+    // Store [startPoint, ...bendPoints, endPoint] — the full attachment-to-attachment
+    // route.  ElkEdge prepends the React Flow source handle and appends the target
+    // handle so the complete rendered path is always axis-aligned.
     const edgeRoutes: ElkRouteMap = new Map();
     for (const e of (laid.edges ?? [])) {
       const section = e.sections?.[0];
@@ -155,9 +102,9 @@ export async function applyElkLayout(
       ]);
     }
 
-    return { nodes: positionedNodes, edgeRoutes };
+    return { nodes, edgeRoutes };   // node positions unchanged
   } catch (err) {
-    console.error('[sysml-viz] ELK layout error:', err);
-    return { nodes, edgeRoutes: empty };     // fall back to original positions
+    console.error('[sysml-viz] ELK routing error:', err);
+    return { nodes, edgeRoutes: empty };
   }
 }
