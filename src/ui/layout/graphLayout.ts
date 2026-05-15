@@ -28,27 +28,50 @@ const elk = new ELK();
 // ── Layout options per mode ───────────────────────────────────────────────────
 
 function elkOptions(mode: Exclude<LayoutMode, 'manual'>): Record<string, string> {
+  //
+  // Strategy: ELK layered algorithm, ORTHOGONAL routing.
+  //
+  // Key settings for clean, overlap-free layout:
+  //   thoroughness=64          – maximum crossing-minimisation iterations
+  //   edgeNode spacing=30      – edges stay 30 px clear of every node face,
+  //                              preventing routes from visually crossing text
+  //   edgeEdge spacing=10      – parallel edges don't touch each other
+  //   separateConnectedComponents – isolated sub-graphs don't interleave
+  //   unnecessaryBendpoints    – strips redundant bends from ORTHOGONAL routes
+  //   nodePlacement=BRANDES_KOEPF – x-coordinates minimise edge length and bends
+  //
   const base: Record<string, string> = {
-    'elk.algorithm':  'layered',
-    'elk.edgeRouting': 'ORTHOGONAL',
-    'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-    'elk.layered.considerModelOrder.strategy': 'PREFER_NODES',
-    'elk.layered.mergeEdges': 'false',
+    'elk.algorithm':                                       'layered',
+    'elk.edgeRouting':                                     'ORTHOGONAL',
+    'elk.layered.nodePlacement.strategy':                  'BRANDES_KOEPF',
+    'elk.layered.nodePlacement.bk.fixedAlignment':         'BALANCED',
+    'elk.layered.crossingMinimization.strategy':           'LAYER_SWEEP',
+    'elk.layered.thoroughness':                            '64',
+    'elk.layered.unnecessaryBendpoints':                   'true',
+    'elk.layered.considerModelOrder.strategy':             'PREFER_NODES',
+    'elk.layered.mergeEdges':                              'false',
+    'elk.separateConnectedComponents':                     'true',
+    'elk.spacing.edgeNode':                                '30',
+    'elk.spacing.edgeEdge':                                '10',
+    'elk.spacing.portPort':                                '8',
   };
+
   if (mode === 'compact') {
     return {
       ...base,
-      'elk.direction': 'RIGHT',
-      'elk.spacing.nodeNode': '40',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '60',
+      'elk.direction':                                    'RIGHT',
+      'elk.spacing.nodeNode':                             '40',
+      'elk.layered.spacing.nodeNodeBetweenLayers':        '80',
     };
   }
+
   return {
     ...base,
-    'elk.direction': mode === 'lr' ? 'RIGHT' : 'DOWN',
-    'elk.spacing.nodeNode': '80',
-    'elk.layered.spacing.nodeNodeBetweenLayers': '100',
+    'elk.direction':                                    mode === 'lr' ? 'RIGHT' : 'DOWN',
+    'elk.spacing.nodeNode':                             '80',
+    // Generous inter-layer gap: gives ORTHOGONAL routing room to route
+    // cross-layer edges cleanly without clipping over node content.
+    'elk.layered.spacing.nodeNodeBetweenLayers':        '160',
   };
 }
 
@@ -73,10 +96,12 @@ export async function applyElkLayout(
   const topNodes = nodes.filter(n => !n.parentId);
   const topIds   = new Set(topNodes.map(n => n.id));
 
+  const style = (n: Node) => n.style as Record<string, unknown> | undefined;
+
   const elkChildren: ElkNode[] = topNodes.map(n => ({
     id:     n.id,
-    width:  Number((n.style as Record<string, unknown>)?.['width']  ?? 172),
-    height: Number((n.style as Record<string, unknown>)?.['height'] ?? 48),
+    width:  Number(style(n)?.['width']  ?? 172),
+    height: Number(style(n)?.['height'] ?? 48),
   }));
 
   // Only include edges whose both endpoints are top-level nodes.
