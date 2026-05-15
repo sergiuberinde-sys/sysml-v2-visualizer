@@ -1,14 +1,20 @@
 /**
  * Custom React Flow edge that follows ELK-computed waypoints.
  *
- * Why this exists: React Flow's built-in smoothstep/bezier edges draw naïve
- * curves between handles — they have no obstacle awareness and will cross
- * over node boxes.  ELK produces obstacle-avoiding ORTHOGONAL routes; we
- * extract those bend points in applyElkLayout and render them here as an
- * axis-aligned polyline so edges stay clear of every node face.
+ * Path structure (all segments are axis-aligned for ORTHOGONAL routing):
  *
- * If no waypoints are stored (e.g. intra-group edges skipped by ELK), falls
- * back to a straight line between the two React Flow handle positions.
+ *   M  sourceX  sourceY          ← React Flow handle (center of node edge)
+ *   L  elkStart.x  elkStart.y   ← ELK attachment point (same x as handle in LR, same y in TB)
+ *   L  bend1.x  bend1.y  ...    ← ELK obstacle-avoiding intermediate bends
+ *   L  elkEnd.x  elkEnd.y       ← ELK attachment at target
+ *   L  targetX  targetY          ← React Flow handle
+ *
+ * Because ELK places startPoint/endPoint on the same node face as the React
+ * Flow handle, the arms (handle→elkStart and elkEnd→handle) differ only in
+ * the perpendicular axis and are therefore always orthogonal.
+ *
+ * Falls back to a straight line when no waypoints are stored (edges that
+ * were not submitted to ELK, e.g. intra-group connections).
  */
 
 import { BaseEdge, getStraightPath, type EdgeProps } from '@xyflow/react';
@@ -28,21 +34,23 @@ export function ElkEdge({
   labelBgStyle,
   markerEnd,
 }: EdgeProps) {
-  const bends = (data as Record<string, unknown>)?.waypoints as Pt[] | undefined;
+  const waypoints = (data as Record<string, unknown>)?.waypoints as Pt[] | undefined;
 
   let path: string;
   let labelX: number;
   let labelY: number;
 
-  if (bends && bends.length > 0) {
-    // Full polyline: handle → bend points → handle.
-    // Using L (line-to) commands produces the axis-aligned segments that
-    // match ELK's ORTHOGONAL routing.
-    const pts: Pt[] = [{ x: sourceX, y: sourceY }, ...bends, { x: targetX, y: targetY }];
+  if (waypoints && waypoints.length >= 2) {
+    // Full path: React-Flow handle → ELK route → React-Flow handle.
+    const pts: Pt[] = [
+      { x: sourceX, y: sourceY },
+      ...waypoints,
+      { x: targetX, y: targetY },
+    ];
     path = `M ${pts[0].x} ${pts[0].y}` +
       pts.slice(1).map(p => ` L ${p.x} ${p.y}`).join('');
 
-    // Place the label at the midpoint of the longest segment for readability.
+    // Label on the longest segment for best readability.
     let bestLen = -1;
     let bestMid = { x: (sourceX + targetX) / 2, y: (sourceY + targetY) / 2 };
     for (let i = 0; i < pts.length - 1; i++) {
