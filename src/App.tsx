@@ -2,13 +2,13 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
-import { parseAndValidate } from './core/modelBuilder';
+
 import { BRK_SAMPLE } from './ui/sample';
 import { SYSML_TOKENS, SYSML_THEME } from './ui/sysmlLanguage';
 import ModelExplorer from './ui/views/ModelExplorer';
 import StructureView from './ui/views/StructureView';
 import SequenceView from './ui/views/SequenceView';
-import BehaviorView from './ui/views/BehaviorView';
+
 import OfficialBehaviorView from './ui/views/OfficialBehaviorView';
 import StateView from './ui/views/StateView';
 import RequirementsView from './ui/views/RequirementsView';
@@ -28,21 +28,220 @@ import {
   setAutosave, generateId, makeTemplate,
   getInitialProjectState,
 } from './app/state';
-import { PARSER_MODE } from './core/parserMode';
-import type { ModelingMode } from './core/parserMode';
+
 import {
   makeSnapshot, MAX_HISTORY, HISTORY_DEBOUNCE_MS,
   type HistorySnapshot,
 } from './app/history';
 import { getVsCodeApi, getAppMode } from './ui/vscodeApi';
-import { findElementAtLine } from './app/sourceMatcher';
+
 import type { IncrementalEdit } from './core/editDescriptor';
-import { convert as toVisualizerModel } from './core/adapters/legacySubsetAdapter';
+
 import { convertGraph } from './core/adapters/officialSysMLAdapter';
-import type { SysMLV2ParseResult, BehaviorData } from './core/sysmlv2Official';
-import { HttpSysMLV2ParserService } from './core/sysmlv2Official';
+import type { SysMLV2ParseResult, BehaviorData, ImpactTrace } from './core/sysmlv2Official';
+import { HttpSysMLV2ParserService, computeImpactTrace } from './core/sysmlv2Official';
+import type { ContainmentGraph } from './core/sysmlv2Official/ContainmentGraph';
 import ContainmentGraphView from './ui/views/ContainmentGraphView';
+import StructuralWiringView from './ui/views/StructuralWiringView';
+import type { TrlcData } from './core/trlc/types';
+import { parseTrlcJson } from './core/trlc/types';
 import './App.css';
+
+// ── Official-mode cursor sync ──────────────────────────────────────────────────
+
+// Types that represent named, semantic model elements worth selecting
+const CURSOR_SYNC_TYPES = new Set([
+  'Package', 'Namespace',
+  'PartDefinition', 'PartUsage',
+  'PortDefinition', 'PortUsage',
+  'ActionDefinition', 'ActionUsage', 'PerformActionUsage',
+  'AttributeDefinition', 'AttributeUsage',
+  'ItemDefinition', 'ItemUsage',
+  'InterfaceDefinition', 'InterfaceUsage',
+  'ConnectionDefinition', 'ConnectionUsage',
+  'FlowUsage', 'FlowConnectionUsage', 'SuccessionItemFlow',
+  'OccurrenceDefinition', 'OccurrenceUsage',
+  'BehaviorDefinition', 'StateDefinition',
+  'RequirementDefinition', 'RequirementUsage',
+  'AllocationDefinition', 'UseCaseDefinition',
+]);
+
+const FLOW_TYPES = new Set(['FlowUsage', 'FlowConnectionUsage', 'SuccessionItemFlow']);
+
+const ACTION_TYPES = new Set(['ActionDefinition', 'ActionUsage', 'PerformActionUsage']);
+const STRUCT_TYPES = new Set(['PartDefinition', 'PartUsage', 'PortDefinition', 'PortUsage']);
+
+function nodeTypeToSelType(type: string): NonNullable<SelectionState>['type'] {
+  if (type === 'PartDefinition' || type === 'PartUsage') return 'part';
+  if (type === 'PortDefinition' || type === 'PortUsage') return 'port';
+  if (type === 'ActionDefinition' || type === 'BehaviorDefinition') return 'behavior';
+  if (type === 'ActionUsage' || type === 'PerformActionUsage') return 'actionInst';
+  if (type === 'Package' || type === 'Namespace') return 'packageDef';
+  if (type === 'StateDefinition') return 'stateMachine';
+  if (type === 'RequirementDefinition' || type === 'RequirementUsage') return 'requirement';
+  if (FLOW_TYPES.has(type)) return 'connection';
+  return 'part';
+}
+
+interface CursorSyncResult {
+  selection: NonNullable<SelectionState>;
+  suggestBehavior?: string;
+  suggestTab?: ViewTab;
+}
+
+// ── Reverse sync: selection → VS Code editor cursor ───────────────────────────
+
+const GRAPH_PATH_RE = /^[\d.]+$/;
+
+// Maps a SelectionState.type to the EMF eClass names we expect in the ContainmentGraph.
+// Used by resolveGraphNodeId to do a name+type lookup when no explicit graphId is stored.
+function selTypeToEMFTypes(selType: NonNullable<SelectionState>['type']): string[] {
+  switch (selType) {
+    case 'part':        return ['PartDefinition', 'PartUsage'];
+    case 'systemPart':  return ['PartDefinition'];
+    case 'instance':    return ['PartUsage'];
+    case 'port':        return ['PortDefinition', 'PortUsage'];
+    case 'interface':   return ['InterfaceDefinition', 'ConnectionDefinition'];
+    case 'packageDef':  return ['Package', 'LibraryPackage'];
+    case 'occurrence':  return ['OccurrenceDefinition'];
+    case 'behavior':    return ['ActionDefinition', 'BehaviorDefinition', 'CalculationDefinition'];
+    case 'actionInst':  return ['ActionUsage', 'PerformActionUsage'];
+    case 'stateMachine':return ['StateDefinition'];
+    case 'requirement': return ['RequirementDefinition', 'RequirementUsage'];
+    case 'connection':  return ['FlowUsage', 'FlowConnectionUsage', 'SuccessionItemFlow', 'ConnectionUsage'];
+    default:            return [];
+  }
+}
+
+function resolveGraphNodeId(
+  sel: NonNullable<SelectionState>,
+  parseResult: SysMLV2ParseResult | null,
+): string | null {
+  // 1. Selection ID is already a raw graph path (ContainmentGraphView)
+  if (GRAPH_PATH_RE.test(sel.id)) return sel.id;
+  // 2. Cursor-sync / StructuralWiringView embeds graphId in extra
+  if (sel.extra?.graphId && GRAPH_PATH_RE.test(String(sel.extra.graphId))) return String(sel.extra.graphId);
+
+  if (!parseResult?.graph) return null;
+
+  // 3. Name + EMF-type lookup in the ContainmentGraph.
+  //    Covers PartDefinition, PortDefinition, InterfaceDefinition, etc. that were
+  //    rendered with generated IDs (e.g. "def-AcpdCdd") without a stored graphId.
+  //    Prefer nodes that have source ranges so the extension can reveal them.
+  const emfTypes = selTypeToEMFTypes(sel.type);
+  if (emfTypes.length > 0 && sel.name) {
+    const candidates = parseResult.graph.nodes.filter(
+      n => emfTypes.includes(n.type) && n.label === sel.name,
+    );
+    const withRange = candidates.find(n => n.startLine != null && n.startLine > 0);
+    const found = withRange ?? candidates[0];
+    if (found) {
+      console.log('[resolveGraphNodeId] name-lookup hit:', sel.type, sel.name, '→', found.id);
+      return found.id;
+    }
+    console.log('[resolveGraphNodeId] name-lookup miss:', sel.type, sel.name, 'emfTypes:', emfTypes);
+  }
+
+  // 4. Behavior actions lookup — richer matching for qualified ActionDefinition names
+  //    (e.g. "Controller::Startup") and scoped PerformActionUsage.
+  if (!parseResult.behavior) return null;
+  const beh = parseResult.behavior;
+  if (sel.type === 'behavior') {
+    const def = beh.actions.find(a => a.type === 'ActionDefinition' && a.name === sel.name);
+    if (def) return def.id;
+  }
+  if (sel.type === 'actionInst') {
+    const behaviorName = sel.extra?.behavior as string | undefined;
+    const colonIdx = (behaviorName ?? '').indexOf('::');
+    const ownerPart = colonIdx >= 0 ? behaviorName!.slice(0, colonIdx) : null;
+    const defPart   = colonIdx >= 0 ? behaviorName!.slice(colonIdx + 2) : (behaviorName ?? null);
+    for (const a of beh.actions) {
+      if (a.type !== 'ActionUsage' && a.type !== 'PerformActionUsage') continue;
+      if (a.name !== sel.name) continue;
+      if (!defPart) return a.id;
+      const ownerDef = beh.actions.find(d => d.id === a.ownerId && d.type === 'ActionDefinition');
+      if (!ownerDef || ownerDef.name !== defPart) continue;
+      if (ownerPart !== null && ownerDef.owningDefName !== ownerPart) continue;
+      return a.id;
+    }
+  }
+  return null;
+}
+
+function findElementAtLineOfficial(
+  line: number,
+  graph: ContainmentGraph,
+  behavior?: BehaviorData,
+): CursorSyncResult | null {
+  // Filter to named, semantically meaningful nodes with source ranges containing 'line'
+  const candidates = graph.nodes.filter(n =>
+    CURSOR_SYNC_TYPES.has(n.type) &&
+    n.label !== n.type &&
+    n.startLine != null &&
+    n.endLine != null &&
+    n.startLine <= line &&
+    line <= n.endLine!
+  );
+
+  if (candidates.length === 0) return null;
+
+  // Pick the most specific (smallest range) node
+  candidates.sort((a, b) => {
+    const rangeA = (a.endLine ?? 0) - (a.startLine ?? 0);
+    const rangeB = (b.endLine ?? 0) - (b.startLine ?? 0);
+    return rangeA - rangeB;
+  });
+
+  const best = candidates[0];
+  const selType = nodeTypeToSelType(best.type);
+
+  // Suggest which behavior (action def) to show when cursor is in an action usage.
+  // Computed before building sel so we can embed behavior name in extra.
+  let suggestBehavior: string | undefined;
+  let suggestTab: ViewTab | undefined;
+
+  if (ACTION_TYPES.has(best.type) && behavior) {
+    if (best.type === 'ActionDefinition') {
+      suggestBehavior = best.label;
+      suggestTab = 'behavior';
+    } else {
+      // ActionUsage / PerformActionUsage: find owning ActionDefinition.
+      const ownerAction = behavior.actions.find(a => a.id === best.id || a.name === best.label);
+      if (ownerAction?.ownerId) {
+        const ownerDef = behavior.actions.find(a => a.id === ownerAction.ownerId && a.type === 'ActionDefinition');
+        if (ownerDef) {
+          suggestBehavior = ownerDef.name;
+          suggestTab = 'behavior';
+        }
+      }
+    }
+  } else if (STRUCT_TYPES.has(best.type)) {
+    suggestTab = 'structure';
+  } else if (FLOW_TYPES.has(best.type)) {
+    suggestTab = 'flow';
+  }
+
+  console.log('[CursorSync] editor→visualizer line', line, '→', best.type, best.label,
+    'graphId:', best.id, 'suggestTab:', suggestTab);
+
+  const sel: SelectionState = {
+    id:   `official-sync-${best.id}`,
+    type: selType,
+    name: best.label,
+    line,
+    extra: {
+      graphId:  best.id,
+      emfType:  best.type,
+      // Embed the owning behavior name so Focus Subtree can zoom without
+      // waiting for a separate selectedBehavior state update.
+      ...(suggestBehavior && selType === 'actionInst' ? { behavior: suggestBehavior } : {}),
+    },
+  };
+
+  return { selection: sel, suggestBehavior, suggestTab };
+}
+
+// ── Empty model used in official mode ────────────────────────────────────────
 
 // Empty model used in official mode until VisualizerModel mapping is implemented
 const OFFICIAL_EMPTY_VIZ_MODEL: VisualizerModel = {
@@ -52,10 +251,17 @@ const OFFICIAL_EMPTY_VIZ_MODEL: VisualizerModel = {
   diagnostics: [],
 };
 
-type ViewTab = 'structure' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json' | 'graph';
+type ViewTab = 'structure' | 'flow' | 'sequence' | 'behavior' | 'state' | 'requirements' | 'traceability' | 'json' | 'graph';
+
+// Tab labels for official SysML v2 mode (aligned with SysML v2 viewpoint names).
+const OFFICIAL_TAB_LABELS: Partial<Record<ViewTab, string>> = {
+  structure:    'General',
+  flow:         'Interconnect',
+};
 
 const TAB_LABELS: Record<ViewTab, string> = {
   structure:    'Structure',
+  flow:         'Flow',
   sequence:     'Sequence',
   behavior:     'Behavior',
   state:        'State',
@@ -64,6 +270,8 @@ const TAB_LABELS: Record<ViewTab, string> = {
   json:         'JSON',
   graph:        'Graph',
 };
+
+const OFFICIAL_TABS: ViewTab[] = ['structure', 'flow', 'behavior', 'requirements', 'traceability'];
 
 // ── App mode — detected once at module load, stable for the page lifetime ────
 
@@ -97,6 +305,8 @@ export default function App() {
   // Initialized with null; kept current by direct assignment after useMemo below.
   const vizModelRef                       = useRef<VisualizerModel | null>(null);
   const selectionRef                      = useRef<SelectionState>(null);
+  // Refs for cursor-sync state that needs to be readable inside the stable closure
+  const syncCursorRef                     = useRef(true);
 
   // ── Panel visibility ───────────────────────────────────────────────────────
   // VS Code mode: all side panels start collapsed so the viz canvas fills the view
@@ -114,7 +324,7 @@ export default function App() {
   const [diagFilter, setDiagFilter]       = useState<'all' | 'error' | 'warning' | 'info'>('all');
 
   const [history, setHistory]             = useState<HistorySnapshot[]>(() => [
-    makeSnapshot(init.text, toVisualizerModel(parseAndValidate(init.text))),
+    makeSnapshot(init.text, OFFICIAL_EMPTY_VIZ_MODEL),
   ]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const historyDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,9 +332,10 @@ export default function App() {
 
   const isUnsaved = !activeProject || source !== activeProject.sysmlText;
 
-  // ── Modeling mode (prototypeSubset vs officialSysMLV2) ─────────────────────
-  const [modelingMode, setModelingMode] = useState<ModelingMode>(() =>
-    (localStorage.getItem('sysmlv2-modeling-mode') as ModelingMode | null) ?? 'prototypeSubset'
+  // ── User role ──────────────────────────────────────────────────────────────
+  type UserRole = 'architect' | 'developer';
+  const [userRole, setUserRole] = useState<UserRole>(() =>
+    (localStorage.getItem('sysmlv2-user-role') as UserRole | null) ?? 'architect'
   );
   const [serviceEndpoint, setServiceEndpoint] = useState(
     () => localStorage.getItem('sysmlv2-service-endpoint')
@@ -133,23 +344,30 @@ export default function App() {
   );
   const [officialParseResult, setOfficialParseResult] = useState<SysMLV2ParseResult | null>(null);
   const [officialParseLoading, setOfficialParseLoading] = useState(false);
+  // Stable ref so the VS Code message handler can access the latest parse result
+  const officialParseResultRef = useRef<SysMLV2ParseResult | null>(null);
+
+  // Cursor sync & focus subtree toggles (official mode only)
+  const [syncCursor,   setSyncCursor]   = useState(true);
+  const [focusSubtree, setFocusSubtree] = useState(false);
+
+  // TRLC external requirements (imported separately from the SysML model)
+  const [trlcData, setTrlcData] = useState<TrlcData | null>(null);
+  const [trlcImportError, setTrlcImportError] = useState<string | null>(null);
 
   // ── Monaco refs ────────────────────────────────────────────────────────────
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
 
-  // ── Parse + validate ──────────────────────────────────────────────────────
-  const result = useMemo(() => parseAndValidate(source), [source]);
   selectionRef.current = selection;
+  officialParseResultRef.current = officialParseResult;
+  syncCursorRef.current = syncCursor;
 
   // ── Adapt to VisualizerModel (consumed by all views) ──────────────────────
   const vizModel = useMemo(() => {
-    if (modelingMode === 'officialSysMLV2' && officialParseResult?.graph) {
-      return convertGraph(officialParseResult);
-    }
-    if (modelingMode === 'officialSysMLV2') return OFFICIAL_EMPTY_VIZ_MODEL;
-    return toVisualizerModel(result);
-  }, [modelingMode, result, officialParseResult]);
+    if (officialParseResult?.graph) return convertGraph(officialParseResult);
+    return OFFICIAL_EMPTY_VIZ_MODEL;
+  }, [officialParseResult]);
   // Keep latest-ref copy for use inside stable closures (message handlers)
   vizModelRef.current = vizModel;
 
@@ -162,23 +380,17 @@ export default function App() {
   );
 
   const behaviorDefNames = useMemo(() => {
-    // Official mode: only include ActionDefinitions that own at least one renderable child
-    // (ActionUsage, PerformActionUsage, or a control-flow node).
-    if (modelingMode === 'officialSysMLV2' && officialParseResult?.behavior) {
-      const beh = officialParseResult.behavior;
-      const CTRL = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
-      return beh.actions
-        .filter(a => a.type === 'ActionDefinition')
-        .filter(def => beh.actions.some(a =>
-          (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL.has(a.type)) &&
-          a.ownerId === def.id,
-        ))
-        .map(a => a.owningDefName ? `${a.owningDefName}::${a.name}` : a.name);
-    }
-    return vizModel.nodes
-      .filter((n): n is Extract<VizNode, { kind: 'behaviorDef' }> => n.kind === 'behaviorDef')
-      .map(n => n.name);
-  }, [vizModel, modelingMode, officialParseResult]);
+    if (!officialParseResult?.behavior) return [];
+    const beh = officialParseResult.behavior;
+    const CTRL = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
+    return beh.actions
+      .filter(a => a.type === 'ActionDefinition')
+      .filter(def => beh.actions.some(a =>
+        (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL.has(a.type)) &&
+        a.ownerId === def.id,
+      ))
+      .map(a => a.owningDefName ? `${a.owningDefName}::${a.name}` : a.name);
+  }, [officialParseResult]);
 
   const stateMachineNames = useMemo(
     () => vizModel.nodes
@@ -187,17 +399,37 @@ export default function App() {
     [vizModel],
   );
 
-  // Unified diagnostics: from official service or from legacy parser
+  // Impact trace: computed from selection + official parse result (official mode only).
+  // behavior may be absent when the graph comes from the extension without a running
+  // parser service; fall back to empty BehaviorData so graph-level impact still shows.
+  const EMPTY_BEHAVIOR: BehaviorData = { actions: [], flows: [], conditionals: [] };
+  const impactTrace = useMemo((): ImpactTrace | null => {
+    if (!officialParseResult?.graph) return null;
+    if (!selection) return null;
+    const trace = computeImpactTrace(
+      officialParseResult.graph,
+      officialParseResult.behavior ?? EMPTY_BEHAVIOR,
+      selection.name,
+      selection.type,
+      selection.extra,
+    );
+    console.log('[ImpactTrace] selection:', selection.type, selection.name,
+      '→ owned:', trace.ownedElements.length,
+      'behaviors:', trace.relatedBehaviors.length,
+      'flows:', trace.relatedFlows.length,
+      'connected:', trace.connectedElements.length,
+    );
+    return trace;
+  }, [officialParseResult, selection]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const activeDiagnostics = useMemo(
-    () => modelingMode === 'officialSysMLV2'
-      ? (officialParseResult?.diagnostics.map(d => ({
-          message:  d.message,
-          line:     d.line ?? 1,
-          column:   d.column,
-          severity: d.severity,
-        })) ?? [])
-      : result.diagnostics,
-    [modelingMode, officialParseResult, result.diagnostics],
+    () => officialParseResult?.diagnostics.map(d => ({
+      message:  d.message,
+      line:     d.line ?? 1,
+      column:   d.column,
+      severity: d.severity,
+    })) ?? [],
+    [officialParseResult],
   );
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -245,13 +477,8 @@ export default function App() {
     }, HISTORY_DEBOUNCE_MS);
   }, [source, vizModel]);
 
-  // Official SysML v2 mode — call HTTP parser service when source/mode/endpoint changes
+  // Call HTTP parser service when source or endpoint changes
   useEffect(() => {
-    if (modelingMode !== 'officialSysMLV2') {
-      setOfficialParseResult(null);
-      setOfficialParseLoading(false);
-      return;
-    }
     let cancelled = false;
     setOfficialParseLoading(true);
     const svc = new HttpSysMLV2ParserService(serviceEndpoint);
@@ -261,16 +488,21 @@ export default function App() {
       setOfficialParseLoading(false);
     });
     return () => { cancelled = true; };
-  }, [source, modelingMode, serviceEndpoint]);
+  }, [source, serviceEndpoint]);
 
-  // Persist mode and endpoint selections across page loads
+  // Persist role and endpoint across page loads
   useEffect(() => {
-    localStorage.setItem('sysmlv2-modeling-mode', modelingMode);
-  }, [modelingMode]);
+    localStorage.setItem('sysmlv2-user-role', userRole);
+  }, [userRole]);
 
   useEffect(() => {
     localStorage.setItem('sysmlv2-service-endpoint', serviceEndpoint);
   }, [serviceEndpoint]);
+
+  // Close inspector when switching to developer role
+  useEffect(() => {
+    if (userRole === 'developer') setInspectorOpen(false);
+  }, [userRole]);
 
   // Sync diagnostics → Monaco editor markers
   useEffect(() => {
@@ -299,12 +531,6 @@ export default function App() {
 
   // Signal readiness so the extension knows when to send the initial model
   useEffect(() => { getVsCodeApi()?.postMessage({ type: 'ready' }); }, []);
-
-  // Keep the extension in sync so it publishes official (not prototype) diagnostics
-  // when the user switches to official mode in the webview.
-  useEffect(() => {
-    getVsCodeApi()?.postMessage({ type: 'modelingModeChange', mode: modelingMode });
-  }, [modelingMode]);
 
   // Receive messages from the extension
   useEffect(() => {
@@ -341,11 +567,19 @@ export default function App() {
         );
       } else if (msg.type === 'revealElementAtSource' && msg.sourceLocation) {
         const { line } = msg.sourceLocation;
-        if (!vizModelRef.current) return;
-        const found = findElementAtLine(line, vizModelRef.current);
-        if (found !== null && found.id !== selectionRef.current?.id) {
+        if (!syncCursorRef.current) return;
+        const graph = officialParseResultRef.current?.graph;
+        if (!graph) return;
+        const syncResult = findElementAtLineOfficial(
+          line, graph, officialParseResultRef.current?.behavior
+        );
+        if (!syncResult) return;
+        const { selection: found, suggestBehavior, suggestTab } = syncResult;
+        if (found.id !== selectionRef.current?.id) {
           suppressRevealSource.current = true;
           setSelection(found);
+          if (suggestBehavior) setSelectedBehavior(suggestBehavior);
+          if (suggestTab) setTab(suggestTab as ViewTab);
         }
       }
     };
@@ -361,24 +595,70 @@ export default function App() {
   }, [source]);
 
 
-  // Auto-open inspector when the user selects an element
+  // Log selection changes for pipeline diagnostics
   useEffect(() => {
-    if (selection !== null) setInspectorOpen(true);
+    if (selection) {
+      console.log('[Selection] type:', selection.type, 'name:', selection.name,
+        'id:', selection.id, 'extra:', selection.extra);
+    }
   }, [selection]);
 
-  // Sync selection → VS Code editor cursor (skip if selection came from editor)
+  // Auto-open inspector when the user selects an element (architect only)
   useEffect(() => {
-    if (APP_MODE !== 'vscode') return;
-    if (selection === null || selection.line === undefined) return;
+    if (userRole === 'architect' && selection !== null) setInspectorOpen(true);
+  }, [selection]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync selection → editor cursor (skip if selection came from editor).
+  useEffect(() => {
+    if (selection === null) return;
     if (suppressRevealSource.current) {
       suppressRevealSource.current = false;
       return;
     }
-    getVsCodeApi()?.postMessage({
-      type: 'revealSource',
-      sourceLocation: { line: selection.line, column: 1 },
-    });
-  }, [selection]);
+
+    if (APP_MODE === 'standalone') {
+      // Resolve line: prefer graphId → graph node startLine, fall back to selection.line.
+      let line: number | undefined;
+      const rawGraphId = selection.extra?.graphId as string | undefined;
+      if (rawGraphId && officialParseResultRef.current?.graph) {
+        const node = officialParseResultRef.current.graph.nodes.find(n => n.id === rawGraphId);
+        if (node?.startLine && node.startLine > 0) line = node.startLine;
+      }
+      if (line === undefined && selection.line !== undefined && selection.line > 0) {
+        line = selection.line;
+      }
+      if (line !== undefined) {
+        console.log('[CursorSync] visualizer→editor (standalone)', selection.type, selection.name,
+          'line:', line);
+        // Suppress the cursor-position listener so it doesn't echo the selection back.
+        suppressRevealSource.current = true;
+        jumpToLine(line);
+      }
+      return;
+    }
+
+    // VS Code mode: send semantic reveal message to the extension.
+    const graphId = resolveGraphNodeId(selection, officialParseResultRef.current);
+    if (graphId) {
+      // Include startLine so the extension can fall back to line-based reveal when
+      // nodeIdToRange is empty (prototype mode / first open before official parse).
+      const graphNode = officialParseResultRef.current?.graph?.nodes.find(n => n.id === graphId);
+      const startLine = graphNode?.startLine ?? selection.line;
+      console.log('[CursorSync] visualizer→editor', selection.type, selection.name,
+        'graphId:', graphId, 'startLine:', startLine);
+      getVsCodeApi()?.postMessage({ type: 'revealSemanticElement', semanticId: graphId, startLine });
+      return;
+    }
+    // Fallback: line-based reveal (elements with no graph ID)
+    if (selection.line !== undefined) {
+      console.log('[CursorSync] visualizer→editor (line fallback)', selection.type, selection.name,
+        'line:', selection.line);
+      getVsCodeApi()?.postMessage({
+        type: 'revealSource',
+        sourceLocation: { line: selection.line, column: 1 },
+      });
+    }
+  }, [selection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────
 
@@ -532,6 +812,30 @@ export default function App() {
     setSelection(null);
   }
 
+  // ── TRLC requirements import ───────────────────────────────────────────────
+
+  function handleTrlcImport(text: string): void {
+    const { data, error } = parseTrlcJson(text);
+    if (error) {
+      setTrlcImportError(error);
+      return;
+    }
+    setTrlcData(data);
+    setTrlcImportError(null);
+  }
+
+  function handleTrlcFileInput(e: React.ChangeEvent<HTMLInputElement>): void {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => handleTrlcImport(ev.target?.result as string);
+    reader.readAsText(file);
+    // Reset input so the same file can be re-selected
+    e.target.value = '';
+  }
+
+  const trlcFileInputRef = useRef<HTMLInputElement | null>(null);
+
   // ── Editor helpers ─────────────────────────────────────────────────────────
 
   function jumpToLine(lineNum: number) {
@@ -554,6 +858,37 @@ export default function App() {
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
+
+    // In standalone mode, sync cursor → visualizer selection (debounced).
+    // VS Code mode receives revealElementAtSource from the extension instead.
+    if (APP_MODE === 'standalone') {
+      let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+      editor.onDidChangeCursorPosition(e => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!syncCursorRef.current) return;
+          // Suppress if the cursor move was triggered programmatically by visualizer→editor sync.
+          if (suppressRevealSource.current) {
+            suppressRevealSource.current = false;
+            return;
+          }
+          const graph = officialParseResultRef.current?.graph;
+          if (!graph) return;
+          const line = e.position.lineNumber;
+          const syncResult = findElementAtLineOfficial(
+            line, graph, officialParseResultRef.current?.behavior
+          );
+          if (!syncResult) return;
+          const { selection: found, suggestBehavior, suggestTab } = syncResult;
+          if (found.id !== selectionRef.current?.id) {
+            suppressRevealSource.current = true;
+            setSelection(found);
+            if (suggestBehavior) setSelectedBehavior(suggestBehavior);
+            if (suggestTab) setTab(suggestTab as ViewTab);
+          }
+        }, 120);
+      });
+    }
   };
 
   const errCount  = activeDiagnostics.filter(d => d.severity === 'error').length;
@@ -670,7 +1005,7 @@ export default function App() {
                           {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
                         </span>
                         <span className="diag-loc">L{d.line}</span>
-                        {'code' in d && d.code && <span className="diag-code">{d.code as string}</span>}
+                        {'code' in d && !!(d as Record<string,unknown>).code && <span className="diag-code">{String((d as Record<string,unknown>).code)}</span>}
                         <span className="diag-msg">{d.message}</span>
                       </div>
                     ))}
@@ -723,7 +1058,7 @@ export default function App() {
                           {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
                         </span>
                         <span className="diag-loc">L{d.line}</span>
-                        {'code' in d && d.code && <span className="diag-code">{d.code as string}</span>}
+                        {'code' in d && !!(d as Record<string,unknown>).code && <span className="diag-code">{String((d as Record<string,unknown>).code)}</span>}
                         <span className="diag-msg">{d.message}</span>
                       </div>
                     ))}
@@ -774,66 +1109,101 @@ export default function App() {
         <div className="panel viz-panel">
           <div className="panel-header tabs">
             <div className="tab-group">
-              {(['structure', 'sequence', 'behavior', 'state', 'requirements', 'traceability', 'json'] as ViewTab[]).map(t => (
+              {OFFICIAL_TABS.map(t => (
                 <button
                   key={t}
                   className={`tab-btn${tab === t ? ' active' : ''}`}
                   onClick={() => setTab(t)}
                 >
-                  {TAB_LABELS[t]}
+                  {OFFICIAL_TAB_LABELS[t] ?? TAB_LABELS[t]}
                 </button>
               ))}
-              {modelingMode === 'officialSysMLV2' && (
-                <button
-                  className={`tab-btn${tab === 'graph' ? ' active' : ''}`}
-                  onClick={() => setTab('graph')}
-                  title="Containment graph from official SysML v2 parser"
-                >
-                  {TAB_LABELS.graph}
-                </button>
-              )}
             </div>
-            {/* ── Parser mode selector ──────────────────────────────── */}
+            {/* ── Role switch ───────────────────────────────────────── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 8 }}>
-              <label style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>Mode:</label>
-              <select
-                value={modelingMode}
-                onChange={e => setModelingMode(e.target.value as ModelingMode)}
+              <label style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>Role:</label>
+              {(['architect', 'developer'] as const).map(r => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setUserRole(r)}
+                  style={{
+                    fontSize: 11,
+                    background: userRole === r ? '#1e3a5f' : '#1e293b',
+                    color:      userRole === r ? '#7dd3fc' : '#475569',
+                    border:     `1px solid ${userRole === r ? '#38bdf8' : '#334155'}`,
+                    borderRadius: 3, padding: '1px 8px',
+                    cursor: 'pointer', textTransform: 'capitalize',
+                  }}
+                >
+                  {r.charAt(0).toUpperCase() + r.slice(1)}
+                </button>
+              ))}
+              <input
+                type="text"
+                value={serviceEndpoint}
+                onChange={e => setServiceEndpoint(e.target.value)}
+                placeholder="http://localhost:9001"
+                title="SysML v2 parser service endpoint URL"
                 style={{
                   fontSize: 11, background: '#1e293b', color: '#e2e8f0',
-                  border: '1px solid #334155', borderRadius: 3, padding: '1px 4px',
-                  cursor: 'pointer',
+                  border: '1px solid #334155', borderRadius: 3,
+                  padding: '1px 6px', width: 190,
+                }}
+              />
+              <button
+                type="button"
+                title={
+                  trlcData
+                    ? `TRLC loaded: ${trlcData.requirements.length} reqts`
+                    : trlcImportError
+                      ? `Import error: ${trlcImportError}`
+                      : 'Import TRLC requirements JSON'
+                }
+                onClick={() => trlcFileInputRef.current?.click()}
+                style={{
+                  fontSize: 11,
+                  background: trlcData ? '#0d2e1a' : trlcImportError ? '#2d0808' : '#1e293b',
+                  color:      trlcData ? '#4ade80' : trlcImportError ? '#f87171' : '#94a3b8',
+                  border: `1px solid ${trlcData ? '#4ade80' : trlcImportError ? '#ef4444' : '#334155'}`,
+                  borderRadius: 3, padding: '1px 6px',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
                 }}
               >
-                <option value="prototypeSubset">Prototype Subset</option>
-                <option value="officialSysMLV2">Official SysML v2</option>
-              </select>
-              {modelingMode === 'officialSysMLV2' && (
+                {trlcData ? `TRLC (${trlcData.requirements.length})` : 'TRLC'}
+              </button>
+              <label
+                title="Sync Cursor — editor cursor position updates the visualizer selection"
+                style={{
+                  fontSize: 11, color: syncCursor ? '#7dd3fc' : '#475569',
+                  display: 'flex', alignItems: 'center', gap: 3,
+                  cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+                }}
+              >
                 <input
-                  type="text"
-                  value={serviceEndpoint}
-                  onChange={e => setServiceEndpoint(e.target.value)}
-                  placeholder="http://localhost:9001"
-                  title="SysML v2 parser service endpoint URL"
-                  style={{
-                    fontSize: 11, background: '#1e293b', color: '#e2e8f0',
-                    border: '1px solid #334155', borderRadius: 3,
-                    padding: '1px 6px', width: 190,
-                  }}
+                  type="checkbox"
+                  checked={syncCursor}
+                  onChange={() => setSyncCursor(v => !v)}
+                  style={{ cursor: 'pointer', accentColor: '#38bdf8' }}
                 />
-              )}
-              {modelingMode === 'prototypeSubset' && PARSER_MODE === 'legacySubset' && (
-                <span
-                  title="This tool uses a custom prototype language, not conformant SysML v2. The parser is frozen."
-                  style={{
-                    fontSize: 10, color: '#92400e', background: '#451a03',
-                    border: '1px solid #78350f', borderRadius: 3,
-                    padding: '1px 6px', cursor: 'default', whiteSpace: 'nowrap',
-                  }}
-                >
-                  Legacy Subset
-                </span>
-              )}
+                Sync
+              </label>
+              <label
+                title="Focus Subtree — behavior view zooms to the selected action node"
+                style={{
+                  fontSize: 11, color: focusSubtree ? '#86efac' : '#475569',
+                  display: 'flex', alignItems: 'center', gap: 3,
+                  cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={focusSubtree}
+                  onChange={() => setFocusSubtree(v => !v)}
+                  style={{ cursor: 'pointer', accentColor: '#4ade80' }}
+                />
+                Focus
+              </label>
             </div>
             {tab === 'sequence' && behavioralOccurrences.length > 0 && (
               <div className="occurrence-selector">
@@ -844,20 +1214,6 @@ export default function App() {
                   className="occurrence-select"
                 >
                   {behavioralOccurrences.map(name => (
-                    <option key={name} value={name}>{name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {tab === 'behavior' && behaviorDefNames.length > 0 && (
-              <div className="occurrence-selector">
-                <label>Behavior</label>
-                <select
-                  value={selectedBehavior}
-                  onChange={e => setSelectedBehavior(e.target.value)}
-                  className="occurrence-select"
-                >
-                  {behaviorDefNames.map(name => (
                     <option key={name} value={name}>{name}</option>
                   ))}
                 </select>
@@ -879,45 +1235,46 @@ export default function App() {
             )}
           </div>
           <div className="view-area">
-            {/* ── Official SysML v2 mode status banner ─────────────────── */}
-            {modelingMode === 'officialSysMLV2' && (
-              <div style={{
-                padding: '10px 16px',
-                background: '#0f172a',
-                borderBottom: '1px solid #1e293b',
-                fontFamily: 'monospace',
-                fontSize: 12,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6,
-              }}>
-                {/* Always-visible setup requirement notice */}
-                <span style={{ color: '#64748b' }}>
-                  Official SysML v2 mode requires an external parser service. See{' '}
-                  <code style={{ color: '#94a3b8' }}>parser-service/README.md</code>.
+            {/* ── Parser service status banner ──────────────────────────── */}
+            <div style={{
+              padding: '10px 16px',
+              background: '#0f172a',
+              borderBottom: '1px solid #1e293b',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}>
+              <span style={{ color: '#64748b' }}>
+                Requires the SysML v2 parser service. See{' '}
+                <code style={{ color: '#94a3b8' }}>parser-service/README.md</code>.
+              </span>
+              {officialParseLoading && (
+                <span style={{ color: '#94a3b8' }}>Parsing…</span>
+              )}
+              {!officialParseLoading && officialParseResult?.error === 'SERVICE_UNAVAILABLE' && (
+                <span style={{ color: '#ef4444' }}>
+                  Parser service not available. Check endpoint: {serviceEndpoint}
                 </span>
-                {/* Service call status */}
-                {officialParseLoading && (
-                  <span style={{ color: '#94a3b8' }}>Parsing with official SysML v2 service…</span>
-                )}
-                {!officialParseLoading && officialParseResult?.error === 'SERVICE_UNAVAILABLE' && (
-                  <span style={{ color: '#ef4444' }}>
-                    Official SysML v2 parser service is not available. Check endpoint: {serviceEndpoint}
-                  </span>
-                )}
-                {!officialParseLoading && officialParseResult && officialParseResult.error !== 'SERVICE_UNAVAILABLE' && (
-                  <span style={{ color: officialParseResult.success ? '#4ade80' : '#fb923c' }}>
-                    {officialParseResult.success
-                      ? 'Parsed successfully.'
-                      : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported in the diagnostics panel.`}
-                    {officialParseResult.error && ` (${officialParseResult.error})`}
-                  </span>
-                )}
-              </div>
-            )}
+              )}
+              {!officialParseLoading && officialParseResult && officialParseResult.error !== 'SERVICE_UNAVAILABLE' && (
+                <span style={{ color: officialParseResult.success ? '#4ade80' : '#fb923c' }}>
+                  {officialParseResult.success
+                    ? 'Parsed successfully.'
+                    : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported in the diagnostics panel.`}
+                  {officialParseResult.error && ` (${officialParseResult.error})`}
+                </span>
+              )}
+            </div>
             <ErrorBoundary label="Structure view error">
               {tab === 'structure' && (
-                <StructureView result={vizModel} selection={selection} onSelect={setSelection} />
+                <StructureView
+                  result={vizModel}
+                  graph={officialParseResult?.graph}
+                  selection={selection}
+                  onSelect={setSelection}
+                />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="Sequence view error">
@@ -930,21 +1287,25 @@ export default function App() {
                 />
               )}
             </ErrorBoundary>
-            <ErrorBoundary label="Behavior view error">
-              {tab === 'behavior' && modelingMode === 'officialSysMLV2' && (
-                <OfficialBehaviorView
-                  behavior={officialParseResult?.behavior}
-                  behaviorName={selectedBehavior}
+            <ErrorBoundary label="Structural wiring error">
+              {tab === 'flow' && (
+                <StructuralWiringView
+                  graph={officialParseResult?.graph}
                   selection={selection}
                   onSelect={setSelection}
                 />
               )}
-              {tab === 'behavior' && modelingMode !== 'officialSysMLV2' && (
-                <BehaviorView
-                  result={vizModel}
+            </ErrorBoundary>
+            <ErrorBoundary label="Behavior view error">
+              {tab === 'behavior' && (
+                <OfficialBehaviorView
+                  behavior={officialParseResult?.behavior}
                   behaviorName={selectedBehavior}
+                  behaviorNames={behaviorDefNames}
+                  onBehaviorChange={setSelectedBehavior}
                   selection={selection}
                   onSelect={setSelection}
+                  focusSubtree={focusSubtree}
                 />
               )}
             </ErrorBoundary>
@@ -960,12 +1321,22 @@ export default function App() {
             </ErrorBoundary>
             <ErrorBoundary label="Requirements view error">
               {tab === 'requirements' && (
-                <RequirementsView result={vizModel} selection={selection} onSelect={setSelection} />
+                <RequirementsView
+                  result={vizModel}
+                  selection={selection}
+                  onSelect={setSelection}
+                  trlcData={trlcData ?? undefined}
+                />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="Traceability view error">
               {tab === 'traceability' && (
-                <TraceabilityView result={vizModel} selection={selection} onSelect={setSelection} />
+                <TraceabilityView
+                  result={vizModel}
+                  selection={selection}
+                  onSelect={setSelection}
+                  trlcData={trlcData ?? undefined}
+                />
               )}
             </ErrorBoundary>
             <ErrorBoundary label="JSON view error">
@@ -974,21 +1345,24 @@ export default function App() {
             <ErrorBoundary label="Containment graph error">
               {tab === 'graph' && (
                 officialParseResult?.graph
-                  ? <ContainmentGraphView graph={officialParseResult.graph} />
+                  ? <ContainmentGraphView graph={officialParseResult.graph} onSelect={setSelection} />
                   : <div style={{ padding: 24, color: '#64748b', fontFamily: 'monospace', fontSize: 13 }}>
-                      No graph data yet. Switch to Official SysML v2 mode and parse a file.
+                      No graph data yet. Open a SysML v2 file to parse it.
                     </div>
               )}
             </ErrorBoundary>
           </div>
         </div>
 
-        {/* Column 4: Inspector */}
-        {inspectorOpen ? (
+        {/* Column 4: Inspector — architect role only */}
+        {userRole === 'architect' && (inspectorOpen ? (
           <InspectorPanel
             selection={selection}
             result={vizModel}
             source={source}
+            impactTrace={impactTrace ?? undefined}
+            trlcData={trlcData ?? undefined}
+            onSelect={setSelection}
             onSourceChange={
               APP_MODE === 'vscode'
                 ? (newText: string) => {
@@ -1012,9 +1386,18 @@ export default function App() {
           >
             <span className="panel-tab-label">Inspector</span>
           </button>
-        )}
+        ))}
 
       </div>
+
+      {/* ── Hidden TRLC file input ───────────────── */}
+      <input
+        ref={trlcFileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleTrlcFileInput}
+      />
 
       {/* ── Modals (standalone only) ─────────────── */}
 
