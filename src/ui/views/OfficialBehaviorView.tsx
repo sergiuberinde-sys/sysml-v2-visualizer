@@ -10,23 +10,31 @@
  *   behavior.conditionals  (IfActionUsage / WhileLoop) → condition nodes + branch edges
  */
 
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
-  type Node, type Edge,
+  useReactFlow, applyNodeChanges,
+  type Node, type Edge, type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { BehaviorData } from '../../core/sysmlv2Official';
 import type { SelectionState } from '../../app/selection';
+import { FitPanel } from '../layout/FitPanel';
+import { fitNodeWidth, estimateWrapLines, type TextRow } from '../layout/nodeSize';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-const NODE_W  = 164;
-const NODE_H  = 68;
-const H_GAP   = 96;
-const V_GAP   = 32;
-const START_X = 48;
-const START_Y = 48;
+const NODE_W       = 164;
+const NODE_H       = 68;
+const H_GAP        = 96;
+const V_GAP        = 32;
+const START_X      = 48;
+const START_Y      = 48;
+const BEHAV_H_PAD  = 20;   // 2 × 10 px (padding: '6px 10px')
+const BEHAV_V_PAD  = 12;   // 2 × 6 px
+const LINE_H_NAME  = 18;   // 12.5px font × 1.35 line-height
+const LINE_H_SMALL = 14;   // 9–10 px stereotype / type label
+const BADGE_H      = 20;   // branch badge row height
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
@@ -91,13 +99,37 @@ function assignLevels(
   return level;
 }
 
+// ── Per-node dimension helper ─────────────────────────────────────────────────
+
+function behaviorNodeDims(
+  name:       string,
+  actionType: string | undefined | null,
+  isBranch:   boolean,
+  stereoText: string,
+): { w: number; h: number } {
+  const rows: TextRow[] = [
+    { text: stereoText, font: '9px sans-serif' },
+    { text: name,       font: '600 12.5px sans-serif' },
+    ...(actionType ? [{ text: ': ' + actionType, font: '10px sans-serif' } as TextRow] : []),
+  ];
+  const w         = fitNodeWidth(rows, BEHAV_H_PAD, NODE_W);
+  const nameLines = estimateWrapLines(name, '600 12.5px sans-serif', w - BEHAV_H_PAD);
+  let h = BEHAV_V_PAD + LINE_H_SMALL + nameLines * LINE_H_NAME;
+  if (actionType) h += LINE_H_SMALL;
+  if (isBranch)   h += BADGE_H;
+  return { w, h: Math.max(NODE_H, h) };
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  behavior: BehaviorData | undefined;
-  behaviorName: string;
-  selection: SelectionState;
-  onSelect: (s: SelectionState) => void;
+  behavior:         BehaviorData | undefined;
+  behaviorName:     string;
+  behaviorNames?:   string[];
+  onBehaviorChange?: (name: string) => void;
+  selection:        SelectionState;
+  onSelect:         (s: SelectionState) => void;
+  focusSubtree?:    boolean;
 }
 
 // ── Conditional edge descriptor ───────────────────────────────────────────────
@@ -111,7 +143,28 @@ interface CondEdge {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function OfficialBehaviorView({ behavior, behaviorName, onSelect }: Props) {
+export default function OfficialBehaviorView({ behavior, behaviorName, behaviorNames, onBehaviorChange, onSelect, selection, focusSubtree }: Props) {
+  // ReactFlow instance ref for programmatic fitView (Focus Subtree)
+  const rfInstanceRef = useRef<ReturnType<typeof useReactFlow> | null>(null);
+
+  const [layoutDir, setLayoutDir] = useState<'lr' | 'tb'>('lr');
+  const [fitMode, setFitMode] = useState(false);
+
+  // ── Drag-position persistence ────────────────────────────────────────────────
+  const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
+  // Track the "layout key" so we can detect when positions should be reset
+  // (behavior switched or layout direction changed).
+  const layoutKeyRef = useRef('');
+
+  // When Focus Subtree is ON and a new action is selected via cursor sync, zoom to it
+  useEffect(() => {
+    if (!focusSubtree || !rfInstanceRef.current || !selection) return;
+    if (selection.type !== 'actionInst') return;
+    const nodeBehavior = selection.extra?.behavior ?? behaviorName;
+    const nodeId = `oact-${nodeBehavior}-${selection.name}`;
+    rfInstanceRef.current.fitView({ nodes: [{ id: nodeId }], duration: 300, padding: 0.4, maxZoom: 1.5 });
+  }, [selection, focusSubtree, behaviorName]);
+
   const { rfNodes, rfEdges } = useMemo(() => {
     if (!behavior || !behaviorName) return { rfNodes: [], rfEdges: [] };
 
@@ -190,19 +243,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
       ...condEdges.map(e => ({ source: e.condId, target: e.targetName })),
     ];
 
-    const level    = assignLevels(allNames, allFlowEdges);
-    const levelIdx = new Map<number, number>();
-    const positions = new Map<string, { x: number; y: number }>();
-
-    for (const name of allNames) {
-      const lvl = level.get(name) ?? 0;
-      const idx = levelIdx.get(lvl) ?? 0;
-      levelIdx.set(lvl, idx + 1);
-      positions.set(name, {
-        x: START_X + lvl * (NODE_W + H_GAP),
-        y: START_Y + idx * (NODE_H + V_GAP),
-      });
-    }
+    const level = assignLevels(allNames, allFlowEdges);
 
     // ── Action nodes ───────────────────────────────────────────────────────────
 
@@ -213,11 +254,76 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
       JoinNode:     '«join»',
     };
 
+    // Per-node content-aware dimensions (width + height).
+    const nodeDims = new Map<string, { w: number; h: number }>();
+    for (const a of actionUsages) {
+      const isCtrl    = CTRL_FLOW_TYPES.has(a.type);
+      const targets   = outgoing.get(a.name) ?? [];
+      const isBranch  = !isCtrl && targets.length > 1;
+      const stereoTxt = isCtrl ? (CTRL_STEREO_MAP[a.type] ?? '«control»') : '«action»';
+      nodeDims.set(a.name, behaviorNodeDims(a.name, isCtrl ? undefined : a.actionType, isBranch, stereoTxt));
+    }
+    for (const c of ownedConditionals) {
+      const isLoop   = c.type === 'whileLoop';
+      const condText = c.conditionText ?? (isLoop ? 'loop' : 'if');
+      nodeDims.set(c.id, behaviorNodeDims(condText, undefined, false, isLoop ? '«loop»' : '«condition»'));
+    }
+
+    // Group nodes by topological level; then compute cumulative positions so
+    // variable-size nodes don't overlap.
+    const levelGroups = new Map<number, string[]>();
+    for (const name of allNames) {
+      const lvl = level.get(name) ?? 0;
+      if (!levelGroups.has(lvl)) levelGroups.set(lvl, []);
+      levelGroups.get(lvl)!.push(name);
+    }
+    const maxLevel = allNames.length > 0
+      ? Math.max(...allNames.map(n => level.get(n) ?? 0))
+      : 0;
+    const positions = new Map<string, { x: number; y: number }>();
+
+    if (layoutDir === 'lr') {
+      // Columns L→R; items stack T→B within each column.
+      const colX: number[] = [];
+      let cumX = START_X;
+      for (let l = 0; l <= maxLevel; l++) {
+        colX.push(cumX);
+        const nodes = levelGroups.get(l) ?? [];
+        const maxW  = nodes.reduce((m, n) => Math.max(m, nodeDims.get(n)?.w ?? NODE_W), NODE_W);
+        cumX += maxW + H_GAP;
+      }
+      for (const [lvl, names] of levelGroups) {
+        let cumY = START_Y;
+        for (const name of names) {
+          positions.set(name, { x: colX[lvl] ?? START_X, y: cumY });
+          cumY += (nodeDims.get(name)?.h ?? NODE_H) + V_GAP;
+        }
+      }
+    } else {
+      // Rows T→B; items spread L→R within each row.
+      const rowY: number[] = [];
+      let cumY = START_Y;
+      for (let l = 0; l <= maxLevel; l++) {
+        rowY.push(cumY);
+        const nodes = levelGroups.get(l) ?? [];
+        const maxH  = nodes.reduce((m, n) => Math.max(m, nodeDims.get(n)?.h ?? NODE_H), NODE_H);
+        cumY += maxH + V_GAP;
+      }
+      for (const [lvl, names] of levelGroups) {
+        let cumX = START_X;
+        for (const name of names) {
+          positions.set(name, { x: cumX, y: rowY[lvl] ?? START_Y });
+          cumX += (nodeDims.get(name)?.w ?? NODE_W) + H_GAP;
+        }
+      }
+    }
+
     const actNodes: Node[] = actionUsages.map(a => {
       const nodeId   = `oact-${behaviorName}-${a.name}`;
       const targets  = outgoing.get(a.name) ?? [];
       const isBranch = targets.length > 1;
       const isCtrl   = CTRL_FLOW_TYPES.has(a.type);
+      const dims     = nodeDims.get(a.name) ?? { w: NODE_W, h: NODE_H };
 
       const bg      = isCtrl ? CTRL_BG     : ACT_BG;
       const border  = isCtrl ? CTRL_BORDER : (isBranch ? BRANCH_COLOR : ACT_BORDER);
@@ -233,6 +339,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
             <div style={{ textAlign: 'center', lineHeight: 1.35 }}>
               <div style={{ fontSize: 9, color: stereoClr, letterSpacing: '0.4px' }}>{stereo}</div>
               <div style={{ fontSize: 12.5, fontWeight: 600, color: nameClr }}>{a.name}</div>
+              {!isCtrl && a.actionType && (
+                <div style={{ fontSize: 10, color: '#4a9fc0', marginTop: 1 }}>: {a.actionType}</div>
+              )}
               {!isCtrl && isBranch && (
                 <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
                   <span style={{ display: 'inline-block', width: 6, height: 6, background: BRANCH_COLOR, transform: 'rotate(45deg)' }} />
@@ -249,6 +358,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
             name: a.name,
             extra: {
               behavior: behaviorName,
+              ...(a.actionType ? { actionType: a.actionType } : {}),
               ...(targets.length > 0 ? { outgoingTargets: targets.join(',') } : {}),
             },
           } satisfies SelectionState,
@@ -258,8 +368,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
           border:         `1px solid ${border}`,
           borderRadius:   isCtrl ? 3 : 7,
           padding:        '6px 10px',
-          width:          NODE_W,
-          height:         NODE_H,
+          width:          dims.w,
+          height:         dims.h,
           display:        'flex',
           alignItems:     'center',
           justifyContent: 'center',
@@ -302,6 +412,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
         const border   = isLoop ? LOOP_BORDER : COND_BORDER;
         const stereo   = isLoop ? LOOP_STEREO : COND_STEREO;
         const nameClr  = isLoop ? LOOP_NAME   : COND_NAME;
+        const dims     = nodeDims.get(c.id) ?? { w: NODE_W, h: NODE_H };
 
         return {
           id:       nodeId,
@@ -329,8 +440,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
             border:         `1px solid ${border}`,
             borderRadius:   7,
             padding:        '6px 10px',
-            width:          NODE_W,
-            height:         NODE_H,
+            width:          dims.w,
+            height:         dims.h,
             display:        'flex',
             alignItems:     'center',
             justifyContent: 'center',
@@ -358,25 +469,124 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
       rfNodes: [...actNodes, ...condNodes],
       rfEdges: [...flowEdges, ...condBranchEdges],
     };
-  }, [behavior, behaviorName]);
+  }, [behavior, behaviorName, layoutDir]);
+
+  // Merge useMemo positions into displayNodes; reset positions when behavior or
+  // layout direction changes.
+  useEffect(() => {
+    const key = `${behaviorName}::${layoutDir}`;
+    const isReset = layoutKeyRef.current !== key;
+    if (isReset) {
+      layoutKeyRef.current = key;
+      setDisplayNodes(rfNodes);
+    } else {
+      setDisplayNodes(prev => {
+        const prevPosMap = new Map(prev.map(n => [n.id, n.position]));
+        return rfNodes.map(n => {
+          const saved = prevPosMap.get(n.id);
+          return saved ? { ...n, position: saved } : n;
+        });
+      });
+    }
+  // rfNodes reference changes on every useMemo run (selection change etc.)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rfNodes, behaviorName, layoutDir]);
+
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    setDisplayNodes(prev => applyNodeChanges(changes, prev));
+  }, []);
 
   const handleNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
     const s = node.data?._sel as SelectionState;
     if (s) onSelect(s);
   }, [onSelect]);
 
+  // ── Selector toolbar ──────────────────────────────────────────────────────────
+
+  const selectorBar = behaviorNames && behaviorNames.length > 0 ? (
+    <div style={{
+      padding:       '7px 14px',
+      background:    '#0f172a',
+      borderBottom:  '1px solid #1e293b',
+      display:       'flex',
+      alignItems:    'center',
+      gap:           10,
+      fontFamily:    'monospace',
+      fontSize:      12,
+      flexShrink:    0,
+    }}>
+      <span style={{ color: '#64748b' }}>Behavior:</span>
+      <select
+        value={behaviorName}
+        onChange={e => onBehaviorChange?.(e.target.value)}
+        style={{
+          background:   '#1e293b',
+          color:        '#e2e8f0',
+          border:       '1px solid #334155',
+          borderRadius: 3,
+          fontSize:     12,
+          padding:      '2px 6px',
+          fontFamily:   'monospace',
+          cursor:       'pointer',
+          maxWidth:     320,
+        }}
+      >
+        {behaviorNames.map(name => (
+          <option key={name} value={name}>{name}</option>
+        ))}
+      </select>
+      <span style={{ color: '#334155', fontSize: 11 }}>
+        {rfNodes.length > 0
+          ? `${rfNodes.length} node${rfNodes.length !== 1 ? 's' : ''} · ${rfEdges.length} edge${rfEdges.length !== 1 ? 's' : ''}`
+          : ''}
+      </span>
+      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+        {(['lr', 'tb'] as const).map(d => (
+          <button
+            key={d}
+            onClick={() => setLayoutDir(d)}
+            style={{
+              background: layoutDir === d ? '#151f36' : 'transparent',
+              border: `1px solid ${layoutDir === d ? '#38bdf8' : '#2a2a3a'}`,
+              color: layoutDir === d ? '#7dd3fc' : '#6b7280',
+              borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11,
+            }}
+          >
+            {d === 'lr' ? '→ LR' : '↓ TB'}
+          </button>
+        ))}
+        <span style={{ color: '#1e3a5f', fontSize: 10, marginLeft: 4 }}>
+          Behavior · action instances + succession flows
+        </span>
+      </span>
+    </div>
+  ) : null;
+
   // ── Empty states ──────────────────────────────────────────────────────────────
 
   if (!behavior) {
-    return <div className="behavior-placeholder">Waiting for parser-service response…</div>;
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {selectorBar}
+        <div className="behavior-placeholder" style={{ flex: 1 }}>Waiting for parser-service response…</div>
+      </div>
+    );
   }
   if (!behaviorName) {
-    return <div className="behavior-placeholder">Select a behavior from the dropdown above.</div>;
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {selectorBar}
+        <div className="behavior-placeholder" style={{ flex: 1 }}>Select a behavior from the dropdown above.</div>
+      </div>
+    );
   }
   if (rfNodes.length === 0) {
     return (
-      <div className="behavior-placeholder">
-        No action instances found in <em>{behaviorName}</em>.
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+        {selectorBar}
+        <div className="behavior-placeholder" style={{ flex: 1 }}>
+          No action instances found in <em>{behaviorName}</em>.
+        </div>
       </div>
     );
   }
@@ -384,17 +594,28 @@ export default function OfficialBehaviorView({ behavior, behaviorName, onSelect 
   // ── Graph ──────────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
-      <ReactFlow
-        nodes={rfNodes}
-        edges={rfEdges}
-        onNodeClick={handleNodeClick}
-        fitView
-        fitViewOptions={{ padding: 0.2 }}
-      >
-        <Background color="#1a2a3a" gap={24} />
-        <Controls />
-      </ReactFlow>
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {selectorBar}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <ReactFlow
+          nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
+          edges={rfEdges}
+          onNodeClick={handleNodeClick}
+          onNodesChange={handleNodesChange}
+          onInit={inst => { rfInstanceRef.current = inst as ReturnType<typeof useReactFlow>; }}
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          nodesDraggable={!fitMode}
+          panOnDrag={!fitMode}
+          zoomOnScroll={!fitMode}
+          zoomOnPinch={!fitMode}
+          zoomOnDoubleClick={!fitMode}
+        >
+          <Background color="#1a2a3a" gap={24} />
+          <Controls showFitView={false} />
+          <FitPanel padding={0.2} active={fitMode} onToggle={() => setFitMode(v => !v)} />
+        </ReactFlow>
+      </div>
     </div>
   );
 }
