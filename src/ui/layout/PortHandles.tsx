@@ -1,0 +1,260 @@
+/**
+ * PortHandles — shared port boundary renderer used by StructureView and
+ * StructuralWiringView. Renders per-port Handle squares on the node boundary
+ * and absolutely-positioned port labels at matching vertical positions.
+ */
+
+import { Fragment } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { Handle, Position } from '@xyflow/react';
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+export interface PortDisplay {
+  id:        string;
+  label:     string;
+  direction: string;
+  portType?: string;
+  /** Explicit glyph to render inside the handle square; overrides portArrowGlyph. */
+  glyph?: string;
+  /** Override CSS for the handle square (merged over the default sq style). */
+  squareStyle?: CSSProperties;
+  /** Custom SVG/React content to render inside the handle square; takes precedence over glyph. */
+  svgContent?: ReactNode;
+  /** Override CSS merged over the computed label style (e.g. to reposition for a specific port). */
+  labelStyle?: CSSProperties;
+  /** Force left (target) handle visible; overrides direction-based and showBothHandles prop. */
+  showLeft?:  boolean;
+  /** Force right (source) handle visible; overrides direction-based and showBothHandles prop. */
+  showRight?: boolean;
+}
+
+// ── Shared boundary-port visual constants ─────────────────────────────────────
+//
+// One color for every port square+label in both General and Interconnection views.
+// Import PORT_MARKER_COLOR and makeBoundaryPortDisplay from this file rather than
+// duplicating the style logic in each view.
+
+export const PORT_MARKER_COLOR = '#7dd3fc';
+
+function portMarkerSvg(direction: string): ReactNode {
+  const c = PORT_MARKER_COLOR;
+  if (direction === 'inout') {
+    return (
+      <svg width="10" height="8" viewBox="0 0 10 8" fill="none"
+        style={{ display: 'block', pointerEvents: 'none' }}>
+        <path d="M0.5,4 L9.5,4 M7,2 L9.5,4 L7,6 M3,2 L0.5,4 L3,6"
+          stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (direction === 'in' || direction === 'out') {
+    return (
+      <svg width="8" height="8" viewBox="0 0 8 8" fill="none"
+        style={{ display: 'block', pointerEvents: 'none' }}>
+        <path d="M0.5,4 L6.5,4 M4.5,2 L6.5,4 L4.5,6"
+          stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  return null; // unknown → square with no marker
+}
+
+/**
+ * Resolve port direction from an explicit value, falling back to name
+ * heuristics when the direction is absent (e.g. untyped ports in official mode).
+ * Shared by both General and Interconnection views.
+ */
+export function resolvePortDirection(name: string, direction: string): string {
+  if (direction) return direction;
+  if (name.endsWith('In') || /In\d+$/.test(name)) return 'in';
+  if (name.endsWith('Out') || /Out\d+$/.test(name)) return 'out';
+  if (name.startsWith('from_')) return 'in';
+  if (name.startsWith('to_'))   return 'out';
+  return '';
+}
+
+/**
+ * Build a PortDisplay that renders as a transparent boundary square with an
+ * SVG arrow and a uniformly-colored label — used by both General and
+ * Interconnection views so their port visuals stay in sync.
+ *
+ * When `direction` is empty the label is used as a name-heuristic fallback
+ * (via resolvePortDirection) so untyped ports still get an arrow.
+ */
+export function makeBoundaryPortDisplay(
+  id:        string,
+  label:     string,
+  direction: string,
+  portType:  string,
+): PortDisplay {
+  direction = resolvePortDirection(label, direction);
+  const isOut = direction === 'out';
+  return {
+    id, label, direction, portType,
+    squareStyle: {
+      background: 'transparent',
+      border:     `1.5px solid ${PORT_MARKER_COLOR}`,
+      ...(isOut ? { right: -6 } : { left: -6 }),
+      zIndex:     20,
+    },
+    labelStyle: {
+      ...(isOut ? { right: -18 } : { left: -18 }),
+      color: PORT_MARKER_COLOR,
+    },
+    svgContent: portMarkerSvg(direction),
+  };
+}
+
+// ── Direction utilities ────────────────────────────────────────────────────────
+
+const DIR_HANDLE_COLORS: Record<string, string> = {
+  in:    '#7dd3fc',
+  out:   '#fbbf24',
+  inout: '#c084fc',
+};
+
+export function portHandleColor(d: string): string {
+  return DIR_HANDLE_COLORS[d] ?? '#94a3b8';
+}
+
+export function portArrowGlyph(d: string, isLR: boolean): string {
+  if (d === 'inout') return isLR ? '↔' : '↕';
+  if (d === 'in')    return isLR ? '→' : '↓';
+  if (d === 'out')   return isLR ? '→' : '↓';
+  return '●';
+}
+
+// ── PortHandles component ─────────────────────────────────────────────────────
+
+interface PortHandlesProps {
+  ports:             PortDisplay[];
+  isLR:              boolean;
+  sourcePos:         Position;
+  targetPos:         Position;
+  nodeH:             number;        // total node height (px) — used to distribute handles
+  portAreaTop?:      number;        // px offset where port area starts (default 48)
+  onPortClick?:      (port: PortDisplay, e: React.MouseEvent) => void;
+  /** When true, both source and target handles are always visible so
+   *  edges can attach to either side regardless of port direction. */
+  showBothHandles?:  boolean;
+}
+
+export function PortHandles(props: PortHandlesProps) {
+  const { ports, isLR, sourcePos, targetPos, nodeH, onPortClick } = props;
+  const portAreaTop    = props.portAreaTop ?? 48;
+  const showBothHandles = props.showBothHandles ?? false;
+
+  return (
+    <>
+      {ports.map((p, i) => {
+        // Distribute handles within the port area (below the header).
+        // Use pixel top so handle and label always align regardless of actual node height.
+        const topPx = portAreaTop + ((i + 1) / (ports.length + 1)) * (nodeH - portAreaTop);
+
+        const d     = p.direction;
+        const color = portHandleColor(d);
+        const arrow = p.glyph !== undefined ? p.glyph : portArrowGlyph(d, isLR);
+
+        // Visibility: left handle = target (in/inout/''); right handle = source (out/inout).
+        // Per-port showLeft/showRight take priority over showBothHandles and direction defaults,
+        // allowing the caller to show exactly the sides where real edges connect.
+        const showL = p.showLeft  !== undefined ? p.showLeft
+                    : showBothHandles || d !== 'out';
+        const showR = p.showRight !== undefined ? p.showRight
+                    : showBothHandles || (d !== 'in' && d !== '');
+
+        // Strip left/right from squareStyle — those conflict with React Flow's class-based
+        // handle positioning (`.react-flow__handle-left` uses `left:0; transform:translate(-50%,-50%)`
+        // and vice versa for right). We set position explicitly per-side below.
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { left: _sl, right: _sr, ...squareVisual } = p.squareStyle ?? {};
+
+        const sqBase: CSSProperties = {
+          width: 12, height: 12,
+          background: color, border: '1.5px solid rgba(0,0,0,0.55)',
+          borderRadius: 2,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 6.5, color: 'rgba(0,0,0,0.75)', lineHeight: 1, cursor: 'default',
+          ...squareVisual,
+        };
+        // Override RF class transform so the handle center lands ±6px outside the boundary.
+        // left: -12 → center at -6px (6px left of boundary)
+        // right: -12 → center at containerWidth+6px (6px right of boundary)
+        const sqL:   CSSProperties = { ...sqBase,  top: topPx, left:  -12, transform: 'translateY(-50%)' };
+        const sqR:   CSSProperties = { ...sqBase,  top: topPx, right: -12, transform: 'translateY(-50%)' };
+        const hideL: CSSProperties = { top: topPx, left:  -12, width: 12, height: 12, opacity: 0, pointerEvents: 'none', transform: 'translateY(-50%)' };
+        const hideR: CSSProperties = { top: topPx, right: -12, width: 12, height: 12, opacity: 0, pointerEvents: 'none', transform: 'translateY(-50%)' };
+
+        // Labels are positioned OUTSIDE the node boundary so they never overlap
+        // items/actions content. The node must have overflow: visible.
+        const labelStyle: CSSProperties = {
+          position:  'absolute',
+          fontSize:   9,
+          color,
+          pointerEvents: onPortClick ? 'auto' : 'none',
+          cursor:     onPortClick ? 'pointer' : 'default',
+          whiteSpace: 'nowrap',
+          zIndex:     10,
+          ...(d === 'out'
+            ? { right: -6, top: topPx, transform: 'translate(100%, -50%)' }
+            : { left:  -6, top: topPx, transform: 'translate(-100%, -50%)' }
+          ),
+          ...p.labelStyle,
+        };
+
+        return (
+          <Fragment key={p.id}>
+            {/* Target handle (left/top) */}
+            <Handle
+              type="target"
+              position={targetPos}
+              id={`port-${p.id}`}
+              style={showL ? sqL : hideL}
+            >
+              {showL && (p.svgContent !== undefined
+                ? p.svgContent
+                : (arrow && <span style={{ pointerEvents: 'none', userSelect: 'none' }}>{arrow}</span>)
+              )}
+            </Handle>
+
+            {/* Hidden source handle co-located at the left port position.
+                Used by FeatureTyping edges (sourceHandle `port-X-ft`) so that
+                React Flow finds a proper type="source" handle for routing.
+                React Flow only accepts type="source" handles as edge sources. */}
+            <Handle
+              type="source"
+              position={Position.Left}
+              id={`port-${p.id}-ft`}
+              style={hideL}
+            />
+
+            {/* Source handle (right/bottom) */}
+            <Handle
+              type="source"
+              position={sourcePos}
+              id={`port-${p.id}-out`}
+              style={showR ? sqR : hideR}
+            >
+              {showR && (p.svgContent !== undefined
+                ? p.svgContent
+                : (arrow && <span style={{ pointerEvents: 'none', userSelect: 'none' }}>{arrow}</span>)
+              )}
+            </Handle>
+
+            {/* Absolutely-positioned label aligned with handle */}
+            <div
+              style={labelStyle}
+              onClick={onPortClick ? (e) => onPortClick(p, e) : undefined}
+            >
+              {p.label}
+              {p.portType && (
+                <span style={{ opacity: 0.45, fontSize: 9 }}>: {p.portType}</span>
+              )}
+            </div>
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}

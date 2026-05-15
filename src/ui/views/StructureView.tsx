@@ -1,9 +1,10 @@
-import { useMemo, useCallback, useState, useEffect, useRef, createContext, useContext } from 'react';
-import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react';
+import { useMemo, useCallback, useState, useEffect, createContext, useContext } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 import {
-  ReactFlow, Background, Controls, MarkerType,
+  ReactFlow, Background, Controls, Panel, MarkerType,
+  BaseEdge, getSmoothStepPath,
   Handle, Position, applyNodeChanges,
-  type Node, type Edge, type NodeChange, type NodeProps,
+  type Node, type Edge, type EdgeProps, type NodeChange, type NodeProps,
 } from '@xyflow/react';
 import { PortHandles, makeBoundaryPortDisplay, type PortDisplay } from '../layout/PortHandles';
 import { fitNodeWidth, type TextRow } from '../layout/nodeSize';
@@ -14,7 +15,7 @@ import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGra
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
 import { ElkEdge } from '../layout/ElkEdge';
-import { applyElkLayout, LAYOUT_LABELS, type LayoutMode } from '../layout/graphLayout';
+import { applyElkLayout } from '../layout/graphLayout';
 
 // ── Layout direction context (consumed by custom node type) ───────────────────
 
@@ -27,13 +28,10 @@ const H_PAD_NODE   = 20;  // 2 × 10 px horizontal padding from 'padding: 6px 10
 const PART_BASE_H  = 48;
 const PORT_TOP     = 6;
 const PORT_ROW_H   = 18;
-const IFACE_H      = 40;
-const COL_GAP      = 32;
-const ROW_GAP      = 80;
 const GRP_PAD_X    = 20;
 const GRP_PAD_TOP  = 34;
 const GRP_PAD_BOT  = 18;
-const INST_GAP     = 60;
+const INST_V_GAP   = 12;   // vertical gap between stacked instances inside a group
 
 function partH(portCount: number, attrCount = 0) {
   const itemCount = portCount + attrCount;
@@ -55,6 +53,74 @@ const PAL: Record<string, Palette> = {
   occ:     { bg: '#0d2e1a', border: '#22c55e', name: '#bbf7d0', stereo: '#4ade80', sep: '#15803d', port: '#86efac' },
   scen:    { bg: '#2a1200', border: '#f97316', name: '#fed7aa', stereo: '#fb923c', sep: '#c2410c', port: '#fdba74' },
 };
+
+// ── FeatureTyping custom edge ─────────────────────────────────────────────────
+// Renders <defs> INSIDE ReactFlow's SVG (critical: url(#id) only resolves within
+// the same <svg> element in Chrome). Each edge instance writes its own marker
+// using a unique id to avoid duplicate-id conflicts across edge instances.
+
+const FT_COLOR = '#94a3b8';
+
+function FeatureTypingEdge({
+  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
+}: EdgeProps) {
+  const [edgePath] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition,
+    targetX, targetY, targetPosition,
+    borderRadius: 4,
+  });
+  const mid = `sysml-ft-${id}`;
+  return (
+    <g>
+      <defs>
+        {/* Closed arrowhead with two preceding dots — official SysML v2 FeatureTyping */}
+        <marker id={mid} viewBox="-2 -5 20 10" refX="16" refY="0"
+          markerWidth="18" markerHeight="10" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M 6,-4 L 16,0 L 6,4 Z" fill={FT_COLOR} />
+          <circle cx="2"  cy="0" r="1.8" fill={FT_COLOR} />
+          <circle cx="-1" cy="0" r="1.8" fill={FT_COLOR} />
+        </marker>
+      </defs>
+      <BaseEdge id={id} path={edgePath}
+        style={{ stroke: FT_COLOR, strokeWidth: 1 }}
+        markerEnd={`url(#${mid})`}
+      />
+    </g>
+  );
+}
+
+// ── Legend panel ──────────────────────────────────────────────────────────────
+
+function StructureLegend() {
+  const row = (color: string, label: string, marker: 'ft' | 'arrow' | 'diamond') => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+      <svg width="34" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+        <line x1="2" y1="6" x2={marker === 'ft' ? 18 : 26} y2="6" stroke={color} strokeWidth="1.2" />
+        {marker === 'ft' && <>
+          {/* Closed arrow tip */}
+          <polygon points="34,6 22,2.5 22,9.5" fill={color} />
+          {/* Two dots */}
+          <circle cx="20" cy="6" r="1.5" fill={color} />
+          <circle cx="17" cy="6" r="1.5" fill={color} />
+        </>}
+        {marker === 'arrow' && <polygon points="32,6 26,3 26,9" fill={color} />}
+        {marker === 'diamond' && <polygon points="2,6 8,3 14,6 8,9" fill={color} />}
+      </svg>
+      <span>{label}</span>
+    </div>
+  );
+  return (
+    <div style={{
+      background: 'rgba(15,17,26,0.88)', border: '1px solid #1e2535',
+      borderRadius: 6, padding: '7px 11px', display: 'flex', flexDirection: 'column', gap: 5,
+    }}>
+      <div style={{ fontSize: 9, color: '#475569', letterSpacing: '0.5px', marginBottom: 1 }}>NOTATION</div>
+      {row(FT_COLOR,   'FeatureTyping  (usage → type)', 'ft')}
+      {row('#4ade80',  'Connection',                     'arrow')}
+      {row('#22c55e',  'Composition  (◆ at owner)',      'diamond')}
+    </div>
+  );
+}
 
 // ── Node label renderer ───────────────────────────────────────────────────────
 
@@ -100,6 +166,8 @@ function nodeWidth(stereotype: string, name: string, attrs: AttrUsageLike[], for
   return fitNodeWidth(rows, H_PAD_NODE, MIN_NODE_W);
 }
 
+// shape: 'definition' = square corners (official SysML v2 notation for defs)
+//        'usage'      = rounded corners (official SysML v2 notation for usages)
 function makePartNode(
   id: string,
   pos: { x: number; y: number },
@@ -111,9 +179,11 @@ function makePartNode(
   sel?: SelectionState,
   attrs: AttrUsageLike[] = [],
   forceWidth?: number,
+  shape: 'definition' | 'usage' = 'definition',
 ): Node {
   const w = nodeWidth(stereotype, name, attrs, forceWidth);
   const h = (ports.length > 0 || attrs.length > 0) ? partH(ports.length, attrs.length) : PART_BASE_H;
+  const radius = shape === 'usage' ? 12 : 2;
   return {
     id,
     type: 'sysmlPart',
@@ -128,7 +198,7 @@ function makePartNode(
     },
     style: {
       background: p.bg, border: `1px solid ${p.border}`,
-      borderRadius: 7, padding: '6px 10px', width: w, height: h,
+      borderRadius: radius, padding: '6px 10px', width: w, height: h,
       overflow: 'visible',
     },
     ...extra,
@@ -152,9 +222,12 @@ function SysmlPartNode({ data }: NodeProps) {
 
   return (
     <>
-      {/* Generic handles for occurrence→def edges (invisible) */}
-      <Handle type="target" position={targetPos} id="__target" style={{ opacity: 0 }} />
-      <Handle type="source" position={sourcePos} id="__source" style={{ opacity: 0 }} />
+      {/* Primary handles (right=source, left=target for LR layout) */}
+      <Handle type="target" position={targetPos}      id="__target"       style={{ opacity: 0 }} />
+      <Handle type="source" position={sourcePos}      id="__source"       style={{ opacity: 0 }} />
+      {/* Reverse handles for right-to-left "types" edges between columns */}
+      <Handle type="source" position={Position.Left}  id="__source_left"  style={{ opacity: 0 }} />
+      <Handle type="target" position={Position.Right} id="__target_right" style={{ opacity: 0 }} />
 
       {/* Per-port boundary squares + aligned labels */}
       <PortHandles
@@ -172,50 +245,33 @@ function SysmlPartNode({ data }: NodeProps) {
   );
 }
 
-// ── Row layout helper ─────────────────────────────────────────────────────────
+// ── Composition-group container node (needs left/right handles for col edges) ─
 
-type Pos = { x: number; y: number };
-
-/** Centre a row of nodes around x = 0.  widths[i] is the computed width of names[i]. */
-function centeredRow(names: string[], y: number, widths?: number[]): Map<string, Pos> {
-  const ws    = widths ?? names.map(() => MIN_NODE_W);
-  const total = ws.reduce((s, w) => s + w, 0) + Math.max(0, names.length - 1) * COL_GAP;
-  const map   = new Map<string, Pos>();
-  let x = -(total / 2);
-  for (let i = 0; i < names.length; i++) {
-    map.set(names[i], { x, y });
-    x += ws[i] + COL_GAP;
-  }
-  return map;
+function SysmlGroupNode({ data }: NodeProps) {
+  return (
+    <>
+      <Handle type="source" position={Position.Left}  id="__source_left"  style={{ opacity: 0 }} />
+      <Handle type="target" position={Position.Right} id="__target_right" style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} id="__source"       style={{ opacity: 0 }} />
+      <Handle type="target" position={Position.Left}  id="__target"       style={{ opacity: 0 }} />
+      {data['label'] as React.ReactNode}
+    </>
+  );
 }
+
+// ── Column layout constants ───────────────────────────────────────────────────
+
+const COL_H_GAP   = 220;  // horizontal gap between the three columns
+const V_STACK_GAP = 24;   // vertical gap between nodes within a column
+const COL_START   = 60;   // left edge of column 1
+
 
 // ── Selection highlight colours ───────────────────────────────────────────────
 
 const SEL_BORDER = '#89b4fa';
 const SEL_GLOW   = '0 0 10px 2px #89b4fa33';
 
-// ── Layout toolbar styles ─────────────────────────────────────────────────────
 
-const TOOLBAR: CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: 6,
-  padding: '5px 10px', borderBottom: '1px solid #1a1a2e',
-  background: '#06060f', flexShrink: 0, flexWrap: 'wrap',
-};
-
-function modeBtn(active: boolean): CSSProperties {
-  return {
-    background: active ? '#151f36' : 'transparent',
-    border: `1px solid ${active ? '#3b82f6' : '#2a2a3a'}`,
-    color: active ? '#93c5fd' : '#6b7280',
-    borderRadius: 4, padding: '2px 8px', cursor: 'pointer', fontSize: 11,
-  };
-}
-
-const actionBtn: CSSProperties = {
-  background: '#111827', border: '1px solid #2a2a3a',
-  color: '#9ca3af', borderRadius: 4, padding: '2px 9px',
-  cursor: 'pointer', fontSize: 11, marginLeft: 4,
-};
 
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -228,21 +284,13 @@ interface Props {
 }
 
 export default function StructureView({ result, graph, selection, onSelect }: Props) {
-  const [layoutMode,     setLayoutMode]     = useState<LayoutMode>('lr');
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
   const [displayEdges,   setDisplayEdges]   = useState<Edge[]>([]);
-  const [savedPositions, setSavedPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
-  const [layoutKey,      setLayoutKey]      = useState(0);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
-  const [fitMode,        setFitMode]        = useState(false);
-
-  // Always-current ref so useEffect can read savedPositions without it as a dep
-  const savedPositionsRef = useRef(savedPositions);
-  savedPositionsRef.current = savedPositions;
 
   // nodeTypes / edgeTypes are stable references
-  const nodeTypes = useMemo(() => ({ sysmlPart: SysmlPartNode }), []);
-  const edgeTypes = useMemo(() => ({ elkEdge: ElkEdge }), []);
+  const nodeTypes = useMemo(() => ({ sysmlPart: SysmlPartNode, sysmlGroup: SysmlGroupNode }), []);
+  const edgeTypes = useMemo(() => ({ elkEdge: ElkEdge, featureTypingEdge: FeatureTypingEdge }), []);
 
   // ── Pass 1: manual layout (recomputes when model changes) ─────────────────
   const { baseNodes, baseEdges } = useMemo(() => {
@@ -355,12 +403,13 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
 
     // Combined composition blocks: partDef groups + composed PartUsage blocks.
     // Standalone partUsages (no child instances) are rendered separately below.
-    type CompBlock = { name: string; line: number; body: VizNode[]; stereotype: string };
+    type CompBlock = { name: string; line: number; body: VizNode[]; stereotype: string; isDefinition: boolean };
     const allComposed: CompBlock[] = [
-      ...composedDefs.map(n => ({ name: n.name, line: n.line, body: n.body, stereotype: '«part def»' })),
+      ...composedDefs.map(n => ({ name: n.name, line: n.line, body: n.body, stereotype: '«part def»', isDefinition: true })),
       ...composedUsages.map(n => ({
         name: n.name, line: n.line, body: n.body,
         stereotype: n.type ? `«part» : ${n.type}` : '«part»',
+        isDefinition: false,
       })),
     ];
 
@@ -368,202 +417,201 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     const legacyStructOccs  = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias'));
     const scenarios         = allOccs.filter(o => !o.body.some(b => b.kind === 'partAlias'));
 
-    let curY = 0;
+    // ── Pre-compute column X positions ────────────────────────────────────────
+    // Column 1 (left):   port defs + interface defs
+    // Column 2 (middle): part defs + attr defs + item defs + behavior defs
+    // Column 3 (right):  composition groups + part usages + occurrence defs
+    const col1MaxW = Math.max(MIN_NODE_W,
+      ...ifaceDefs.map(n => nodeWidth('«interface def»', n.name, [])),
+      ...portDefs.map(n  => nodeWidth('«port def»',       n.name, [])),
+    );
+    const col2MaxW = Math.max(MIN_NODE_W,
+      ...attrDefs.map(n => {
+        const a = n.body.filter((b): b is AU => b.kind === 'attributeUsage');
+        return nodeWidth('«attribute def»', n.name, a);
+      }),
+      ...typePartDefs.map(n => {
+        const p = n.body.filter((b): b is PortLike => b.kind === 'port');
+        const a = n.body.filter((b): b is AU => b.kind === 'attributeUsage');
+        return nodeWidth('«part def»', n.name, a, p.length > 0 ? undefined : undefined);
+      }),
+      ...itemDefs.map(n  => nodeWidth('«item def»',   n.name, [])),
+      ...behaviorDefs.map(n => nodeWidth('«action def»', n.name, [])),
+    );
+    const col3MaxW = Math.max(MIN_NODE_W,
+      ...standaloneUsages.map(n => {
+        const stereo = n.type ? `«part» : ${n.type}` : '«part»';
+        return nodeWidth(stereo, n.name, []);
+      }),
+      ...allComposed.map(compDef => {
+        const aliases = compDef.body.filter((b): b is PA => b.kind === 'partAlias');
+        const maxInstW = aliases.reduce((m, alias) => {
+          const stereo = `${alias.name} : ${alias.type}`;
+          return Math.max(m, nodeWidth(stereo, '', []), MIN_NODE_W);
+        }, MIN_NODE_W);
+        return 2 * GRP_PAD_X + maxInstW;
+      }),
+      ...legacyStructOccs.map(n => nodeWidth('«occurrence def»', n.name, [])),
+      ...scenarios.map(n => nodeWidth('«scenario»', n.name, [])),
+    );
+    const COL1_X = COL_START;
+    const COL2_X = COL1_X + col1MaxW + COL_H_GAP;
+    const COL3_X = COL2_X + col2MaxW + COL_H_GAP;
+    // Center X of each column — nodes are placed at (centerX − nodeWidth/2)
+    const C1CX = Math.round(COL1_X + col1MaxW / 2);
+    const C2CX = Math.round(COL2_X + col2MaxW / 2);
+    const C3CX = Math.round(COL3_X + col3MaxW / 2);
+    console.log('[sysml-viz] col widths', { col1MaxW, col2MaxW, col3MaxW, C1CX, C2CX, C3CX });
 
-    // Section 0: Interface defs (purple) and Port defs (indigo) — connection-point types
-    // Both share the same row; IDs are prefixed to avoid name collisions.
-    const ifaceGid = gid('InterfaceDefinition', 'ConnectionDefinition');
+    let col1Y = 60;   // running Y for column 1
+    let col2Y = 60;   // running Y for column 2
+    let col3Y = 60;   // running Y for column 3
+
+    // ── Column 1 ─ Interface defs (purple) and Port defs (indigo) ─────────────
+    const ifaceGid   = gid('InterfaceDefinition', 'ConnectionDefinition');
     const portDefGid = gid('PortDefinition');
     const connSection0 = [
       ...ifaceDefs.map(n => ({
-        nodeId:  `iface-${n.name}`,
-        name:    n.name,
-        stereo:  '«interface def»',
-        palette: PAL.iface,
-        sel:     { id: `iface-${n.name}`,   type: 'interface' as const, name: n.name, line: n.line,
-          ...(ifaceGid(n.name) ? { extra: { graphId: ifaceGid(n.name)! } } : {}),
-        },
+        nodeId: `iface-${n.name}`, name: n.name, stereo: '«interface def»', palette: PAL.iface,
+        sel: { id: `iface-${n.name}`, type: 'interface' as const, name: n.name, line: n.line,
+          ...(ifaceGid(n.name) ? { extra: { graphId: ifaceGid(n.name)! } } : {}) },
       })),
       ...portDefs.map(n => ({
-        nodeId:  `portdef-${n.name}`,
-        name:    n.name,
-        stereo:  '«port def»',
-        palette: PAL.portDef,
-        sel:     { id: `portdef-${n.name}`, type: 'port'      as const, name: n.name, line: n.line,
-          ...(portDefGid(n.name) ? { extra: { graphId: portDefGid(n.name)! } } : {}),
-        },
+        nodeId: `portdef-${n.name}`, name: n.name, stereo: '«port def»', palette: PAL.portDef,
+        sel: { id: `portdef-${n.name}`, type: 'port' as const, name: n.name, line: n.line,
+          ...(portDefGid(n.name) ? { extra: { graphId: portDefGid(n.name)! } } : {}) },
       })),
     ];
-    if (connSection0.length > 0) {
-      const sec0Widths = connSection0.map(c => nodeWidth(c.stereo, c.name, []));
-      const pos = centeredRow(connSection0.map(c => c.nodeId), curY, sec0Widths);
-      for (const c of connSection0) {
-        baseNodes.push(makePartNode(
-          c.nodeId, pos.get(c.nodeId)!, c.stereo, c.name, [], c.palette,
-          undefined, c.sel,
-        ));
-        regGid(c.sel.extra?.graphId as string | undefined, c.nodeId);
-      }
-      curY += IFACE_H + ROW_GAP;
+    for (const c of connSection0) {
+      const w1 = nodeWidth(c.stereo, c.name, []);
+      baseNodes.push(makePartNode(c.nodeId, { x: C1CX - w1 / 2, y: col1Y }, c.stereo, c.name, [], c.palette, undefined, c.sel, [], w1));
+      regGid(c.sel.extra?.graphId as string | undefined, c.nodeId);
+      col1Y += PART_BASE_H + V_STACK_GAP;
     }
 
-    // Section 0.5: Attribute definitions — «attribute def» boxes (cyan palette)
+    // ── Column 2 ─ Attribute definitions ──────────────────────────────────────
     const attrDefGid = gid('AttributeDefinition');
-    if (attrDefs.length > 0) {
-      const attrDefMeta = attrDefs.map(n => {
-        const attrs = n.body.filter((b): b is AU => b.kind === 'attributeUsage');
-        return { n, attrs, h: partH(0, attrs.length), w: nodeWidth('«attribute def»', n.name, attrs) };
-      });
-      const maxH = attrDefMeta.reduce((m, d) => Math.max(m, d.h), PART_BASE_H);
-      const pos = centeredRow(attrDefs.map(n => n.name), curY, attrDefMeta.map(m => m.w));
-      for (const { n, attrs } of attrDefMeta) {
-        const gidVal = attrDefGid(n.name);
-        const nodeId = `attrdef-${n.name}`;
-        baseNodes.push(makePartNode(
-          nodeId, pos.get(n.name)!, '«attribute def»', n.name, [], PAL.attr,
-          undefined,
-          { id: nodeId, type: 'part', name: n.name, line: n.line,
-            ...(gidVal ? { extra: { graphId: gidVal } } : {}),
-          },
-          attrs,
-        ));
-        regGid(gidVal, nodeId);
-      }
-      curY += maxH + ROW_GAP;
+    for (const n of attrDefs) {
+      const attrs  = n.body.filter((b): b is AU => b.kind === 'attributeUsage');
+      const h      = partH(0, attrs.length);
+      const nodeId = `attrdef-${n.name}`;
+      const gidVal = attrDefGid(n.name);
+      const w2a    = nodeWidth('«attribute def»', n.name, attrs);
+      baseNodes.push(makePartNode(
+        nodeId, { x: C2CX - w2a / 2, y: col2Y }, '«attribute def»', n.name, [], PAL.attr, undefined,
+        { id: nodeId, type: 'part', name: n.name, line: n.line, ...(gidVal ? { extra: { graphId: gidVal } } : {}) },
+        attrs,
+        w2a,
+      ));
+      regGid(gidVal, nodeId);
+      col2Y += h + V_STACK_GAP;
     }
 
-    // Section 1: Type-library defs — part defs (blue) and item defs (amber)
-    // Item defs are rendered alongside part defs since both are structural type references.
+    // ── Column 2 ─ Part defs (blue) and Item defs (amber) ─────────────────────
     const partDefGid = gid('PartDefinition');
     const itemDefGid = gid('ItemDefinition');
     type Section1Entry = { nodeId: string; stereo: string; name: string; ports: PortLike[]; attrs: AU[]; palette: Palette; sel: NonNullable<Parameters<typeof makePartNode>[7]> };
     const section1Entries: Section1Entry[] = [
       ...typePartDefs.map(n => ({
-        nodeId: `def-${n.name}`,
-        stereo: '«part def»',
-        name:   n.name,
-        ports:  n.body.filter((b): b is PortLike => b.kind === 'port'),
-        attrs:  n.body.filter((b): b is AU => b.kind === 'attributeUsage'),
+        nodeId: `def-${n.name}`, stereo: '«part def»', name: n.name,
+        ports: n.body.filter((b): b is PortLike => b.kind === 'port'),
+        attrs: n.body.filter((b): b is AU => b.kind === 'attributeUsage'),
         palette: PAL.type,
         sel: { id: `def-${n.name}`, type: 'part' as const, name: n.name, line: n.line,
-          ...(partDefGid(n.name) ? { extra: { graphId: partDefGid(n.name)! } } : {}),
-        },
+          ...(partDefGid(n.name) ? { extra: { graphId: partDefGid(n.name)! } } : {}) },
       })),
       ...itemDefs.map(n => ({
-        nodeId: `itemdef-${n.name}`,
-        stereo: '«item def»',
-        name:   n.name,
-        ports:  [] as PortLike[],
-        attrs:  [] as AU[],
-        palette: PAL.item,
+        nodeId: `itemdef-${n.name}`, stereo: '«item def»', name: n.name,
+        ports: [] as PortLike[], attrs: [] as AU[], palette: PAL.item,
         sel: { id: `itemdef-${n.name}`, type: 'part' as const, name: n.name, line: n.line,
-          ...(itemDefGid(n.name) ? { extra: { graphId: itemDefGid(n.name)! } } : {}),
-        },
+          ...(itemDefGid(n.name) ? { extra: { graphId: itemDefGid(n.name)! } } : {}) },
       })),
     ];
-    if (section1Entries.length > 0) {
-      let maxH = PART_BASE_H;
-      const sec1Widths = section1Entries.map(e => nodeWidth(e.stereo, e.name, e.attrs));
-      const pos = centeredRow(section1Entries.map(e => e.nodeId), curY, sec1Widths);
-      for (const e of section1Entries) {
-        const h = partH(e.ports.length, e.attrs.length);
-        maxH = Math.max(maxH, h);
-        baseNodes.push(makePartNode(
-          e.nodeId, pos.get(e.nodeId)!, e.stereo, e.name, e.ports, e.palette,
-          undefined, e.sel, e.attrs,
-        ));
-        regGid(e.sel.extra?.graphId as string | undefined, e.nodeId);
+    for (const e of section1Entries) {
+      const h   = partH(e.ports.length, e.attrs.length);
+      const w2e = nodeWidth(e.stereo, e.name, e.attrs);
+      baseNodes.push(makePartNode(e.nodeId, { x: C2CX - w2e / 2, y: col2Y }, e.stereo, e.name, e.ports, e.palette, undefined, e.sel, e.attrs, w2e));
+      regGid(e.sel.extra?.graphId as string | undefined, e.nodeId);
+      col2Y += h + V_STACK_GAP;
+
+      // FeatureTyping connectors: each port on the part def → its portDef/iface (col1).
+      // sourceHandle uses the port's own left-side handle so the edge originates at
+      // the exact port position (matching the boundary square) rather than the generic
+      // node-level handle — this makes the per-port typing relationships visually clear.
+      for (const port of e.ports) {
+        if (!port.portType) continue;
+        const targetId =
+          baseNodes.some(n => n.id === `portdef-${port.portType}`) ? `portdef-${port.portType}` :
+          baseNodes.some(n => n.id === `iface-${port.portType}`)   ? `iface-${port.portType}`   :
+          null;
+        if (!targetId) continue;
+        baseEdges.push({
+          id: `typing-port-${e.nodeId}-${port.name}->${targetId}`,
+          source: e.nodeId, target: targetId,
+          sourceHandle: `port-${port.name}-ft`, targetHandle: '__target_right',
+          type: 'featureTypingEdge',
+          zIndex: 5,
+        });
       }
-      curY += maxH + ROW_GAP;
     }
 
-    // Section 1.3: Action / behavior definitions — «action def» boxes (lime palette).
-    // ActionDefinition nodes arrive here as 'behaviorDef' kind (official adapter mapping).
-    // Rendered with «action def» stereotype so they are distinguishable from part defs.
-    // Clicking selects type:'behavior' so resolveGraphNodeId can locate the graph node.
+    // ── Column 2 ─ Action / behavior defs ─────────────────────────────────────
     const actDefGid = gid('ActionDefinition', 'BehaviorDefinition');
-    if (behaviorDefs.length > 0) {
-      const nodeIds = behaviorDefs.map(n => `actdef-${n.name}`);
-      const actWidths = behaviorDefs.map(n => nodeWidth('«action def»', n.name, []));
-      const pos = centeredRow(nodeIds, curY, actWidths);
-      let maxH = PART_BASE_H;
-      for (const n of behaviorDefs) {
-        const nodeId = `actdef-${n.name}`;
-        maxH = Math.max(maxH, PART_BASE_H);
-        const gidVal = actDefGid(n.name);
-        baseNodes.push(makePartNode(
-          nodeId,
-          pos.get(nodeId)!,
-          '«action def»',
-          n.name,
-          [],
-          PAL.actDef,
-          undefined,
-          { id: nodeId, type: 'behavior' as const, name: n.name, line: n.line,
-            ...(gidVal ? { extra: { graphId: gidVal } } : {}),
-          },
-        ));
-        regGid(gidVal, nodeId);
-      }
-      curY += maxH + ROW_GAP;
+    for (const n of behaviorDefs) {
+      const nodeId = `actdef-${n.name}`;
+      const gidVal = actDefGid(n.name);
+      const w2b    = nodeWidth('«action def»', n.name, []);
+      baseNodes.push(makePartNode(
+        nodeId, { x: C2CX - w2b / 2, y: col2Y }, '«action def»', n.name, [], PAL.actDef, undefined,
+        { id: nodeId, type: 'behavior' as const, name: n.name, line: n.line, ...(gidVal ? { extra: { graphId: gidVal } } : {}) },
+        [],
+        w2b,
+      ));
+      regGid(gidVal, nodeId);
+      col2Y += PART_BASE_H + V_STACK_GAP;
     }
 
-    // Section 1.5: Standalone part usages — package-scope "part x : Type;" declarations.
-    // Rendered as individual usage boxes (not composition groups) with «part» stereotype.
-    // Clicking reveals type context in the Inspector's Impact section (typedBy relationship).
+    // ── Column 3 ─ Standalone part usages ─────────────────────────────────────
     const partUsageGid = gid('PartUsage');
-    if (standaloneUsages.length > 0) {
-      const usageNodeIds = standaloneUsages.map(n => `usage-${n.name}`);
-      const usageWidths = standaloneUsages.map(n => nodeWidth(n.type ? `«part» : ${n.type}` : '«part»', n.name, []));
-      const pos = centeredRow(usageNodeIds, curY, usageWidths);
-      for (const n of standaloneUsages) {
-        const nodeId = `usage-${n.name}`;
-        const gidVal = partUsageGid(n.name);
-        // Enrich with ports from ContainmentGraph when available.
-        const graphPorts = getGraphPorts(gidVal);
-        baseNodes.push(makePartNode(
-          nodeId,
-          pos.get(nodeId)!,
-          n.type ? `«part» : ${n.type}` : '«part»',
-          n.name,
-          graphPorts,
-          PAL.inst,
-          undefined,
-          {
-            id: nodeId,
-            type: 'instance' as const,
-            name: n.name,
-            extra: {
-              ...(n.type ? { type: n.type } : {}),
-              parent: n.namespace,
-              ...(gidVal ? { graphId: gidVal } : {}),
-            },
-          },
-        ));
-        regGid(gidVal, nodeId);
-        // Add a dashed «typedBy» edge to the type def box if it is visible in section 1.
-        if (n.type) {
-          const typeBoxId = `def-${n.type}`;
-          if (baseNodes.some(bn => bn.id === typeBoxId)) {
-            baseEdges.push({
-              id: `usage-${n.name}->typedBy->${typeBoxId}`,
-              source: nodeId,
-              target: typeBoxId,
-              type: 'smoothstep',
-              label: ': type',
-              style: { stroke: '#22c55e', strokeWidth: 1, strokeDasharray: '5 3' },
-              labelStyle: { fontSize: 9, fill: '#4ade80', fontFamily: 'monospace' },
-              labelBgStyle: { fill: '#040f08', fillOpacity: 0.88 },
-              markerEnd: { type: MarkerType.ArrowClosed, color: '#22c55e', width: 11, height: 11 },
-              zIndex: 10,
-            });
-          }
+    for (const n of standaloneUsages) {
+      const nodeId    = `usage-${n.name}`;
+      const gidVal    = partUsageGid(n.name);
+      const graphPorts = getGraphPorts(gidVal);
+      const stereoSU  = n.type ? `«part» : ${n.type}` : '«part»';
+      const w3su      = nodeWidth(stereoSU, n.name, []);
+      baseNodes.push(makePartNode(
+        nodeId, { x: C3CX - w3su / 2, y: col3Y },
+        stereoSU, n.name, graphPorts, PAL.inst, undefined,
+        { id: nodeId, type: 'instance' as const, name: n.name,
+          extra: { ...(n.type ? { type: n.type } : {}), parent: n.namespace, ...(gidVal ? { graphId: gidVal } : {}) } },
+        [],
+        w3su,
+        'usage',
+      ));
+      regGid(gidVal, nodeId);
+      col3Y += PART_BASE_H + V_STACK_GAP;
+
+      // FeatureTyping connector: usage → definition (official SysML v2 notation)
+      if (n.type) {
+        const targetId =
+          baseNodes.some(bn => bn.id === `def-${n.type}`)      ? `def-${n.type}`      :
+          baseNodes.some(bn => bn.id === `iface-${n.type}`)    ? `iface-${n.type}`    :
+          baseNodes.some(bn => bn.id === `portdef-${n.type}`)  ? `portdef-${n.type}`  :
+          baseNodes.some(bn => bn.id === `attrdef-${n.type}`)  ? `attrdef-${n.type}`  :
+          null;
+        if (targetId) {
+          baseEdges.push({
+            id: `typing-${n.name}->${targetId}`,
+            source: nodeId, target: targetId,
+            sourceHandle: '__source_left', targetHandle: '__target_right',
+            type: 'featureTypingEdge',
+            zIndex: 5,
+          });
         }
       }
-      curY += PART_BASE_H + ROW_GAP;
     }
 
-    // Section 2: Composed part defs (groups) + named PartUsage blocks
+    // ── Column 3 ─ Composed part defs (groups) + named PartUsage blocks ────────
     const grpPartDefGid = gid('PartDefinition', 'PartUsage');
     for (const compDef of allComposed) {
       const aliases     = compDef.body.filter((b): b is PA => b.kind === 'partAlias');
@@ -573,25 +621,21 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         const typeDef = partDefMap.get(alias.type);
         const ports   = typeDef ? typeDef.body.filter((b): b is PortLike => b.kind === 'port') : [];
         const stereo  = `${alias.name} : ${alias.type}`;
-        // Each instance gets its own content-fitted width — no forced uniformity.
         const instW   = Math.max(nodeWidth(stereo, '', [], undefined), MIN_NODE_W);
         return { alias, ports, h: partH(ports.length), instW };
       });
-      const maxInstH = instanceMeta.reduce((m, d) => Math.max(m, d.h), PART_BASE_H);
+      const maxInstW = instanceMeta.reduce((m, d) => Math.max(m, d.instW), MIN_NODE_W);
+      const nInst    = aliases.length;
+      const groupW   = 2 * GRP_PAD_X + maxInstW;
+      const groupH   = GRP_PAD_TOP + instanceMeta.reduce((s, m) => s + m.h, 0) + Math.max(0, nInst - 1) * INST_V_GAP + GRP_PAD_BOT;
 
-      const nInst  = aliases.length;
-      const groupW = 2 * GRP_PAD_X
-        + instanceMeta.reduce((s, m) => s + m.instW, 0)
-        + Math.max(0, nInst - 1) * INST_GAP;
-      const groupH = GRP_PAD_TOP + maxInstH + GRP_PAD_BOT;
-      const groupX = -(groupW / 2);
-
-      const grpGid = grpPartDefGid(compDef.name);
+      const grpGid  = grpPartDefGid(compDef.name);
       const grpRfId = `grp-${compDef.name}`;
       regGid(grpGid, grpRfId);
       baseNodes.push({
         id: grpRfId,
-        position: { x: groupX, y: curY },
+        type: 'sysmlGroup',
+        position: { x: C3CX - groupW / 2, y: col3Y },
         className: 'comp-group',
         data: {
           label: `${compDef.stereotype}  ${compDef.name}`,
@@ -601,7 +645,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         },
         style: {
           width: groupW, height: groupH,
-          background: '#040f08', border: '1.5px solid #22c55e', borderRadius: 10,
+          background: '#040f08', border: '1.5px solid #22c55e',
+          borderRadius: compDef.isDefinition ? 2 : 12,
           fontSize: 10.5, color: '#4ade80', fontStyle: 'italic',
           display: 'flex', alignItems: 'flex-start', padding: '8px 12px',
           cursor: 'pointer',
@@ -611,42 +656,36 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         zIndex: -1,
       });
 
-      let runX = GRP_PAD_X;
+      let runY = GRP_PAD_TOP;
       for (const { alias, ports, h, instW: iW } of instanceMeta) {
         const instGid  = partUsageGid(alias.name);
         const instRfId = `inst-${compDef.name}-${alias.name}`;
         regGid(instGid, instRfId);
-        baseNodes.push(
-          makePartNode(
-            instRfId,
-            { x: runX, y: GRP_PAD_TOP },
-            `${alias.name} : ${alias.type}`,
-            '',
-            ports,
-            PAL.inst,
-            {
-              parentId: `grp-${compDef.name}`,
-              extent: 'parent',
-              style: {
-                background: PAL.inst.bg, border: `1px solid ${PAL.inst.border}`,
-                borderRadius: 7, padding: '6px 10px', width: iW, height: h,
-              },
-            },
-            {
-              id: `inst-${compDef.name}-${alias.name}`,
-              type: 'instance',
-              name: alias.name,
-              line: alias.line,
-              extra: { type: alias.type, parent: compDef.name, ...(instGid ? { graphId: instGid } : {}) },
-            },
-          ),
-        );
-        runX += iW + INST_GAP;
+        const instX = GRP_PAD_X + Math.round((maxInstW - iW) / 2);
+        baseNodes.push(makePartNode(
+          instRfId, { x: instX, y: runY },
+          `${alias.name} : ${alias.type}`, '', ports, PAL.inst,
+          { parentId: `grp-${compDef.name}`, extent: 'parent',
+            style: { background: PAL.inst.bg, border: `1px solid ${PAL.inst.border}`,
+              borderRadius: 12, padding: '6px 10px', width: iW, height: h } },
+          { id: `inst-${compDef.name}-${alias.name}`, type: 'instance', name: alias.name, line: alias.line,
+            extra: { type: alias.type, parent: compDef.name, ...(instGid ? { graphId: instGid } : {}) } },
+        ));
+        // FeatureTyping connector: instance usage → its type definition
+        if (alias.type && baseNodes.some(bn => bn.id === `def-${alias.type}`)) {
+          baseEdges.push({
+            id: `typing-inst-${compDef.name}-${alias.name}`,
+            source: instRfId, target: `def-${alias.type}`,
+            sourceHandle: '__source_left', targetHandle: '__target_right',
+            type: 'featureTypingEdge',
+            zIndex: 5,
+          });
+        }
+        runY += h + INST_V_GAP;
       }
 
       for (const conn of connections) {
         const edgeId = `conn-${compDef.name}-${conn.fromPart}.${conn.fromPort}-${conn.toPart}.${conn.toPort}`;
-
         baseEdges.push({
           id: edgeId,
           source: `inst-${compDef.name}-${conn.fromPart}`,
@@ -654,7 +693,6 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           sourceHandle: conn.fromPort ? `port-${conn.fromPort}-out` : '__source',
           targetHandle: conn.toPort   ? `port-${conn.toPort}`      : '__target',
           type: 'straight',
-          // Show connection type as label when declared; omit label for anonymous connects.
           ...(conn.connType ? {
             label: conn.connType,
             labelStyle:   { fontSize: 9, fill: '#4ade80', fontFamily: 'monospace' },
@@ -662,151 +700,123 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           } : {}),
           style: { stroke: '#4ade80', strokeWidth: 2 },
           markerEnd: { type: MarkerType.ArrowClosed, color: '#4ade80', width: 11, height: 11 },
-          // Sit above the group container (zIndex -1) and instance nodes (default 0)
           zIndex: 20,
           data: {
             _sel: {
-              id: edgeId,
-              type: 'connection',
+              id: edgeId, type: 'connection',
               name: conn.connType
                 ? `${conn.fromPart}.${conn.fromPort} → ${conn.toPart}.${conn.toPort} : ${conn.connType}`
                 : `${conn.fromPart}.${conn.fromPort} → ${conn.toPart}.${conn.toPort}`,
               line: conn.line,
-              extra: {
-                fromPart: conn.fromPart, fromPort: conn.fromPort,
-                toPart:   conn.toPart,   toPort:   conn.toPort,
-                parent:   compDef.name,
-                ...(conn.connType ? { connType: conn.connType } : {}),
-              },
+              extra: { fromPart: conn.fromPart, fromPort: conn.fromPort,
+                       toPart: conn.toPart, toPort: conn.toPort, parent: compDef.name,
+                       ...(conn.connType ? { connType: conn.connType } : {}) },
             } satisfies SelectionState,
           },
         });
       }
 
-      curY += groupH + ROW_GAP;
-    }
-
-    // Section 3: Legacy structural occurrenceDef
-    const occDefGid = gid('OccurrenceDefinition');
-    if (legacyStructOccs.length > 0) {
-      const typeNames = new Set(typePartDefs.map(n => n.name));
-      const occWidths = legacyStructOccs.map(n => nodeWidth('«occurrence def»', n.name, []));
-      const pos = centeredRow(legacyStructOccs.map(n => n.name), curY, occWidths);
-      for (const n of legacyStructOccs) {
-        const gidVal = occDefGid(n.name);
-        const nodeId = `occ-${n.name}`;
-        baseNodes.push(makePartNode(
-          nodeId, pos.get(n.name)!, '«occurrence def»', n.name, [], PAL.occ,
-          undefined,
-          { id: nodeId, type: 'occurrence', name: n.name, line: n.line,
-            ...(gidVal ? { extra: { graphId: gidVal } } : {}),
-          },
-        ));
-        regGid(gidVal, nodeId);
-        const seenType = new Set<string>();
-        for (const b of n.body) {
-          if (b.kind !== 'partAlias' || !typeNames.has(b.type) || seenType.has(b.type)) continue;
-          seenType.add(b.type);
-          const labels = (n.body as VizNode[])
-            .filter((x): x is Extract<VizNode,{ kind: 'partAlias' }> => x.kind === 'partAlias' && x.type === b.type)
-            .map(x => x.name);
-          baseEdges.push({
-            id: `${n.name}→${b.type}`,
-            source: `occ-${n.name}`,
-            target: `def-${b.type}`,
-            sourceHandle: '__source',
-            targetHandle: '__target',
-            label: labels.join(', '),
-            type: 'smoothstep',
-            style: { stroke: '#22c55e', strokeWidth: 1.5 },
-            labelStyle: { fontSize: 10, fill: '#86efac', fontFamily: 'monospace' },
-            labelBgStyle: { fill: '#0d2e1a', fillOpacity: 0.9 },
-            markerEnd: { type: MarkerType.ArrowClosed, color: '#22c55e', width: 16, height: 16 },
-          });
-        }
+      // FeatureTyping connectors: group node (col3) → port/interface defs (col1)
+      // for any ports declared directly on the composed part def
+      const grpPorts = compDef.body.filter((b): b is PortLike => b.kind === 'port');
+      for (const port of grpPorts) {
+        if (!port.portType) continue;
+        const targetId =
+          baseNodes.some(n => n.id === `portdef-${port.portType}`) ? `portdef-${port.portType}` :
+          baseNodes.some(n => n.id === `iface-${port.portType}`)   ? `iface-${port.portType}`   :
+          null;
+        if (!targetId) continue;
+        baseEdges.push({
+          id: `typing-port-${grpRfId}-${port.name}->${targetId}`,
+          source: grpRfId, target: targetId,
+          sourceHandle: '__source_left', targetHandle: '__target_right',
+          type: 'featureTypingEdge',
+          zIndex: 5,
+        });
       }
-      curY += PART_BASE_H + ROW_GAP;
+
+      col3Y += groupH + V_STACK_GAP;
     }
 
-    // Section 4: Behavioral scenarios
-    if (scenarios.length > 0) {
-      const scenWidths = scenarios.map(n => nodeWidth('«scenario»', n.name, []));
-      const pos = centeredRow(scenarios.map(n => n.name), curY, scenWidths);
-      for (const n of scenarios) {
-        const gidVal = occDefGid(n.name);
-        const nodeId = `occ-${n.name}`;
-        baseNodes.push(makePartNode(
-          nodeId, pos.get(n.name)!, '«scenario»', n.name, [], PAL.scen,
-          undefined,
-          { id: nodeId, type: 'occurrence', name: n.name, line: n.line,
-            ...(gidVal ? { extra: { graphId: gidVal } } : {}),
-          },
-        ));
-        regGid(gidVal, nodeId);
-      }
+    // ── Column 3 ─ Legacy structural occurrenceDef ────────────────────────────
+    const occDefGid  = gid('OccurrenceDefinition');
+    for (const n of legacyStructOccs) {
+      const gidVal = occDefGid(n.name);
+      const nodeId = `occ-${n.name}`;
+      const w3occ  = nodeWidth('«occurrence def»', n.name, []);
+      baseNodes.push(makePartNode(
+        nodeId, { x: C3CX - w3occ / 2, y: col3Y }, '«occurrence def»', n.name, [], PAL.occ, undefined,
+        { id: nodeId, type: 'occurrence', name: n.name, line: n.line, ...(gidVal ? { extra: { graphId: gidVal } } : {}) },
+        [],
+        w3occ,
+      ));
+      regGid(gidVal, nodeId);
+      col3Y += PART_BASE_H + V_STACK_GAP;
     }
 
-    // ── Relationship edges from ContainmentGraph ────────────────────────────
-    // Added after all sections so graphIdToRfId is fully populated.
+    // ── Column 3 ─ Behavioral scenarios ───────────────────────────────────────
+    for (const n of scenarios) {
+      const gidVal = occDefGid(n.name);
+      const nodeId = `occ-${n.name}`;
+      const w3scen = nodeWidth('«scenario»', n.name, []);
+      baseNodes.push(makePartNode(
+        nodeId, { x: C3CX - w3scen / 2, y: col3Y }, '«scenario»', n.name, [], PAL.scen, undefined,
+        { id: nodeId, type: 'occurrence', name: n.name, line: n.line, ...(gidVal ? { extra: { graphId: gidVal } } : {}) },
+        [],
+        w3scen,
+      ));
+      regGid(gidVal, nodeId);
+      col3Y += PART_BASE_H + V_STACK_GAP;
+    }
+
+    // ── Relationship edges from ContainmentGraph ───────────────────────────────
     if (graph) {
-      // Track already-added edge IDs to avoid duplicates with Section 1.5 / Section 2.
-      const addedEdgeIds = new Set(baseEdges.map(e => e.id));
+      const addedEdgeIds   = new Set(baseEdges.map(e => e.id));
+      const addedEdgePairs = new Set(baseEdges.map(e => `${e.source}→${e.target}`));
 
-      // portGraphId → owning rfNodeId — needed to route connection edges that
-      // terminate on PortUsage children of visible parts (direct or inherited).
       const portToOwnerRfId = new Map<string, string>();
       for (const [graphId, rfId] of graphIdToRfId) {
         for (const p of getGraphNodePorts(graphId)) portToOwnerRfId.set(p.id, rfId);
       }
 
       for (const edge of graph.edges) {
-        if (edge.type === 'typedBy') {
-          const srcRf = graphIdToRfId.get(edge.source);
-          const tgtRf = graphIdToRfId.get(edge.target);
-          if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
-          // inst-* nodes are inside parent groups — their edges bypass ELK
-          // routing and draw uncontrolled curves; the type is already visible
-          // in the instance label so these edges add no information.
-          if (srcRf.startsWith('inst-') || tgtRf.startsWith('inst-')) continue;
-          const edgeId = `typedby-${edge.id}`;
-          if (addedEdgeIds.has(edgeId)) continue;
-          addedEdgeIds.add(edgeId);
-          baseEdges.push({
-            id:           edgeId,
-            source:       srcRf,
-            target:       tgtRf,
-            type:         'smoothstep',
-            label:        'types',
-            style:        { stroke: '#3b82f6', strokeWidth: 1, strokeDasharray: '5 3' },
-            labelStyle:   { fontSize: 9, fill: '#60a5fa', fontFamily: 'monospace' },
-            labelBgStyle: { fill: '#040f08', fillOpacity: 0.88 },
-            markerEnd:    { type: MarkerType.ArrowClosed, color: '#3b82f6', width: 10, height: 10 },
-            zIndex: 8,
-          });
-
-        } else if (edge.type === 'connection') {
-          // Resolve endpoints through port ownership if needed.
+        if (edge.type === 'connection') {
           const srcRf = graphIdToRfId.get(edge.source) ?? portToOwnerRfId.get(edge.source);
           const tgtRf = graphIdToRfId.get(edge.target) ?? portToOwnerRfId.get(edge.target);
           if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
-          // Skip connections involving inst-* (inside composition groups) —
-          // intra-group connections come from Section 2 already; cross-group
-          // connections bypass ELK and draw unrouted curves over other nodes.
           if (srcRf.startsWith('inst-') || tgtRf.startsWith('inst-')) continue;
-          const edgeId = `conn-graph-${edge.id}`;
-          if (addedEdgeIds.has(edgeId)) continue;
+          const edgeId  = `conn-graph-${edge.id}`;
+          const pairKey = `${srcRf}→${tgtRf}`;
+          if (addedEdgeIds.has(edgeId) || addedEdgePairs.has(pairKey)) continue;
           addedEdgeIds.add(edgeId);
+          addedEdgePairs.add(pairKey);
           baseEdges.push({
-            id:           edgeId,
-            source:       srcRf,
-            target:       tgtRf,
-            type:         'smoothstep',
-            label:        'connects',
+            id: edgeId, source: srcRf, target: tgtRf,
+            type: 'smoothstep', label: 'connects',
             style:        { stroke: '#4ade80', strokeWidth: 1.5 },
             labelStyle:   { fontSize: 9, fill: '#4ade80', fontFamily: 'monospace' },
             labelBgStyle: { fill: '#040f08', fillOpacity: 0.88 },
             markerEnd:    { type: MarkerType.ArrowClosed, color: '#4ade80', width: 10, height: 10 },
             zIndex: 8,
+          });
+        }
+
+        // FeatureTyping edges from ContainmentGraph not already rendered manually.
+        // These catch any typing relationships that the per-section manual loops missed.
+        if (edge.type === 'typedBy') {
+          const srcRf = graphIdToRfId.get(edge.source);
+          const tgtRf = graphIdToRfId.get(edge.target);
+          if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
+          const edgeId  = `typing-graph-${edge.id}`;
+          const pairKey = `${srcRf}→${tgtRf}`;
+          if (addedEdgeIds.has(edgeId) || addedEdgePairs.has(pairKey)) continue;
+          addedEdgeIds.add(edgeId);
+          addedEdgePairs.add(pairKey);
+          baseEdges.push({
+            id: edgeId, source: srcRf, target: tgtRf,
+            sourceHandle: '__source_left', targetHandle: '__target_right',
+            type: 'featureTypingEdge',
+            zIndex: 5,
           });
         }
       }
@@ -819,42 +829,30 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   useEffect(() => {
     let cancelled = false;
 
-    applyElkLayout(baseNodes, baseEdges, layoutMode).then(({ nodes: positioned, edgeRoutes }) => {
+    applyElkLayout(baseNodes, baseEdges, 'lr').then(({ nodes: positioned, edgeRoutes }) => {
       if (cancelled) return;
-      const newPositions = new Map(savedPositionsRef.current);
-      for (const n of positioned) {
-        if (!n.parentId) newPositions.set(n.id, n.position);
-      }
-      setSavedPositions(newPositions);
       // Keep explicit draggable: false on group containers; enable on all other nodes.
       setDisplayNodes(positioned.map(n => ({ ...n, draggable: n.draggable !== false })));
       // Apply ELK obstacle-avoiding routes to edges so they render as polylines
       // that stay clear of every node face, not as naive smoothstep curves.
       setDisplayEdges(baseEdges.map(e => {
         const waypoints = edgeRoutes.get(e.id);
-        if (!waypoints) return e;   // intra-group straight edges — keep as-is
+        if (!waypoints) return e;
+        // Edges with explicit handles connect at the correct node-border point via
+        // smoothstep — don't replace them with ElkEdge which would add arms.
+        if (e.sourceHandle || e.targetHandle) return e;
         return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints } };
       }));
       setAutoFitVersion(v => v + 1);
     });
 
     return () => { cancelled = true; };
-  // layoutKey triggers a re-run without savedPositions as a dep (avoids loop)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseNodes, baseEdges, layoutMode, layoutKey]);
+  }, [baseNodes, baseEdges]);
 
-  // ── Drag handler — saves positions when user finishes dragging ────────────────
+  // ── Drag handler ──────────────────────────────────────────────────────────────
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     setDisplayNodes(prev => applyNodeChanges(changes, prev));
-    for (const change of changes) {
-      if (change.type === 'position' && !change.dragging && change.position) {
-        setSavedPositions(prev => {
-          const next = new Map(prev);
-          next.set(change.id, change.position!);
-          return next;
-        });
-      }
-    }
   }, []);
 
   // ── Pass 2: apply selection highlight ────────────────────────────────────────
@@ -900,15 +898,6 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     if (s) onSelect(s);
   }, [onSelect]);
 
-  const handleAutoLayout = useCallback(() => {
-    setLayoutKey(k => k + 1);
-  }, []);
-
-  const handleResetLayout = useCallback(() => {
-    setSavedPositions(new Map());
-    setLayoutKey(k => k + 1);
-  }, []);
-
   if (rfNodes.length === 0) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b7280', fontSize: 14, gap: 8 }}>
@@ -918,49 +907,26 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     );
   }
 
-  const layoutDir: 'lr' | 'tb' = layoutMode === 'tb' ? 'tb' : 'lr';
-
   return (
-    <LayoutDirCtx.Provider value={layoutDir}>
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-        {/* Layout toolbar */}
-        <div style={TOOLBAR}>
-          <span style={{ fontSize: 11, color: '#6b7280', marginRight: 2 }}>Layout:</span>
-          {(['lr', 'tb', 'compact'] as LayoutMode[]).map(m => (
-            <button key={m} style={modeBtn(layoutMode === m)} onClick={() => setLayoutMode(m)}>
-              {LAYOUT_LABELS[m]}
-            </button>
-          ))}
-          <button style={actionBtn} onClick={handleAutoLayout} title="Re-run auto layout">
-            ↺ Auto Layout
-          </button>
-          <button style={actionBtn} onClick={handleResetLayout} title="Clear saved positions and re-run layout">
-            ⊠ Reset Layout
-          </button>
-        </div>
-
-        {/* React Flow canvas */}
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <ReactFlow
-            nodes={rfNodes}
-            edges={rfEdges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodesChange={handleNodesChange}
-            onNodeClick={handleNodeClick}
-            onEdgeClick={handleEdgeClick}
-            fitViewOptions={{ padding: 0.18 }}
-            nodesDraggable={!fitMode}
-            panOnDrag={!fitMode}
-            zoomOnScroll={!fitMode}
-            zoomOnPinch={!fitMode}
-            zoomOnDoubleClick={!fitMode}
-          >
-            <Background color="#2a2a3a" gap={24} />
-            <Controls showFitView={false} />
-            <FitPanel autoFitVersion={autoFitVersion} active={fitMode} onToggle={() => setFitMode(v => !v)} />
-          </ReactFlow>
-        </div>
+    <LayoutDirCtx.Provider value="lr">
+      <div style={{ width: '100%', height: '100%' }}>
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodesChange={handleNodesChange}
+          onNodeClick={handleNodeClick}
+          onEdgeClick={handleEdgeClick}
+          fitViewOptions={{ padding: 0.18 }}
+        >
+          <Background color="#2a2a3a" gap={24} />
+          <Controls />
+          <FitPanel autoFitVersion={autoFitVersion} />
+          <Panel position="top-right">
+            <StructureLegend />
+          </Panel>
+        </ReactFlow>
       </div>
     </LayoutDirCtx.Provider>
   );
