@@ -68,21 +68,32 @@ const PAL: Record<string, Palette> = {
 const FT_STROKE   = '#64748b';   // FeatureTyping / subclassification / subsetting
 const COMP_STROKE = '#94a3b8';   // Composition — filled diamond at owner end
 
+type WayPt = { x: number; y: number };
+
+/** Build an orthogonal polyline from ELK waypoints, or fall back to smoothstep. */
+function elkOrSmoothPath(
+  sourceX: number, sourceY: number, sourcePosition: import('@xyflow/react').Position,
+  targetX: number, targetY: number, targetPosition: import('@xyflow/react').Position,
+  waypoints: WayPt[] | undefined,
+): string {
+  if (waypoints && waypoints.length >= 2) {
+    const pts: WayPt[] = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }];
+    return `M ${pts[0].x} ${pts[0].y}` + pts.slice(1).map(p => ` L ${p.x} ${p.y}`).join('');
+  }
+  const [p] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 4 });
+  return p;
+}
+
 function FeatureTypingEdge({
-  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
+  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data,
 }: EdgeProps) {
-  const [edgePath] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition,
-    targetX, targetY, targetPosition,
-    borderRadius: 4,
-  });
+  const waypoints = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
+  const edgePath  = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
   const mid = `sysml-ft-${id}`;
   return (
     <g>
       <defs>
-        {/* SysML v2 8.2.3.6: hollow closed triangle at the type/definition end.
-            Same arrowhead for FeatureTyping, Subclassification, and Subsetting.
-            fill="none" = transparent interior (hollow), matching spec's open triangle. */}
+        {/* SysML v2 §8.2.3.6: hollow closed triangle at the type/definition end. */}
         <marker id={mid} viewBox="0 0 14 12" refX="13" refY="6"
           markerWidth="14" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
           <path d="M 0,1 L 13,6 L 0,11 Z"
@@ -98,13 +109,10 @@ function FeatureTypingEdge({
 }
 
 function CompositionEdge({
-  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
+  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data,
 }: EdgeProps) {
-  const [edgePath] = getSmoothStepPath({
-    sourceX, sourceY, sourcePosition,
-    targetX, targetY, targetPosition,
-    borderRadius: 4,
-  });
+  const waypoints = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
+  const edgePath  = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
   const mid = `sysml-comp-${id}`;
   return (
     <g>
@@ -291,7 +299,7 @@ function SysmlPartNode({ data }: NodeProps) {
 
 // ── Column layout constants ───────────────────────────────────────────────────
 
-const COL_H_GAP   = 220;  // horizontal gap between the three columns
+const COL_H_GAP   = 280;  // horizontal gap between the three columns (routing corridor)
 const V_STACK_GAP = 24;   // vertical gap between nodes within a column
 const COL_START   = 60;   // left edge of column 1
 
@@ -545,11 +553,17 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           ...(itemDefGid(n.name) ? { extra: { graphId: itemDefGid(n.name)! } } : {}) },
       })),
     ];
+    // Track each composedDef's col2 Y so instances in col3 can start at the same
+    // vertical position, shortening composition edges and reducing crossings.
+    const defCol2Y = new Map<string, number>();
+
     for (const e of section1Entries) {
       const h   = partH(e.ports.length, e.attrs.length);
       const w2e = nodeWidth(e.stereo, e.name, e.attrs);
       baseNodes.push(makePartNode(e.nodeId, { x: C2CX - w2e / 2, y: col2Y }, e.stereo, e.name, e.ports, e.palette, undefined, e.sel, e.attrs, w2e));
       regGid(e.sel.extra?.graphId as string | undefined, e.nodeId);
+      // Record the vertical center of each def so we can align col3 instances.
+      defCol2Y.set(e.name, col2Y + Math.round(h / 2));
       col2Y += h + V_STACK_GAP;
 
       // FeatureTyping connectors: each port on the part def → its portDef/iface (col1).
@@ -720,7 +734,21 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const defRfId  = `def-${n.name}`;    // already created in col2 section1
       const aliases  = n.body.filter((b): b is PA => b.kind === 'partAlias');
       const conns    = n.body.filter((b): b is CN => b.kind === 'connection');
-      if (aliases.length > 0) emitInstances(defRfId, n.name, aliases, conns);
+      if (aliases.length === 0) continue;
+      // Vertically align the instance cluster with the owning def to shorten
+      // composition edges. If standalone usages already pushed col3Y past the
+      // def's vertical position, stay at col3Y (no gap, no backwards jump).
+      const defCenterY = defCol2Y.get(n.name);
+      if (defCenterY !== undefined) {
+        const clusterH = aliases.reduce((s, alias) => {
+          const td = partDefMap.get(alias.type);
+          const p  = td ? td.body.filter((b): b is PortLike => b.kind === 'port') : [];
+          return s + partH(p.length);
+        }, 0) + (aliases.length - 1) * INST_V_GAP;
+        const alignedStart = defCenterY - Math.round(clusterH / 2);
+        if (alignedStart > col3Y) col3Y = alignedStart;
+      }
+      emitInstances(defRfId, n.name, aliases, conns);
     }
 
     // ── Column 3 ─ Composed part usages + their instances ─────────────────────
@@ -860,15 +888,20 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       if (cancelled) return;
       // Keep explicit draggable: false on group containers; enable on all other nodes.
       setDisplayNodes(positioned.map(n => ({ ...n, draggable: n.draggable !== false })));
-      // Apply ELK obstacle-avoiding routes to edges so they render as polylines
-      // that stay clear of every node face, not as naive smoothstep curves.
+      // Apply ELK obstacle-avoiding routes to ALL edges.
+      // Generic edges (no explicit handles) are switched to ElkEdge.
+      // Custom edge types (featureTypingEdge, compositionEdge) keep their type so
+      // markers render correctly, but receive waypoints in data so their component
+      // can draw the ELK-routed orthogonal polyline instead of a smoothstep curve.
+      // This ensures ELK spreads multiple edges across each node face — eliminating
+      // the overlap that occurs when several edges share the same handle anchor.
       setDisplayEdges(baseEdges.map(e => {
         const waypoints = edgeRoutes.get(e.id);
         if (!waypoints) return e;
-        // Edges with explicit handles connect at the correct node-border point via
-        // smoothstep — don't replace them with ElkEdge which would add arms.
-        if (e.sourceHandle || e.targetHandle) return e;
-        return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints } };
+        if (!e.sourceHandle && !e.targetHandle) {
+          return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints } };
+        }
+        return { ...e, data: { ...(e.data ?? {}), waypoints } };
       }));
       setAutoFitVersion(v => v + 1);
     });
