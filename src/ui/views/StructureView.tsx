@@ -87,8 +87,11 @@ function elkOrSmoothPath(
 function FeatureTypingEdge({
   id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data,
 }: EdgeProps) {
-  const waypoints = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
-  const edgePath  = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
+  const waypoints   = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
+  const highlighted = !!(data as Record<string, unknown>)?.highlighted;
+  const stroke      = highlighted ? SEL_BORDER : FT_STROKE;
+  const strokeWidth = highlighted ? 2.5 : 1;
+  const edgePath    = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
   const mid = `sysml-ft-${id}`;
   return (
     <g>
@@ -97,11 +100,11 @@ function FeatureTypingEdge({
         <marker id={mid} viewBox="0 0 14 12" refX="13" refY="6"
           markerWidth="14" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
           <path d="M 0,1 L 13,6 L 0,11 Z"
-            fill="none" stroke={FT_STROKE} strokeWidth="1.5" strokeLinejoin="round"/>
+            fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round"/>
         </marker>
       </defs>
       <BaseEdge id={id} path={edgePath}
-        style={{ stroke: FT_STROKE, strokeWidth: 1 }}
+        style={{ stroke, strokeWidth }}
         markerEnd={`url(#${mid})`}
       />
     </g>
@@ -111,23 +114,24 @@ function FeatureTypingEdge({
 function CompositionEdge({
   id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data,
 }: EdgeProps) {
-  const waypoints = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
-  const edgePath  = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
+  const waypoints   = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
+  const highlighted = !!(data as Record<string, unknown>)?.highlighted;
+  const stroke      = highlighted ? SEL_BORDER : COMP_STROKE;
+  const strokeWidth = highlighted ? 2.5 : 1;
+  const edgePath    = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
   const mid = `sysml-comp-${id}`;
   return (
     <g>
       <defs>
-        {/* SysML v2 §8.2.3.6: filled diamond at the owner (source) end.
-            refX=16 places the diamond's right tip at the path start so the diamond
-            straddles the source node boundary. */}
+        {/* SysML v2 §8.2.3.6: filled diamond at the owner (source) end. */}
         <marker id={mid} viewBox="0 0 16 12" refX="16" refY="6"
           markerWidth="16" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
           <path d="M 0,6 L 8,1.5 L 16,6 L 8,10.5 Z"
-            fill={COMP_STROKE} stroke={COMP_STROKE} strokeWidth="0.5" strokeLinejoin="round"/>
+            fill={stroke} stroke={stroke} strokeWidth="0.5" strokeLinejoin="round"/>
         </marker>
       </defs>
       <BaseEdge id={id} path={edgePath}
-        style={{ stroke: COMP_STROKE, strokeWidth: 1 }}
+        style={{ stroke, strokeWidth }}
         markerStart={`url(#${mid})`}
       />
     </g>
@@ -934,13 +938,22 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       };
     });
 
+    // Highlight edges connected to the selected node, or the directly-selected edge.
+    const selectedIsNode = nodes.some(n => n.id === selection.id);
     const rfEdges = edges.map(e => {
-      if (e.id !== selection.id) return e;
+      const isDirectlySelected = e.id === selection.id;
+      const isConnected = selectedIsNode && (e.source === selection.id || e.target === selection.id);
+      if (!isDirectlySelected && !isConnected) return e;
       return {
         ...e,
-        style: { stroke: SEL_BORDER, strokeWidth: 2.5 },
+        // Inject highlighted flag so custom edge types (FeatureTypingEdge, CompositionEdge)
+        // can switch their inline marker colors alongside the stroke.
+        data: { ...(e.data ?? {}), highlighted: true },
+        // Style override for built-in / ElkEdge types which read the style prop directly.
+        style: { ...(e.style as object), stroke: SEL_BORDER, strokeWidth: 2.5 },
         labelStyle: { ...(e.labelStyle as object), fill: SEL_BORDER },
         markerEnd: { type: MarkerType.ArrowClosed, color: SEL_BORDER, width: 14, height: 14 },
+        zIndex: (typeof e.zIndex === 'number' ? e.zIndex : 0) + 20,
       };
     });
 
