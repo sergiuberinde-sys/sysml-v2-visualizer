@@ -24,6 +24,11 @@ export function activate(context: vscode.ExtensionContext): void {
   // Captured by publishDiagnosticsOfficial via closure so it can post graph data.
   let activePanel: vscode.WebviewPanel | undefined;
 
+  // Index rebuilt on every official parse: graph-node path → 1-based source range.
+  // Populated by publishDiagnosticsOfficial; read by the revealSemanticElement handler.
+  type NodeRange = { startLine: number; endLine: number };
+  let nodeIdToRange = new Map<string, NodeRange>();
+
   // Mirrors the webview's modelingMode so prototype diagnostics are suppressed
   // in official mode without requiring a separate VS Code setting change.
   let webviewModelingMode: 'prototypeSubset' | 'officialSysMLV2' = 'prototypeSubset';
@@ -121,13 +126,35 @@ export function activate(context: vscode.ExtensionContext): void {
     diagnosticCollection.set(uri, diags);
     console.log('[sysml-visualizer] official diagnostics:', uri.toString(), diags.length);
 
-    if (activePanel && Array.isArray(result.model)) {
-      const graph    = buildContainmentGraph(result.model);
+    if (activePanel) {
       const behavior = rawRecord['behavior'] ?? null;
-      console.log('[sysml-visualizer] behavior from parser-service:',
-        JSON.stringify(behavior)?.slice(0, 300));
-      void activePanel.webview.postMessage({ type: 'updateGraph', graph, behavior });
-      console.log(`[sysml-visualizer] updateGraph sent: ${graph.nodes.length} nodes, behavior=${behavior != null}`);
+      // Prefer the pre-built graph from the parser service: it already carries
+      // startLine/endLine on every node, which the React app needs for cursor sync.
+      // Fall back to building from model[] only when the graph field is absent.
+      const serviceGraph = rawRecord['graph'];
+      const graph = serviceGraph != null
+        ? serviceGraph
+        : Array.isArray(result.model) ? buildContainmentGraph(result.model) : null;
+      if (graph != null) {
+        console.log('[sysml-visualizer] behavior from parser-service:',
+          JSON.stringify(behavior)?.slice(0, 300));
+        void activePanel.webview.postMessage({ type: 'updateGraph', graph, behavior });
+
+        // Rebuild semantic-ID → source range index for reverse (visualizer → editor) sync
+        type GNode = { id: string; startLine?: number; endLine?: number };
+        const gNodes = (typeof graph === 'object' && graph !== null && 'nodes' in graph)
+          ? (graph as { nodes: GNode[] }).nodes
+          : [];
+        nodeIdToRange = new Map();
+        for (const n of gNodes) {
+          if (n.startLine != null && n.startLine > 0) {
+            nodeIdToRange.set(n.id, { startLine: n.startLine, endLine: n.endLine ?? n.startLine });
+          }
+        }
+
+        const nodeCount = gNodes.length || '?';
+        console.log(`[sysml-visualizer] updateGraph sent: ${nodeCount} nodes, behavior=${behavior != null}, rangeIndex=${nodeIdToRange.size}`);
+      }
     }
   }
 
@@ -192,7 +219,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       const doc    = await vscode.workspace.openTextDocument(currentSysmlUri);
-      const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One });
+      const editor = await vscode.window.showTextDocument(doc, { viewColumn: getDocColumn(currentSysmlUri) });
       const pos    = new vscode.Position(0, 0);
       editor.selection = new vscode.Selection(pos, pos);
       editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
@@ -265,6 +292,8 @@ export function activate(context: vscode.ExtensionContext): void {
         text?: string;
       };
       sourceLocation?: { line: number; column: number };
+      semanticId?: string;
+      startLine?: number;
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
@@ -273,7 +302,7 @@ export function activate(context: vscode.ExtensionContext): void {
         // settings rather than its localStorage default.
         const parserServiceUrl = vscode.workspace
           .getConfiguration('sysmlVisualizer')
-          .get<string>('parserServiceUrl', 'http://localhost:9000');
+          .get<string>('parserServiceUrl', 'http://localhost:9001');
         panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl });
         console.log(`[sysml-visualizer] parserServiceUrl sent: ${parserServiceUrl}`);
 
@@ -348,7 +377,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
         const position = new vscode.Position(line - 1, (column ?? 1) - 1);
         const editor = await vscode.window.showTextDocument(doc, {
-          viewColumn: vscode.ViewColumn.One,
+          viewColumn: getDocColumn(currentSysmlUri),
           preserveFocus: true,
         });
         editor.selection = new vscode.Selection(position, position);
@@ -357,6 +386,33 @@ export function activate(context: vscode.ExtensionContext): void {
           vscode.TextEditorRevealType.InCenterIfOutsideViewport,
         );
         console.log(`[sysml-visualizer] revealSource — line ${line}, col ${column}`);
+
+      } else if (msg.type === 'revealSemanticElement') {
+        const semanticId = msg.semanticId;
+        if (!semanticId || !currentSysmlUri) return;
+        // Prefer the pre-built nodeIdToRange (populated by publishDiagnosticsOfficial).
+        // Fall back to the startLine embedded in the message when the map is empty,
+        // which happens in prototype mode where publishDiagnosticsOfficial never runs.
+        const range = nodeIdToRange.get(semanticId) ??
+          (msg.startLine ? { startLine: msg.startLine, endLine: msg.startLine } : null);
+        if (!range) {
+          console.warn(`[sysml-visualizer] revealSemanticElement: no range for "${semanticId}" (nodeIdToRange size=${nodeIdToRange.size}, no startLine fallback)`);
+          return;
+        }
+        suppressEditorSync();
+        const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
+        const startPos = new vscode.Position(range.startLine - 1, 0);
+        const endPos   = new vscode.Position(range.endLine - 1, Number.MAX_SAFE_INTEGER);
+        const editor = await vscode.window.showTextDocument(doc, {
+          viewColumn: getDocColumn(currentSysmlUri),
+          preserveFocus: true,
+        });
+        editor.selection = new vscode.Selection(startPos, startPos);
+        editor.revealRange(
+          new vscode.Range(startPos, endPos),
+          vscode.TextEditorRevealType.InCenterIfOutsideViewport,
+        );
+        console.log(`[sysml-visualizer] revealSemanticElement "${semanticId}" → L${range.startLine}–${range.endLine}`);
 
       } else if (msg.type === 'modelingModeChange') {
         const newMode = msg.mode as 'prototypeSubset' | 'officialSysMLV2';
@@ -426,7 +482,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (e.affectsConfiguration('sysmlVisualizer.parserServiceUrl')) {
         const url = vscode.workspace
           .getConfiguration('sysmlVisualizer')
-          .get<string>('parserServiceUrl', 'http://localhost:9000');
+          .get<string>('parserServiceUrl', 'http://localhost:9001');
         panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl: url });
         console.log(`[sysml-visualizer] parserServiceUrl updated: ${url}`);
       }
@@ -1117,6 +1173,18 @@ function prettyKind(kind: string): string {
 function getActiveSysmlEditor(): vscode.TextEditor | undefined {
   const editor = vscode.window.activeTextEditor;
   return editor && isSysml(editor.document) ? editor : undefined;
+}
+
+/**
+ * Returns the ViewColumn of the already-open editor showing `uri`, falling
+ * back to ViewColumn.One. Using the existing column keeps the visualizer
+ * panel visible — it avoids opening a new column beside the webview.
+ */
+function getDocColumn(uri: vscode.Uri): vscode.ViewColumn {
+  const existing = vscode.window.visibleTextEditors.find(
+    e => e.document.uri.toString() === uri.toString(),
+  );
+  return existing?.viewColumn ?? vscode.ViewColumn.One;
 }
 
 function isSysml(doc: vscode.TextDocument): boolean {
