@@ -174,6 +174,23 @@ function StructureLegend() {
         </svg>
         <span>Composition  (owner ◆ → child)</span>
       </div>
+
+      {/* Item nodes */}
+      <div style={{ marginTop: 3, fontSize: 9, color: '#475569', letterSpacing: '0.5px' }}>ITEM ELEMENTS</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="14" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <rect x="1" y="1" width="34" height="12" rx="0" fill="#1c1000" stroke="#d97706" strokeWidth="1.2" />
+          <text x="18" y="10" textAnchor="middle" fontSize="6" fill="#fbbf24" fontFamily="sans-serif">«item def»</text>
+        </svg>
+        <span>Item definition  (sharp corners)</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="14" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <rect x="1" y="1" width="34" height="12" rx="4" fill="#1c1000" stroke="#d97706" strokeWidth="1.2" />
+          <text x="18" y="10" textAnchor="middle" fontSize="6" fill="#fbbf24" fontFamily="sans-serif">«item»</text>
+        </svg>
+        <span>Item usage  (rounded corners)</span>
+      </div>
     </div>
   );
 }
@@ -419,6 +436,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     type AU   = Extract<VizNode, { kind: 'attributeUsage' }>;
     type OD   = Extract<VizNode, { kind: 'occurrenceDef' }>;
     type PA   = Extract<VizNode, { kind: 'partAlias' }>;
+    type IA   = Extract<VizNode, { kind: 'itemAlias' }>;
     type CN   = Extract<VizNode, { kind: 'connection' }>;
     type ID   = Extract<VizNode, { kind: 'interfaceDef' }>;
     type PRD  = Extract<VizNode, { kind: 'portDef' }>;
@@ -433,23 +451,24 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     const allPartDefs  = result.nodes.filter((n): n is PD   => n.kind === 'partDef');
     const allPartUsages = result.nodes.filter((n): n is PU  => n.kind === 'partUsage');
     const partDefMap   = new Map(allPartDefs.map(n => [n.name, n]));
-    // Only treat a partAlias as a composition reference when it has a non-empty
-    // type that matches a known PartDef.  ItemUsage / OccurrenceUsage also map
-    // to partAlias but carry type='' → they must not trigger composition groups.
+    const itemDefMap   = new Map(itemDefs.map(n => [n.name, n]));
+    // A body child triggers composition rendering when it is a partAlias/itemAlias
+    // with a non-empty type. partAlias additionally requires the type to resolve to
+    // a known PartDef; itemAlias is always shown (item types may be external).
     const isCompAlias  = (b: VizNode) =>
-      b.kind === 'partAlias' && !!b.type && partDefMap.has(b.type);
-    // composedDefs: partDefs that own child instances → rendered in col2 with
-    // composition edges to flat instance nodes in col3.
+      (b.kind === 'partAlias' && !!b.type && partDefMap.has(b.type)) ||
+      (b.kind === 'itemAlias' && !!b.type);
+    // composedDefs: partDefs that own child instances/items → rendered in col2 with
+    // composition edges to flat instance/item nodes in col3.
     const composedDefs = allPartDefs.filter(n => n.body.some(isCompAlias));
 
-    // Split partUsages: composed (contain child partAlias instances) vs standalone
-    // (no partAlias body — package-scope declarations like "part x : MyType;").
+    // Split partUsages: composed (contain child partAlias/itemAlias) vs standalone.
     const composedUsages   = allPartUsages.filter(n =>  n.body.some(isCompAlias));
     const standaloneUsages = allPartUsages.filter(n => !n.body.some(isCompAlias));
 
     const allOccs           = result.nodes.filter((n): n is OD => n.kind === 'occurrenceDef');
-    const legacyStructOccs  = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias'));
-    const scenarios         = allOccs.filter(o => !o.body.some(b => b.kind === 'partAlias'));
+    const legacyStructOccs  = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias' || b.kind === 'itemAlias'));
+    const scenarios         = allOccs.filter(o => !o.body.some(b => b.kind === 'partAlias' || b.kind === 'itemAlias'));
 
     // ── Pre-compute column X positions ────────────────────────────────────────
     // Column 1 (left):   port defs + interface defs
@@ -476,11 +495,14 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     const col3MaxW = Math.max(MIN_NODE_W,
       ...standaloneUsages.map(n => nodeWidth(n.type ? `«part» : ${n.type}` : '«part»', n.name, [])),
       ...composedUsages.map(n   => nodeWidth(n.type ? `«part» : ${n.type}` : '«part»', n.name, [])),
-      ...[...allPartDefs, ...composedUsages].flatMap(n =>
-        n.body.filter((b): b is PA => b.kind === 'partAlias').map(alias =>
-          Math.max(nodeWidth(`${alias.name} : ${alias.type}`, '', []), MIN_NODE_W)
-        )
-      ),
+      ...[...allPartDefs, ...composedUsages].flatMap(n => [
+        ...n.body.filter((b): b is PA => b.kind === 'partAlias').map(alias =>
+          Math.max(nodeWidth(alias.type ? `«part» : ${alias.type}` : '«part»', alias.name, []), MIN_NODE_W)
+        ),
+        ...n.body.filter((b): b is IA => b.kind === 'itemAlias').map(alias =>
+          Math.max(nodeWidth(alias.type ? `«item» : ${alias.type}` : '«item»', alias.name, []), MIN_NODE_W)
+        ),
+      ]),
       ...legacyStructOccs.map(n => nodeWidth('«occurrence def»', n.name, [])),
       ...scenarios.map(n => nodeWidth('«scenario»', n.name, [])),
     );
@@ -654,15 +676,21 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     function emitInstances(
       ownerRfId: string,
       ownerName: string,
-      aliases: PA[],
+      aliases: (PA | IA)[],
       connections: CN[],
     ) {
       for (let i = 0; i < aliases.length; i++) {
         const alias    = aliases[i];
-        const typeDef  = partDefMap.get(alias.type);
-        const ports    = typeDef ? typeDef.body.filter((b): b is PortLike => b.kind === 'port') : [];
-        const stereo   = `${alias.name} : ${alias.type}`;
-        const instW    = Math.max(nodeWidth(stereo, '', []), MIN_NODE_W);
+        const isItem   = alias.kind === 'itemAlias';
+        const partTypeDef = isItem ? undefined : partDefMap.get(alias.type);
+        const ports    = partTypeDef
+          ? partTypeDef.body.filter((b): b is PortLike => b.kind === 'port')
+          : [];
+        const stereo   = alias.type
+          ? (isItem ? `«item» : ${alias.type}` : `«part» : ${alias.type}`)
+          : (isItem ? '«item»' : '«part»');
+        const palette  = isItem ? PAL.item : PAL.inst;
+        const instW    = Math.max(nodeWidth(stereo, alias.name, []), MIN_NODE_W);
         const h        = partH(ports.length);
         const instGid  = partUsageGid(alias.name);
         const instRfId = `inst-${ownerName}-${alias.name}`;
@@ -670,8 +698,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
 
         baseNodes.push(makePartNode(
           instRfId, { x: C3CX - instW / 2, y: col3Y },
-          stereo, '', ports, PAL.inst, undefined,
-          { id: instRfId, type: 'instance', name: alias.name, line: alias.line,
+          stereo, alias.name, ports, palette, undefined,
+          { id: instRfId, type: isItem ? 'part' : 'instance', name: alias.name, line: alias.line,
             extra: { type: alias.type, parent: ownerName, ...(instGid ? { graphId: instGid } : {}) } },
           [],
           instW,
@@ -687,11 +715,16 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           zIndex: 4,
         });
 
-        // FeatureTyping edge: instance → its type definition in col2
-        if (alias.type && baseNodes.some(bn => bn.id === `def-${alias.type}`)) {
+        // FeatureTyping edge: instance → type definition in col2 (part def or item def)
+        const ftTarget = alias.type
+          ? (baseNodes.some(bn => bn.id === `def-${alias.type}`)     ? `def-${alias.type}`
+          :  baseNodes.some(bn => bn.id === `itemdef-${alias.type}`)  ? `itemdef-${alias.type}`
+          :  null)
+          : null;
+        if (ftTarget) {
           baseEdges.push({
             id: `typing-inst-${ownerName}-${alias.name}`,
-            source: instRfId, target: `def-${alias.type}`,
+            source: instRfId, target: ftTarget,
             sourceHandle: '__source_left', targetHandle: '__target_right',
             type: 'featureTypingEdge',
             zIndex: 5,
@@ -736,7 +769,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
 
     for (const n of composedDefs) {
       const defRfId  = `def-${n.name}`;    // already created in col2 section1
-      const aliases  = n.body.filter((b): b is PA => b.kind === 'partAlias');
+      const aliases: (PA | IA)[] = n.body.filter((b): b is PA | IA =>
+        b.kind === 'partAlias' || b.kind === 'itemAlias');
       const conns    = n.body.filter((b): b is CN => b.kind === 'connection');
       if (aliases.length === 0) continue;
       // Vertically align the instance cluster with the owning def to shorten
@@ -745,8 +779,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const defCenterY = defCol2Y.get(n.name);
       if (defCenterY !== undefined) {
         const clusterH = aliases.reduce((s, alias) => {
-          const td = partDefMap.get(alias.type);
-          const p  = td ? td.body.filter((b): b is PortLike => b.kind === 'port') : [];
+          const td = alias.kind === 'itemAlias' ? itemDefMap.get(alias.type) : partDefMap.get(alias.type);
+          const p  = (td && 'body' in td) ? td.body.filter((b): b is PortLike => b.kind === 'port') : [];
           return s + partH(p.length);
         }, 0) + (aliases.length - 1) * INST_V_GAP;
         const alignedStart = defCenterY - Math.round(clusterH / 2);
@@ -792,7 +826,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         }
       }
 
-      const aliases = n.body.filter((b): b is PA => b.kind === 'partAlias');
+      const aliases: (PA | IA)[] = n.body.filter((b): b is PA | IA =>
+        b.kind === 'partAlias' || b.kind === 'itemAlias');
       const conns   = n.body.filter((b): b is CN => b.kind === 'connection');
       if (aliases.length > 0) emitInstances(usageId, n.name, aliases, conns);
     }

@@ -7,6 +7,8 @@ export type ASTNode =
   | { kind: 'partDef';        name: string;                                                                                                          rawText: string; line: number; endLine?: number; children: ASTNode[] }
   | { kind: 'occurrenceDef';  name: string;                                                                                                          rawText: string; line: number; endLine?: number; children: ASTNode[] }
   | { kind: 'port';           name: string; direction: 'in' | 'out' | 'inout'; portType: string;                                                   rawText: string; line: number }
+  | { kind: 'itemDef';        name: string;                                                                                                          rawText: string; line: number; endLine?: number; children: ASTNode[] }
+  | { kind: 'itemAlias';      name: string; type: string;                                                                                            rawText: string; line: number }
   | { kind: 'partAlias';      name: string; type: string;                                                                                            rawText: string; line: number }
   | { kind: 'connection';     fromPart: string; fromPort: string; toPart: string; toPort: string;                                                   rawText: string; line: number }
   | { kind: 'message';        name: string; from: string; to: string; occurrence: string; fromColumn?: number; toColumn?: number;                   rawText: string; line: number }

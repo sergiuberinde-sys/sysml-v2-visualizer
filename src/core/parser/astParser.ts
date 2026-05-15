@@ -1,3 +1,13 @@
+/**
+ * FROZEN — legacySubset parser.
+ *
+ * This file implements the hand-written parser for the custom prototype
+ * language used by the SysML v2 Visualizer (parserMode = 'legacySubset').
+ *
+ * Do NOT add new grammar rules, new node kinds, or new keyword handling here.
+ * See src/core/parserMode.ts for the architectural rationale and the path
+ * toward a conformant SysML v2 / KerML parser.
+ */
 import type { ASTNode, ASTResult } from '../ast/astTypes';
 import type { ParseDiagnostic } from '../modelTypes';
 import { UNSUPPORTED_SYNTAX } from '../diagnostics';
@@ -10,7 +20,7 @@ const UNSUPPORTED_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/^alias\s+/,             '"alias" is not supported in this subset'],
   [/^attribute\s+def\b/,    '"attribute def" is not supported; use "interface def" for type declarations'],
   [/^attribute\b/,          '"attribute" usage is not supported in this subset'],
-  [/^item\s+def\b/,         '"item def" is not supported in this subset'],
+  // item def is now supported — line removed from unsupported list
   [/^calc\s+def\b/,         '"calc def" is not supported in this subset'],
   [/^constraint\s+def\b/,   '"constraint def" is not supported in this subset'],
   [/^use\s+case\s+def\b/,   '"use case def" is not supported in this subset'],
@@ -37,7 +47,7 @@ export function parseToAST(source: string): ASTResult {
   const diagnostics: ParseDiagnostic[] = [];
 
   type Frame = {
-    kind: 'packageDef' | 'partDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef' | 'requirementDef';
+    kind: 'packageDef' | 'partDef' | 'itemDef' | 'occurrenceDef' | 'behaviorDef' | 'stateDef' | 'requirementDef';
     name: string;
     rawText: string;
     children: ASTNode[];
@@ -66,6 +76,9 @@ export function parseToAST(source: string): ASTResult {
             break;
           case 'partDef':
             dest.push({ kind: 'partDef', name: frame.name, rawText: frame.rawText, children: frame.children, line: frame.startLine, endLine: lineNum });
+            break;
+          case 'itemDef':
+            dest.push({ kind: 'itemDef', name: frame.name, rawText: frame.rawText, children: frame.children, line: frame.startLine, endLine: lineNum });
             break;
           case 'occurrenceDef':
             dest.push({ kind: 'occurrenceDef', name: frame.name, rawText: frame.rawText, children: frame.children, line: frame.startLine, endLine: lineNum });
@@ -121,6 +134,18 @@ export function parseToAST(source: string): ASTResult {
     // part def Name;
     m = line.match(/^part\s+def\s+(\w+)\s*;?\s*$/);
     if (m) { target.push({ kind: 'partDef', name: m[1], rawText: line, children: [], line: lineNum }); continue; }
+
+    // item def Name {
+    m = line.match(/^item\s+def\s+(\w+)\s*\{/);
+    if (m) { stack.push({ kind: 'itemDef', name: m[1], rawText: line, children: [], startLine: lineNum }); continue; }
+
+    // item def Name;
+    m = line.match(/^item\s+def\s+(\w+)\s*;?\s*$/);
+    if (m) { target.push({ kind: 'itemDef', name: m[1], rawText: line, children: [], line: lineNum }); continue; }
+
+    // item name : Type;
+    m = line.match(/^(?:in\s+|out\s+|inout\s+)?item\s+(\w+)\s*:\s*([\w][\w:]*\w|[\w]+)/);
+    if (m) { target.push({ kind: 'itemAlias', name: m[1], type: m[2], rawText: line, line: lineNum }); continue; }
 
     // occurrence def Name {
     m = line.match(/^occurrence\s+def\s+(\w+)\s*\{/);
