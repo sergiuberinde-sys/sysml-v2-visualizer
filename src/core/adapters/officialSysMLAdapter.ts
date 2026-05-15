@@ -47,7 +47,7 @@ const MEMBERSHIP_WRAPPERS = new Set([
 ]);
 
 // Usage kinds for which we create typedBy edges (per requirements §3).
-const TYPED_USAGE_TYPES = new Set(['PartUsage', 'AttributeUsage', 'PortUsage', 'ActionUsage', 'PerformActionUsage', 'RequirementUsage']);
+const TYPED_USAGE_TYPES = new Set(['PartUsage', 'ItemUsage', 'AttributeUsage', 'PortUsage', 'ActionUsage', 'PerformActionUsage', 'RequirementUsage']);
 
 // Definition kinds that are valid targets for typedBy edges.
 const TYPED_DEF_TYPES = new Set([

@@ -123,11 +123,38 @@ function CompositionEdge({
   return (
     <g>
       <defs>
-        {/* SysML v2 §8.2.3.6: filled diamond at the owner (source) end. */}
+        {/* SysML v2 §8.2.3.3: filled diamond = composite-feature-membership, owner (source) end. */}
         <marker id={mid} viewBox="0 0 16 12" refX="16" refY="6"
           markerWidth="16" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
           <path d="M 0,6 L 8,1.5 L 16,6 L 8,10.5 Z"
             fill={stroke} stroke={stroke} strokeWidth="0.5" strokeLinejoin="round"/>
+        </marker>
+      </defs>
+      <BaseEdge id={id} path={edgePath}
+        style={{ stroke, strokeWidth }}
+        markerStart={`url(#${mid})`}
+      />
+    </g>
+  );
+}
+
+function NonCompositeMembershipEdge({
+  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data,
+}: EdgeProps) {
+  const waypoints   = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
+  const highlighted = !!(data as Record<string, unknown>)?.highlighted;
+  const stroke      = highlighted ? SEL_BORDER : COMP_STROKE;
+  const strokeWidth = highlighted ? 2.5 : 1;
+  const edgePath    = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
+  const mid = `sysml-ncm-${id}`;
+  return (
+    <g>
+      <defs>
+        {/* SysML v2 §8.2.3.3: open/hollow diamond = non-composite-feature-membership, owner (source) end. */}
+        <marker id={mid} viewBox="0 0 16 12" refX="16" refY="6"
+          markerWidth="16" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M 0,6 L 8,1.5 L 16,6 L 8,10.5 Z"
+            fill="none" stroke={stroke} strokeWidth="1" strokeLinejoin="round"/>
         </marker>
       </defs>
       <BaseEdge id={id} path={edgePath}
@@ -163,33 +190,25 @@ function StructureLegend() {
           <line x1="2" y1="6" x2="26" y2="6" stroke="#4ade80" strokeWidth="1.2" />
           <polyline points="26,3 34,6 26,9" fill="none" stroke="#4ade80" strokeWidth="1.3" strokeLinejoin="round" />
         </svg>
-        <span>Connection</span>
+        <span>ConnectionUsage</span>
       </div>
 
-      {/* Composition: solid line + filled diamond at owner (source) end */}
+      {/* Composite feature membership: filled diamond at owner end (§8.2.3.3) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
         <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
           <polygon points="2,6 9,3 16,6 9,9" fill={COMP_STROKE} />
           <line x1="16" y1="6" x2="34" y2="6" stroke={COMP_STROKE} strokeWidth="1.2" />
         </svg>
-        <span>Composition  (owner ◆ → child)</span>
+        <span>Composite feature membership  (◆)</span>
       </div>
 
-      {/* Item nodes */}
-      <div style={{ marginTop: 3, fontSize: 9, color: '#475569', letterSpacing: '0.5px' }}>ITEM ELEMENTS</div>
+      {/* Non-composite feature membership: open diamond at owner end (§8.2.3.3) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
-        <svg width="36" height="14" style={{ flexShrink: 0, overflow: 'visible' }}>
-          <rect x="1" y="1" width="34" height="12" rx="0" fill="#1c1000" stroke="#d97706" strokeWidth="1.2" />
-          <text x="18" y="10" textAnchor="middle" fontSize="6" fill="#fbbf24" fontFamily="sans-serif">«item def»</text>
+        <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <polygon points="2,6 9,3 16,6 9,9" fill="none" stroke={COMP_STROKE} strokeWidth="1" />
+          <line x1="16" y1="6" x2="34" y2="6" stroke={COMP_STROKE} strokeWidth="1.2" />
         </svg>
-        <span>Item definition  (sharp corners)</span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
-        <svg width="36" height="14" style={{ flexShrink: 0, overflow: 'visible' }}>
-          <rect x="1" y="1" width="34" height="12" rx="4" fill="#1c1000" stroke="#d97706" strokeWidth="1.2" />
-          <text x="18" y="10" textAnchor="middle" fontSize="6" fill="#fbbf24" fontFamily="sans-serif">«item»</text>
-        </svg>
-        <span>Item usage  (rounded corners)</span>
+        <span>Non-composite feature membership  (◇)</span>
       </div>
     </div>
   );
@@ -353,6 +372,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     elkEdge: ElkEdge,
     featureTypingEdge: FeatureTypingEdge,
     compositionEdge: CompositionEdge,
+    nonCompositeMembershipEdge: NonCompositeMembershipEdge,
   }), []);
 
   // ── Pass 1: manual layout (recomputes when model changes) ─────────────────
@@ -1031,7 +1051,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           <Background color="#2a2a3a" gap={24} />
           <Controls />
           <FitPanel autoFitVersion={autoFitVersion} />
-          <Panel position="top-right">
+          <Panel position="bottom-right">
             <StructureLegend />
           </Panel>
         </ReactFlow>
