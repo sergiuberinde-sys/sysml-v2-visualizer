@@ -1,4 +1,3 @@
-
 package GoalOrientedSafetyReasoning {
 
     private import Types::*;

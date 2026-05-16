@@ -1,4 +1,3 @@
-
 package Types {
 
     private import ScalarValues::*;
@@ -99,6 +98,12 @@ package Types {
         item Sensor0Data : AdcSensorDataBufferType;
         item Sensor1Data : AdcSensorDataBufferType;
         item Timestamps : AdcTimestampBufferType;
+        attribute timestampFresh : boolean;
+        attribute group0SampleValid : boolean;
+        attribute group1SampleValid : boolean;
+        attribute supplySampleValid : boolean;
+        attribute sensorPairPlausible : boolean;
+        attribute inputDataValid : boolean;
     }
 
     item def ChannelMeansType {
@@ -156,10 +161,46 @@ package Types {
     item def NoPayloadType;
 
     item def AdcNotificationPayloadType {
+        attribute notificationArrived : boolean;
         attribute Group0NotificationArrived : boolean;
         attribute Group1NotificationArrived : boolean;
         attribute SupplyNotificationArrived : boolean;
         item Timestamps : AdcTimestampBufferType;
+    }
+
+
+    // Guard/result semantics for AcpdCdd_AdcGroup0NewData conditional behavior.
+    // These Boolean attributes are used directly by guarded successions so visualizers can
+    // render dotted conditional arrows with explicit guard labels.
+    item def AdcGroup0NewDataDecisionType {
+        attribute sampleCountPointerAndRangeValid : boolean;
+        attribute group0SampleRangeValid : boolean;
+        attribute oldGroup0CacheFilled : boolean;
+        attribute bothGroup0AndGroup1Filled : boolean;
+        attribute group0SampleAccepted : boolean;
+    }
+
+
+    item def AdcGroupDataReadDecisionType {
+        attribute missingEntriesDetected : boolean;
+    }
+
+    item def AdcGroup1NewDataDecisionType {
+        attribute sampleCountPointerAndRangeValid : boolean;
+        attribute group1SampleRangeValid : boolean;
+        attribute oldGroup1CacheFilled : boolean;
+        attribute bothGroup0AndGroup1Filled : boolean;
+        attribute group1SampleAccepted : boolean;
+    }
+
+    item def AdcSupplyNewDataDecisionType {
+        attribute supplySampleValid : boolean;
+        attribute supplySampleRangeValid : boolean;
+    }
+
+    item def CollectInputDataDecisionType {
+        attribute collectedInputDataValid : boolean;
+        attribute collectedInputDataDegraded : boolean;
     }
 
     item def ActivationRequestPayloadType {

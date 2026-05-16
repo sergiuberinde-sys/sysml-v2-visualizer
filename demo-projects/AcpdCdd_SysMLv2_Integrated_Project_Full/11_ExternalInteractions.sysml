@@ -1,4 +1,3 @@
-
 package ExternalInteractions {
 
     private import ComponentDesign::*;

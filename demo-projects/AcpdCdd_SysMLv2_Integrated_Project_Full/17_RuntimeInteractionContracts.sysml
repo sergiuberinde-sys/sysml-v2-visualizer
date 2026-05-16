@@ -1,4 +1,3 @@
-
 package RuntimeInteractionContracts {
 
     private import Types::*;

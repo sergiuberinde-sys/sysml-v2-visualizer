@@ -1,4 +1,3 @@
-
 package ExternalActors {
 
     private import Types::*;
@@ -20,18 +19,17 @@ package ExternalActors {
     }
 
     part def ADC {
-        port group0Notification;
-        port group1Notification;
-        port supplyNotification;
+
+
     }
 
     part def AdcBist {
-        port varef1ErrorStatusOut;
-        port varef2ErrorStatusOut;
+
+
     }
 
     part def RTE {
-        port activationOut;
-        port acceleratorDataIn;
+
+
     }
 }
