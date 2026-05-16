@@ -1,4 +1,4 @@
-import type { ParseResult } from '../core/modelTypes';
+import type { VisualizerModel } from '../core/visualizerModel';
 
 export interface HistorySnapshot {
   id: string;
@@ -13,7 +13,7 @@ export interface HistorySnapshot {
 export const MAX_HISTORY        = 50;
 export const HISTORY_DEBOUNCE_MS = 800;
 
-export function makeSnapshot(text: string, result: ParseResult): HistorySnapshot {
+export function makeSnapshot(text: string, result: VisualizerModel): HistorySnapshot {
   let messages = 0;
   for (const n of result.nodes) {
     if (n.kind === 'occurrenceDef') {

@@ -229,6 +229,17 @@ export function PortHandles(props: PortHandlesProps) {
               style={hideL}
             />
 
+            {/* Mirror of the above on the right side.
+                Used by output-port FeatureTyping edges in focused mode when the
+                portDef is placed to the RIGHT of the partDef, so the edge exits
+                from the correct side instead of routing all the way around. */}
+            <Handle
+              type="source"
+              position={Position.Right}
+              id={`port-${p.id}-ft-right`}
+              style={hideR}
+            />
+
             {/* Source handle (right/bottom) */}
             <Handle
               type="source"

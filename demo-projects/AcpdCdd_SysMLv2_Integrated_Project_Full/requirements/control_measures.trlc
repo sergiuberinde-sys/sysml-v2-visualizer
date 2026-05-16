@@ -1,0 +1,68 @@
+package AcpdCddSafety
+
+// Control measures derived for the safety-analysis chain.
+// The mitigates fields reference BasicEvent IDs declared in SysML parser-safe comments.
+
+type ASIL is enum {
+    QM,
+    ASIL_A,
+    ASIL_B,
+    ASIL_C,
+    ASIL_D
+}
+
+type ControlMeasure {
+    description String
+    safety ASIL
+    mitigates String
+    implemented_by String
+    version Integer
+}
+
+TimestampSupervision_MissingNotification ControlMeasure {
+    description = "Detect missing or delayed ADC notification by timestamp/freshness supervision and force the signal qualifier to ERROR."
+    safety = ASIL_C
+    mitigates = "AcpdCddSafety.BE_MissingAdcNotification"
+    implemented_by = "AcpdCdd_CheckTimestamps"
+    version = 1
+}
+
+TimestampSupervision_StaleBuffer ControlMeasure {
+    description = "Prevent stale input buffer data from being accepted as valid by qualifier reaction."
+    safety = ASIL_C
+    mitigates = "AcpdCddSafety.BE_StaleInputBuffer"
+    implemented_by = "AcpdCdd_CheckTimestamps"
+    version = 1
+}
+
+DeviationCheck_InvalidProcessedValue ControlMeasure {
+    description = "Detect implausible Sensor1/Sensor2 deviation before publishing accelerator data."
+    safety = ASIL_C
+    mitigates = "AcpdCddSafety.BE_InvalidProcessedSensorValue"
+    implemented_by = "AcpdCdd_DeviationCheck"
+    version = 1
+}
+
+AdcBistMonitoring_ReferenceError ControlMeasure {
+    description = "Use ADCBIST reference-voltage status in monitoring before final output publication."
+    safety = ASIL_C
+    mitigates = "AcpdCddSafety.BE_ReferenceVoltageErrorNotHandled"
+    implemented_by = "AdcBist_GetVaref1ErrorStatus;AdcBist_GetVaref2ErrorStatus;AcpdCdd_Monitoring"
+    version = 1
+}
+
+RteOutputQualifierReaction ControlMeasure {
+    description = "Publish ERROR qualifier or degraded output state when upstream data validity is not confirmed."
+    safety = ASIL_C
+    mitigates = "AcpdCddSafety.BE_WrongRteOutput"
+    implemented_by = "AcpdCdd_Output;Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc"
+    version = 1
+}
+
+TimestampSupervision_DelayedNotification ControlMeasure {
+    description = "Detect late ADC notification relative to the expected runtime window and force invalid data reaction."
+    safety = ASIL_C
+    mitigates = "AcpdCddSafety.BE_DelayedAdcNotification"
+    implemented_by = "AcpdCdd_CheckTimestamps"
+    version = 1
+}

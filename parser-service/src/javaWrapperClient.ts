@@ -1,11 +1,13 @@
 import { spawn, execSync } from 'child_process';
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { existsSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
 
 import type { OfficialBackendClient } from './officialBackendClient';
 import type { SysMLV2ParseResult } from './types';
+
+interface ContextFile { name: string; text: string }
 
 // When compiled, this file lives at parser-service/dist/javaWrapperClient.js.
 // Two levels up is the project root; from there the Java module is predictable.
@@ -58,7 +60,7 @@ export class JavaWrapperClient implements OfficialBackendClient {
     return existsSync(this.jarPath);
   }
 
-  async parse(text: string): Promise<SysMLV2ParseResult> {
+  async parse(text: string, context: ContextFile[] = []): Promise<SysMLV2ParseResult> {
     if (!existsSync(this.jarPath)) {
       return wrapperError(
         `Official SysML parser wrapper failed: JAR not found at ${this.jarPath}. ` +
@@ -66,14 +68,24 @@ export class JavaWrapperClient implements OfficialBackendClient {
       );
     }
 
-    const tmpFile = join(tmpdir(), `sysml-${randomBytes(8).toString('hex')}.sysml`);
+    const tmpDir  = mkdtempSync(join(tmpdir(), 'sysml-'));
+    const tmpFile = join(tmpDir, 'primary.sysml');
 
     try {
       writeFileSync(tmpFile, text, 'utf8');
 
+      // Write each context file into the same temp directory using its sanitized basename
+      const contextPaths: string[] = [];
+      for (const ctx of context) {
+        const safeName = basename(ctx.name).replace(/[^a-zA-Z0-9_\-.]/g, '_');
+        const ctxPath  = join(tmpDir, safeName);
+        writeFileSync(ctxPath, ctx.text, 'utf8');
+        contextPaths.push(ctxPath);
+      }
+
       const { stdout, stderr, code } = await runProcess(
         this.javaExe,
-        ['-jar', this.jarPath, tmpFile],
+        ['-jar', this.jarPath, tmpFile, ...contextPaths],
         PARSE_TIMEOUT_MS
       );
 
@@ -103,7 +115,7 @@ export class JavaWrapperClient implements OfficialBackendClient {
       const msg = err instanceof Error ? err.message : String(err);
       return wrapperError(`Official SysML parser wrapper failed: ${msg}`);
     } finally {
-      try { unlinkSync(tmpFile); } catch { /* ignore cleanup errors */ }
+      try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
     }
   }
 }

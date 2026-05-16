@@ -6,7 +6,7 @@
   "version": "0.0.1",
   "type": "module",
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.118.0"
   },
   "main": "./out-extension/src-vscode/extension.js",
   "activationEvents": [
@@ -23,7 +23,15 @@
         "aliases": [
           "SysML",
           "sysml"
-        ]
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "sysml",
+        "scopeName": "source.sysml",
+        "path": "./syntaxes/sysml.tmLanguage.json"
       }
     ],
     "commands": [
@@ -50,16 +58,9 @@
         "sysmlVisualizer.parserServiceUrl": {
           "type": "string",
           "default": "http://localhost:9001",
-          "markdownDescription": "URL of the official SysML v2 parser service. Used when **Official SysML v2** mode is selected in the visualizer tab bar.\n\nThe service must implement `POST /parse` and `GET /health`. See `parser-service/README.md` for setup instructions.",
+          "markdownDescription": "URL of the SysML v2 parser service. The service must implement `POST /parse` and `GET /health`. See `parser-service/README.md` for setup instructions.",
           "scope": "window",
           "order": 1
-        },
-        "sysmlVisualizer.officialParserMode": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "When enabled, VS Code Problems panel diagnostics are sourced from the official SysML v2 parser service (`parserServiceUrl`) instead of the built-in prototype parser.\n\nRequires the parser service to be running. See `parser-service/README.md`.",
-          "scope": "window",
-          "order": 2
         }
       }
     }

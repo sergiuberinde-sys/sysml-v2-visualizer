@@ -360,6 +360,9 @@ export default function App() {
   const [syncCursor,   setSyncCursor]   = useState(true);
   const [focusSubtree, setFocusSubtree] = useState(false);
 
+  // Project context files for multi-file parsing (cross-file import resolution)
+  const [projectFiles, setProjectFiles] = useState<{ name: string; text: string }[]>([]);
+
   // TRLC external requirements (imported separately from the SysML model)
   const [trlcData, setTrlcData] = useState<TrlcData | null>(null);
   const [trlcImportError, setTrlcImportError] = useState<string | null>(null);
@@ -486,18 +489,18 @@ export default function App() {
     }, HISTORY_DEBOUNCE_MS);
   }, [source, vizModel]);
 
-  // Call HTTP parser service when source or endpoint changes
+  // Call HTTP parser service when source, endpoint, or context files change
   useEffect(() => {
     let cancelled = false;
     setOfficialParseLoading(true);
     const svc = new HttpSysMLV2ParserService(serviceEndpoint);
-    svc.parse(source).then(res => {
+    svc.parse(source, projectFiles).then(res => {
       if (cancelled) return;
       setOfficialParseResult(res);
       setOfficialParseLoading(false);
     });
     return () => { cancelled = true; };
-  }, [source, serviceEndpoint]);
+  }, [source, serviceEndpoint, projectFiles]);
 
   // Persist role and endpoint across page loads
   useEffect(() => {
@@ -844,6 +847,25 @@ export default function App() {
   }
 
   const trlcFileInputRef = useRef<HTMLInputElement | null>(null);
+  const projectFilesInputRef = useRef<HTMLInputElement | null>(null);
+
+  function handleProjectFilesInput(e: React.ChangeEvent<HTMLInputElement>): void {
+    const files = Array.from(e.target.files ?? []);
+    if (files.length === 0) return;
+    const results: { name: string; text: string }[] = [];
+    let remaining = files.length;
+    for (const file of files) {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        results.push({ name: file.name, text: ev.target?.result as string });
+        remaining--;
+        if (remaining === 0) setProjectFiles(results);
+      };
+      reader.readAsText(file);
+    }
+    // Reset so the same file can be re-selected
+    e.target.value = '';
+  }
 
   // ── Editor helpers ─────────────────────────────────────────────────────────
 
@@ -938,157 +960,96 @@ export default function App() {
       {/* ── 4-column workspace ────────────────────── */}
       <div className="app-layout">
 
-        {/* Column 1: Editor (standalone) or Model Diagnostics panel (VS Code) */}
-        {col1Open ? (
-          APP_MODE === 'standalone' ? (
-            <div className="panel editor-panel">
-              <div className="panel-header">
-                <span>SysML v2 Source</span>
-                {activeDiagnostics.length > 0 && (
-                  <span className="diag-badge">
-                    {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
-                    {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
-                    {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
-                  </span>
-                )}
-                <button className="panel-toggle-btn" onClick={() => setCol1Open(false)} title="Collapse">◀</button>
-              </div>
-
-              <div className="editor-wrap">
-                <Editor
-                  height="100%"
-                  language="sysml"
-                  value={source}
-                  onChange={v => setSource(v ?? '')}
-                  theme="sysml-dark"
-                  beforeMount={handleBeforeMount}
-                  onMount={handleEditorMount}
-                  options={{
-                    minimap:              { enabled: false },
-                    fontSize:             13.5,
-                    lineNumbers:          'on',
-                    wordWrap:             'on',
-                    scrollBeyondLastLine: false,
-                    renderLineHighlight:  'line',
-                    glyphMargin:          true,
-                    overviewRulerBorder:  false,
-                    folding:              true,
-                    padding:              { top: 8 },
-                  }}
-                />
-              </div>
-
+        {/* Column 1: Editor (standalone only) */}
+        {APP_MODE === 'standalone' && (col1Open ? (
+          <div className="panel editor-panel">
+            <div className="panel-header">
+              <span>SysML v2 Source</span>
               {activeDiagnostics.length > 0 && (
-                <div className="diagnostics-panel">
-                  <div className="diag-panel-hdr">
-                    <span>Model Diagnostics</span>
-                    <div className="diag-filter-bar">
-                      {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                        const cnt = f === 'all' ? activeDiagnostics.length
-                          : f === 'error'   ? errCount
-                          : f === 'warning' ? warnCount
-                          : infoCount;
-                        return (
-                          <button
-                            key={f}
-                            className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
-                            onClick={() => setDiagFilter(f)}
-                          >
-                            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                            <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+                <span className="diag-badge">
+                  {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
+                  {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
+                  {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
+                </span>
+              )}
+              <button className="panel-toggle-btn" onClick={() => setCol1Open(false)} title="Collapse">◀</button>
+            </div>
+
+            <div className="editor-wrap">
+              <Editor
+                height="100%"
+                language="sysml"
+                value={source}
+                onChange={v => setSource(v ?? '')}
+                theme="sysml-dark"
+                beforeMount={handleBeforeMount}
+                onMount={handleEditorMount}
+                options={{
+                  minimap:              { enabled: false },
+                  fontSize:             13.5,
+                  lineNumbers:          'on',
+                  wordWrap:             'on',
+                  scrollBeyondLastLine: false,
+                  renderLineHighlight:  'line',
+                  glyphMargin:          true,
+                  overviewRulerBorder:  false,
+                  folding:              true,
+                  padding:              { top: 8 },
+                }}
+              />
+            </div>
+
+            {activeDiagnostics.length > 0 && (
+              <div className="diagnostics-panel">
+                <div className="diag-panel-hdr">
+                  <span>Model Diagnostics</span>
+                  <div className="diag-filter-bar">
+                    {(['all', 'error', 'warning', 'info'] as const).map(f => {
+                      const cnt = f === 'all' ? activeDiagnostics.length
+                        : f === 'error'   ? errCount
+                        : f === 'warning' ? warnCount
+                        : infoCount;
+                      return (
+                        <button
+                          key={f}
+                          className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
+                          onClick={() => setDiagFilter(f)}
+                        >
+                          {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
+                          <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                  {activeDiagnostics
-                    .filter(d => diagFilter === 'all' || d.severity === diagFilter)
-                    .map((d, i) => (
-                      <div
-                        key={i}
-                        className={`diag-row diag-${d.severity}`}
-                        onClick={() => jumpToLine(d.line)}
-                        title={`Line ${d.line}: ${d.message}`}
-                      >
-                        <span className="diag-sev-icon">
-                          {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
-                        </span>
-                        <span className="diag-loc">L{d.line}</span>
-                        {'code' in d && !!(d as Record<string,unknown>).code && <span className="diag-code">{String((d as Record<string,unknown>).code)}</span>}
-                        <span className="diag-msg">{d.message}</span>
-                      </div>
-                    ))}
                 </div>
-              )}
-            </div>
-          ) : (
-            /* VS Code mode: diagnostics-only panel */
-            <div className="panel editor-panel">
-              <div className="panel-header">
-                <span>Model Diagnostics</span>
-                {activeDiagnostics.length > 0 && (
-                  <span className="diag-badge">
-                    {errCount  > 0 && <span className="badge-error">{errCount} err</span>}
-                    {warnCount > 0 && <span className="badge-warn">{warnCount} warn</span>}
-                    {infoCount > 0 && <span className="badge-info">{infoCount} info</span>}
-                  </span>
-                )}
-                <button className="panel-toggle-btn" onClick={() => setCol1Open(false)} title="Collapse">◀</button>
-              </div>
-              <div className="diag-filter-bar diag-filter-bar-top">
-                {(['all', 'error', 'warning', 'info'] as const).map(f => {
-                  const cnt = f === 'all' ? activeDiagnostics.length
-                    : f === 'error'   ? errCount
-                    : f === 'warning' ? warnCount
-                    : infoCount;
-                  return (
-                    <button
-                      key={f}
-                      className={`diag-filter-btn${diagFilter === f ? ' active' : ''}`}
-                      onClick={() => setDiagFilter(f)}
+                {activeDiagnostics
+                  .filter(d => diagFilter === 'all' || d.severity === diagFilter)
+                  .map((d, i) => (
+                    <div
+                      key={i}
+                      className={`diag-row diag-${d.severity}`}
+                      onClick={() => jumpToLine(d.line)}
+                      title={`Line ${d.line}: ${d.message}`}
                     >
-                      {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-                      <span className={`diag-filter-cnt diag-filter-cnt-${f}`}>{cnt}</span>
-                    </button>
-                  );
-                })}
+                      <span className="diag-sev-icon">
+                        {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                      </span>
+                      <span className="diag-loc">L{d.line}</span>
+                      {'code' in d && !!(d as Record<string,unknown>).code && <span className="diag-code">{String((d as Record<string,unknown>).code)}</span>}
+                      <span className="diag-msg">{d.message}</span>
+                    </div>
+                  ))}
               </div>
-              {activeDiagnostics.length > 0 ? (
-                <div className="diagnostics-panel diagnostics-panel-fill">
-                  {activeDiagnostics
-                    .filter(d => diagFilter === 'all' || d.severity === diagFilter)
-                    .map((d, i) => (
-                      <div
-                        key={i}
-                        className={`diag-row diag-${d.severity}`}
-                        title={`Line ${d.line}: ${d.message}`}
-                      >
-                        <span className="diag-sev-icon">
-                          {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
-                        </span>
-                        <span className="diag-loc">L{d.line}</span>
-                        {'code' in d && !!(d as Record<string,unknown>).code && <span className="diag-code">{String((d as Record<string,unknown>).code)}</span>}
-                        <span className="diag-msg">{d.message}</span>
-                      </div>
-                    ))}
-                </div>
-              ) : (
-                <div className="no-diags-hint">No problems detected.</div>
-              )}
-            </div>
-          )
+            )}
+          </div>
         ) : (
           <button
             className="panel-collapsed-strip panel-border-right"
             onClick={() => setCol1Open(true)}
           >
-            <span className="panel-tab-label">
-              {APP_MODE === 'standalone'
-                ? 'Editor'
-                : `Model Diagnostics${activeDiagnostics.length > 0 ? ` (${activeDiagnostics.length})` : ''}`}
-            </span>
+            <span className="panel-tab-label">Editor</span>
           </button>
-        )}
+        ))}
 
         {/* Column 2: Model Explorer */}
         {explorerOpen ? (
@@ -1181,6 +1142,40 @@ export default function App() {
               >
                 {trlcData ? `TRLC (${trlcData.requirements.length})` : 'TRLC'}
               </button>
+              {/* Project context files for cross-file import resolution */}
+              <button
+                type="button"
+                title={
+                  projectFiles.length > 0
+                    ? `${projectFiles.length} context file(s): ${projectFiles.map(f => f.name).join(', ')}`
+                    : 'Load context .sysml files (for cross-file import resolution)'
+                }
+                onClick={() => projectFilesInputRef.current?.click()}
+                style={{
+                  fontSize: 11,
+                  background: projectFiles.length > 0 ? '#0d1f3c' : '#1e293b',
+                  color:      projectFiles.length > 0 ? '#7dd3fc' : '#94a3b8',
+                  border: `1px solid ${projectFiles.length > 0 ? '#38bdf8' : '#334155'}`,
+                  borderRadius: 3, padding: '1px 6px',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}
+              >
+                {projectFiles.length > 0 ? `${projectFiles.length} context file(s)` : 'Context'}
+              </button>
+              {projectFiles.length > 0 && (
+                <button
+                  type="button"
+                  title="Clear all context files"
+                  onClick={() => setProjectFiles([])}
+                  style={{
+                    fontSize: 11, background: '#1e293b', color: '#94a3b8',
+                    border: '1px solid #334155', borderRadius: 3,
+                    padding: '1px 5px', cursor: 'pointer',
+                  }}
+                >
+                  x
+                </button>
+              )}
               <label
                 title="Sync Cursor — editor cursor position updates the visualizer selection"
                 style={{
@@ -1271,7 +1266,7 @@ export default function App() {
                 <span style={{ color: officialParseResult.success ? '#4ade80' : '#fb923c' }}>
                   {officialParseResult.success
                     ? 'Parsed successfully.'
-                    : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported in the diagnostics panel.`}
+                    : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported.`}
                   {officialParseResult.error && ` (${officialParseResult.error})`}
                 </span>
               )}
@@ -1412,6 +1407,16 @@ export default function App() {
         accept=".json"
         style={{ display: 'none' }}
         onChange={handleTrlcFileInput}
+      />
+
+      {/* ── Hidden project context files input ──── */}
+      <input
+        ref={projectFilesInputRef}
+        type="file"
+        multiple
+        accept=".sysml"
+        style={{ display: 'none' }}
+        onChange={handleProjectFilesInput}
       />
 
       {/* ── Modals (standalone only) ─────────────── */}

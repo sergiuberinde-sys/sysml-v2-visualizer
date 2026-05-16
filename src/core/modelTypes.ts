@@ -17,7 +17,7 @@ export type SysMLNode =
   | { kind: 'package';        name: string;                                                                                         line: number }
   | { kind: 'packageDef';     name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'interfaceDef';   name: string; namespace: string;                                                                      line: number }
-  | { kind: 'portDef';        name: string; namespace: string;                                                                      line: number }
+  | { kind: 'portDef';        name: string; namespace: string; body?: SysMLNode[];                                               line: number }
   | { kind: 'partDef';        name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'itemDef';        name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'partUsage';      name: string; namespace: string; type: string; body: SysMLNode[];                          line: number; endLine?: number }

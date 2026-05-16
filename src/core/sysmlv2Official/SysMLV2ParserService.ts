@@ -15,5 +15,5 @@ export interface SysMLV2ParserService {
    * @param text - Full source text of a .sysml file.
    * @returns A promise that always resolves; errors appear in the result.
    */
-  parse(text: string): Promise<SysMLV2ParseResult>;
+  parse(text: string, context?: { name: string; text: string }[]): Promise<SysMLV2ParseResult>;
 }

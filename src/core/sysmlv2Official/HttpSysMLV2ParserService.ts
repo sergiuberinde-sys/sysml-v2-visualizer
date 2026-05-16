@@ -32,14 +32,14 @@ export class HttpSysMLV2ParserService implements SysMLV2ParserService {
     this.endpoint = endpoint.replace(/\/+$/, '');
   }
 
-  async parse(text: string): Promise<SysMLV2ParseResult> {
+  async parse(text: string, context?: { name: string; text: string }[]): Promise<SysMLV2ParseResult> {
     let rawResponse: unknown;
 
     try {
       const response = await fetch(`${this.endpoint}/parse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, ...(context?.length ? { context } : {}) }),
       });
 
       let body: unknown;

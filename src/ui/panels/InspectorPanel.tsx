@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { VisualizerModel, VizNode, VizPackageNode, VizDiagnostic } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
+import type { ImpactTrace, ImpactedElement, ImpactedFlow, AttributeEntry } from '../../core/sysmlv2Official';
 import { elementLines } from '../../core/validator';
 import ActionModal, { type FieldDef } from '../components/ActionModal';
 import {
@@ -16,6 +17,8 @@ import {
   computeInsertPackage, computeInsertElementIntoPackage,
 } from '../../core/insertions';
 import type { IncrementalEdit } from '../../core/editDescriptor';
+import type { TrlcData } from '../../core/trlc/types';
+import { requirementsForElement } from '../../core/trlc/types';
 
 interface Props {
   selection: SelectionState;
@@ -24,6 +27,9 @@ interface Props {
   onSourceChange: (s: string) => void;
   onIncrementalEdit?: (edit: IncrementalEdit) => void;
   onCollapse?: () => void;
+  impactTrace?: ImpactTrace;
+  onSelect?: (s: NonNullable<SelectionState>) => void;
+  trlcData?: TrlcData;
 }
 
 // ── Modal discriminant ────────────────────────────────────────────────────────
@@ -64,9 +70,300 @@ function ActionBtn({
   );
 }
 
+// ── ImpactSection — official SysML v2 impact trace ───────────────────────────
+
+function emfTypeToSelType(emfType: string): NonNullable<SelectionState>['type'] {
+  switch (emfType) {
+    case 'PartDefinition':
+    case 'PartUsage':              return 'part';
+    case 'PortUsage':
+    case 'PortDefinition':         return 'port';
+    case 'ActionDefinition':       return 'behavior';
+    case 'ActionUsage':
+    case 'PerformActionUsage':     return 'actionInst';
+    case 'Package':
+    case 'LibraryPackage':         return 'packageDef';
+    case 'InterfaceDefinition':
+    case 'ConnectionDefinition':   return 'interface';
+    case 'OccurrenceDefinition':   return 'occurrence';
+    case 'RequirementDefinition':
+    case 'RequirementUsage':       return 'requirement';
+    default:                       return 'part';
+  }
+}
+
+function ImpactRow({
+  label,
+  items,
+  onSelect,
+}: {
+  label: string;
+  items: ImpactedElement[];
+  onSelect?: (s: NonNullable<SelectionState>) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="insp-impact-group">
+      <div className="insp-impact-group-label">{label}</div>
+      {items.map((el, i) => (
+        <div key={i} className="insp-impact-row">
+          <span className="insp-impact-type">{el.type}</span>
+          {onSelect ? (
+            <button
+              className="insp-impact-link"
+              type="button"
+              onClick={() => onSelect({
+                id: `impact-${el.label}`,
+                type: emfTypeToSelType(el.type),
+                name: el.label,
+                ...(el.extra ? { extra: el.extra } : {}),
+              })}
+            >
+              {el.label}
+            </button>
+          ) : (
+            <span className="insp-impact-name">{el.label}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FlowRow({
+  label,
+  flows,
+  direction,
+  onSelect,
+}: {
+  label: string;
+  flows: ImpactedFlow[];
+  direction: 'from' | 'to' | 'both';
+  onSelect?: (s: NonNullable<SelectionState>) => void;
+}) {
+  if (flows.length === 0) return null;
+  return (
+    <div className="insp-impact-group">
+      <div className="insp-impact-group-label">{label}</div>
+      {flows.map((f, i) => {
+        const tag = `${f.flowType}${f.guard ? ` [${f.guard}]` : ''}`;
+        const endName  = direction === 'from' ? f.source : direction === 'to' ? f.target : null;
+        const bothText = `${f.source} → ${f.target}`;
+        return (
+          <div key={i} className="insp-impact-row">
+            <span className="insp-impact-type">{tag}</span>
+            {endName && onSelect && f.behaviorContext ? (
+              <button
+                className="insp-impact-link"
+                type="button"
+                onClick={() => onSelect({
+                  id: `impact-${endName}`,
+                  type: 'actionInst',
+                  name: endName,
+                  extra: { behavior: f.behaviorContext! },
+                })}
+              >
+                {direction === 'from' ? `← ${endName}` : `→ ${endName}`}
+              </button>
+            ) : (
+              <span className="insp-impact-name">
+                {endName ? (direction === 'from' ? `← ${endName}` : `→ ${endName}`) : bothText}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RequirementRow({
+  items,
+  onSelect,
+}: {
+  items: ImpactedElement[];
+  onSelect?: (s: NonNullable<SelectionState>) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="insp-impact-group">
+      <div className="insp-impact-group-label">Requirements</div>
+      {items.map((el, i) => {
+        const reqDef = el.extra?.requirementDef;
+        const displayText = reqDef ? `${el.label} : ${reqDef}` : el.label;
+        return (
+          <div key={i} className="insp-impact-row">
+            <span className="insp-impact-type">{el.type}</span>
+            {reqDef && onSelect ? (
+              <button
+                className="insp-impact-link"
+                type="button"
+                onClick={() => onSelect({ id: `impact-req-${reqDef}`, type: 'requirement', name: reqDef })}
+              >
+                {displayText}
+              </button>
+            ) : (
+              <span className="insp-impact-name">{displayText}</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AttributesSection({ attrs }: { attrs: AttributeEntry[] }) {
+  const significant = attrs.filter(a => a.typeName !== undefined);
+  if (significant.length === 0) return null;
+  return (
+    <div className="insp-impact-group">
+      <div className="insp-impact-group-label">Attributes</div>
+      {significant.map((a, i) => (
+        <div key={i} className="insp-impact-row">
+          <span className="insp-impact-type">{a.typeName}</span>
+          <span className="insp-impact-name">
+            {a.name}{a.value !== undefined ? ` = ${a.value}` : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const ASIL_COLOR: Record<string, string> = {
+  D: '#f87171', C: '#fb923c', B: '#facc15', A: '#a3e635', QM: '#64748b',
+};
+
+function TrlcSection({
+  elementName,
+  trlcData,
+  onSelect,
+}: {
+  elementName: string;
+  trlcData: TrlcData;
+  onSelect?: (s: NonNullable<SelectionState>) => void;
+}) {
+  const reqts = requirementsForElement(trlcData, elementName);
+  if (reqts.length === 0) return null;
+  return (
+    <div className="insp-section">
+      <div className="insp-section-label">TRLC Requirements</div>
+      <div className="insp-impact-group">
+        {reqts.map(req => (
+          <div key={req.id} className="insp-impact-row">
+            <span className="insp-impact-type" style={{ color: ASIL_COLOR[req.asil ?? ''] ?? '#64748b' }}>
+              {req.asil ? `ASIL-${req.asil}` : 'TRLC'}
+            </span>
+            {onSelect ? (
+              <button
+                className="insp-impact-link"
+                type="button"
+                onClick={() => onSelect({
+                  id: `trlc-req-${req.id}`,
+                  type: 'requirement',
+                  name: req.id,
+                  extra: { reqId: req.id, text: req.text, title: req.title, ...(req.asil ? { asil: req.asil } : {}) },
+                })}
+              >
+                {req.id} — {req.title}
+              </button>
+            ) : (
+              <span className="insp-impact-name">{req.id} — {req.title}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const PORT_EMFTYPES_UI   = new Set(['PortUsage', 'PortDefinition']);
+const ACTION_USAGE_TYPES = new Set(['ActionUsage', 'PerformActionUsage']);
+
+function ImpactSection({
+  trace,
+  onSelect,
+}: {
+  trace: ImpactTrace;
+  onSelect?: (s: NonNullable<SelectionState>) => void;
+}) {
+  // Filter ownedElements to avoid duplication with dedicated sections.
+  const nonSpecificOwned = trace.ownedElements.filter(el => {
+    if (PORT_EMFTYPES_UI.has(el.type)) return false;           // shown in Ports
+    if (ACTION_USAGE_TYPES.has(el.type)) return false;         // shown in Actions
+    if (el.type === 'RequirementUsage') return false;          // shown in Requirements
+    if (el.type === 'AttributeUsage') return false;            // shown in Attributes
+    if (el.type === 'ActionDefinition' && trace.relatedBehaviors.length > 0) return false; // shown in Behaviors
+    return true;
+  });
+
+  const hasContent =
+    nonSpecificOwned.length > 0 ||
+    trace.ownedPorts.length > 0 ||
+    trace.ownedActions.length > 0 ||
+    trace.ownedRequirements.length > 0 ||
+    trace.ownedAttributes.length > 0 ||
+    trace.ownerChain.length > 0 ||
+    trace.usedAsTypeBy.length > 0 ||
+    trace.connectedElements.length > 0 ||
+    trace.relatedBehaviors.length > 0 ||
+    trace.relatedFlows.length > 0 ||
+    trace.incomingFlows.length > 0 ||
+    trace.outgoingFlows.length > 0 ||
+    !!trace.typedByDef;
+
+  if (!hasContent) return null;
+
+  const hasDirectedFlows = trace.incomingFlows.length > 0 || trace.outgoingFlows.length > 0;
+
+  return (
+    <div className="insp-section">
+      <div className="insp-section-label">Impact</div>
+      <ImpactRow label="Owner"           items={trace.ownerChain.slice(0, 1)} onSelect={onSelect} />
+      <ImpactRow label="Ports"           items={trace.ownedPorts}             onSelect={onSelect} />
+      <ImpactRow label="Actions"         items={trace.ownedActions}           onSelect={onSelect} />
+      <RequirementRow                    items={trace.ownedRequirements}      onSelect={onSelect} />
+      <AttributesSection                 attrs={trace.ownedAttributes} />
+      <ImpactRow label="Owned elements"  items={nonSpecificOwned}             onSelect={onSelect} />
+      {trace.relatedBehaviors.length > 0 && (
+        <div className="insp-impact-group">
+          <div className="insp-impact-group-label">Behaviors</div>
+          {trace.relatedBehaviors.map((b, i) => (
+            <div key={i} className="insp-impact-row">
+              <span className="insp-impact-type">ActionDefinition</span>
+              {onSelect ? (
+                <button
+                  className="insp-impact-link"
+                  type="button"
+                  onClick={() => onSelect({ id: `impact-${b.name}`, type: 'behavior', name: b.name })}
+                >
+                  {b.qualifiedName}
+                </button>
+              ) : (
+                <span className="insp-impact-name">{b.qualifiedName}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <ImpactRow label="Used as type by" items={trace.usedAsTypeBy}                          onSelect={onSelect} />
+      <ImpactRow label="Typed by"        items={trace.typedByDef ? [trace.typedByDef] : []} onSelect={onSelect} />
+      <ImpactRow label="Connected to"    items={trace.connectedElements}                    onSelect={onSelect} />
+      {hasDirectedFlows ? (
+        <>
+          <FlowRow label="Incoming flows" flows={trace.incomingFlows} direction="from" onSelect={onSelect} />
+          <FlowRow label="Outgoing flows" flows={trace.outgoingFlows} direction="to"   onSelect={onSelect} />
+        </>
+      ) : (
+        <FlowRow label="Related flows" flows={trace.relatedFlows} direction="both" onSelect={onSelect} />
+      )}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function InspectorPanel({ selection, result, source, onSourceChange, onIncrementalEdit, onCollapse }: Props) {
+export default function InspectorPanel({ selection, result, source, onSourceChange, onIncrementalEdit, onCollapse, impactTrace, onSelect, trlcData }: Props) {
   const [modal, setModal] = useState<ModalKind>(null);
 
   function apply(edit: IncrementalEdit | null, fallbackText: string): void {
@@ -919,6 +1216,8 @@ export default function InspectorPanel({ selection, result, source, onSourceChan
             <div className="insp-name">{selection.name}</div>
           </div>
           {inspBody}
+          {impactTrace && <ImpactSection trace={impactTrace} onSelect={onSelect} />}
+          {trlcData && selection && <TrlcSection elementName={selection.name} trlcData={trlcData} onSelect={onSelect} />}
           {relatedDiags.length > 0 && (
             <div className="insp-section">
               <div className="insp-section-label">Diagnostics ({relatedDiags.length})</div>

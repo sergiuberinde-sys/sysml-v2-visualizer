@@ -42,7 +42,7 @@ function namedNodes(nodes: SysMLNode[]): Array<{ name: string; namespace?: strin
 
 // ── Validator ─────────────────────────────────────────────────────────────────
 
-export function validate(result: ParseResult): ParseDiagnostic[] {
+export function validate(result: Pick<ParseResult, 'nodes' | 'packages' | 'diagnostics'>): ParseDiagnostic[] {
   const { nodes } = result;
   const diagnostics: ParseDiagnostic[] = [];
 

@@ -1,0 +1,98 @@
+{
+  "source": "requirements/safety_goals.trlc",
+  "requirements_source": "requirements/trlc_AccPdCdd.trlc",
+  "note": "Derived software-level safety goals / safety evidence clusters based on ASIL-tagged AcpdCdd TRLC requirements. Safety goals are intentionally linked only to requirement IDs. Component/file support is derived automatically through existing // trlc-satisfies traces; no direct // safety-goal comments are required or maintained in SysML.",
+  "safety_goals": {
+    "SG_ACPD_01": {
+      "title": "Prevent incorrect accelerator pedal signal output",
+      "asil": "C",
+      "covered_requirements": [
+        "25094059",
+        "25094008",
+        "25094047",
+        "44879821",
+        "25131815",
+        "25131787",
+        "25187609"
+      ]
+    },
+    "SG_ACPD_02": {
+      "title": "Detect and react to invalid sensor, timing, ADC and supply diagnostics",
+      "asil": "C",
+      "covered_requirements": [
+        "30477411",
+        "25128928",
+        "44879718",
+        "44879786",
+        "25128720",
+        "25128907",
+        "28883887",
+        "28883920",
+        "30477478"
+      ]
+    },
+    "SG_ACPD_03": {
+      "title": "Ensure correct ADC acquisition, buffering, conversion and processing chain",
+      "asil": "C",
+      "covered_requirements": [
+        "25094200",
+        "28712675",
+        "28824427",
+        "28824395",
+        "25094087",
+        "25094135",
+        "28820111",
+        "28820750",
+        "25127428",
+        "25127531",
+        "25130711",
+        "25187813",
+        "28710933",
+        "44880031"
+      ]
+    },
+    "SG_ACPD_04": {
+      "title": "Maintain safe accelerator pedal power-supply control state",
+      "asil": "C",
+      "covered_requirements": [
+        "25188489",
+        "25188507",
+        "41716503",
+        "25188528",
+        "28826666",
+        "28826692",
+        "25188589"
+      ]
+    },
+    "SG_ACPD_05": {
+      "title": "Preserve real-time execution and ADC notification assumptions",
+      "asil": "C",
+      "covered_requirements": [
+        "28596119",
+        "28710924",
+        "28711397",
+        "41781961",
+        "41781989",
+        "28711565",
+        "28711591",
+        "28710854",
+        "30474716"
+      ]
+    },
+    "SG_ACPD_06": {
+      "title": "Preserve ASIL D partitioning assumptions",
+      "asil": "D",
+      "covered_requirements": [
+        "25093540"
+      ]
+    },
+    "SG_ACPD_07": {
+      "title": "Maintain Sensor1/Sensor2 freedom-from-interference at AcpdCdd level",
+      "asil": "C",
+      "covered_requirements": [
+        "25090543"
+      ]
+    }
+  },
+  "derived_component_support": "Computed by tools/check_safety_goal_coverage.py from contracts/trlc_unit_allocations.json and SysML // trlc-satisfies comments."
+}

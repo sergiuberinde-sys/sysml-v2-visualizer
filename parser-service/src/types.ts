@@ -9,6 +9,8 @@ export interface ModelNode {
   type: string;
   name: string | null;
   direction?: string | null;
+  startLine?: number;
+  endLine?: number;
   children: ModelNode[];
 }
 
@@ -26,6 +28,8 @@ export interface BehaviorAction {
   owningDefName?: string;
   /** For ActionDefinition entries: EMF type of the enclosing structural definition (e.g. "PartDefinition") */
   owningDefType?: string;
+  /** For ActionUsage/PerformActionUsage: resolved type name from FeatureTyping (e.g. "ReadSensor") */
+  actionType?: string;
 }
 
 export type BehaviorFlow =

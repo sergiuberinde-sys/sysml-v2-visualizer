@@ -1,0 +1,75 @@
+# TRLC allocation derived from latest ASIL TRLC comments
+
+This file was regenerated from the allocation hints in `requirements/trlc_AccPdCdd.trlc`.
+
+## AcpdCdd Component Level
+
+- 25093540 — Partitioning
+- 28596119 — 10 ms main runnable
+- 25090543 — FFI separation between Sensor1 and Sensor2
+- 25094200 — ADC notification interfaces for Group0, Group1, Supply
+- 28712675 — Notification processing only when AcpdCdd is ACTIVE
+- 30477411 — ADC error callback interfaces
+- 25094059 — Structure for signal value and qualifier
+- 25094008 — RTE write in Main10ms
+- 25094047 — Qualifiers consistent with signal values
+- 25128928 — Deviation check
+- 44880031 — Processing order
+- 25187609 — Qualifier datatype and values
+
+## Input
+
+- 28824395 — ADC buffers
+- 25094135 — uint16 buffers
+- 25127428 — Store Sensor1/2 mission and monitoring samples
+- 25127531 — Store supply voltage samples
+- 25130711 — Avoid buffer corruption during processing
+- 25187813 — Write mission+monitoring pair only when both samples are present
+- 28710933 — Buffer timestamps with ADC samples
+- 30474716 — Update frequency of notifications
+
+## Process
+
+- 28824427 — Moving averages
+- 25094087 — float32 for voltage conversion
+- 28820111 — Normalisation factors
+- 28820750 — Apply conversion factors to every sample
+
+## Powermanagement
+
+- 25188489 — Activation interface
+- 25188507 — Activate power supply via DIO
+- 41716503 — PowerState
+- 25188528 — Repeated ACTIVATE / DEACTIVATE behavior
+- 28826666 — DEACTIVATE→ACTIVATE behavior
+- 28826692 — ACTIVATE→DEACTIVATE behavior
+- 25188589 — PowerState → qualifiers
+
+## Monitoring
+
+- 25094047 — Qualifiers consistent with signal values
+- 44879718 — Deviation check Sensor1
+- 44879786 — Deviation check Sensor2
+- 25128720 — Sensor1 qualifier ERROR on INVALID
+- 25128907 — Sensor2 qualifier ERROR on INVALID
+- 25187609 — Qualifier datatype and values
+- 28710924 — Time tolerance window 500 µs
+- 28711397 — Qualifiers ERROR if notification outside time window
+- 41781961 — Qualifiers ERROR on update frequency violation
+- 41781989 — Supply qualifiers ERROR on update frequency violation
+- 28711565 — Supervise arrivals and update frequency of notifications
+- 28711591 — More than one missing notification ⇒ qualifiers ERROR
+- 28883887 — Monitor Sensor1Supply voltage range
+- 28883920 — Monitor Sensor2Supply voltage range
+- 30477478 — Reaction to ADC conversion errors
+- 28710854 — Detect missing or unintended notification calls between Group0 and Group1
+- 25188589 — PowerState → qualifiers
+- 30474716 — Update frequency of notifications
+
+## Output
+
+- 25094059 — Structure for signal value and qualifier
+- 25094008 — RTE write in Main10ms
+- 44879821 — Final values to RTE in the 10 ms task
+- 25131815 — Final qualifiers to RTE in the 10 ms task
+- 25131787 — Single consistent RTE write

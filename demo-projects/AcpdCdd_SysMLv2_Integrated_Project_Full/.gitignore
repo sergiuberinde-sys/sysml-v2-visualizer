@@ -1,0 +1,19 @@
+.metadata/
+bin/
+tmp/
+*.log
+
+**/.settings/
+**/.project
+**/.classpath
+
+__pycache__/
+*.pyc
+
+# Generated validation and analysis reports.
+# Recreate with: python tools/run_all_checks.py
+reports/*
+!reports/.gitkeep
+
+.DS_Store
+Thumbs.db

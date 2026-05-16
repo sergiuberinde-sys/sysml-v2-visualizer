@@ -1,0 +1,77 @@
+package AcpdCddSafety
+
+// Safety-analysis catalogue records for AcpdCdd model-assisted FMEA.
+// These records are explicit engineer-owned analysis artefacts, not hidden JSON inputs.
+// SysML v2 FTA/root-cause models reference these IDs using parser-safe comments.
+
+type GuideWord is enum {
+    LossOfFunction,
+    DelayedFunction,
+    IncorrectValue,
+    WrongSequence,
+    DuplicatedFunction,
+    WrongInterface,
+    NotDetected
+}
+
+type ASIL is enum {
+    QM,
+    ASIL_A,
+    ASIL_B,
+    ASIL_C,
+    ASIL_D
+}
+
+type FailureMode {
+    guideword GuideWord
+    description String
+    failureeffect String
+    safety ASIL
+    interface String
+    version Integer
+}
+
+MissingAdcNotification FailureMode {
+    guideword = LossOfFunction
+    description = "ADC conversion notification is missing or not received by AcpdCdd input handling when expected."
+    failureeffect = "Input buffers may not be refreshed and downstream processing may use stale sensor information."
+    safety = ASIL_C
+    interface = "ADC.AcpdCdd_AdcNotificationGroup0_1_Supply"
+    version = 1
+}
+
+DelayedAdcNotification FailureMode {
+    guideword = DelayedFunction
+    description = "ADC conversion notification is received too late for the expected AcpdCdd runtime cycle."
+    failureeffect = "Timestamp supervision may detect stale input data and the output qualifier may need to be forced to ERROR."
+    safety = ASIL_C
+    interface = "ADC.AcpdCdd_AdcNotificationGroup0_1_Supply"
+    version = 1
+}
+
+IncorrectProcessedSensorValue FailureMode {
+    guideword = IncorrectValue
+    description = "Processed accelerator sensor value or moving average is incorrect although processing completed."
+    failureeffect = "Monitoring may evaluate wrong accelerator data and publish an incorrect value or qualifier unless plausibility checks detect it."
+    safety = ASIL_C
+    interface = "AcpdCdd_Process.returnProcessedData"
+    version = 1
+}
+
+MissingMonitoringReaction FailureMode {
+    guideword = NotDetected
+    description = "Monitoring does not detect or react to invalid input, invalid processing result, or reference-voltage error information."
+    failureeffect = "A degraded or unsafe signal condition may remain accepted by output handling."
+    safety = ASIL_C
+    interface = "AcpdCdd_Monitoring"
+    version = 1
+}
+
+WrongRteOutput FailureMode {
+    guideword = IncorrectValue
+    description = "AcpdCdd output writes an incorrect value or qualifier to the RTE."
+    failureeffect = "External software components may consume an incorrect accelerator-pedal signal state."
+    safety = ASIL_C
+    interface = "RTE.Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc"
+    version = 1
+}

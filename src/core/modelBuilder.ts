@@ -25,8 +25,11 @@ export function parseAndValidate(sysmlText: string): ParseAndValidateResult {
     nodes:        analysis.model.nodes,
     packages:     analysis.model.packages,
     diagnostics:  analysis.diagnostics,
+    parserMode:   analysis.parserMode,
   };
 }
 
 export { elementLines };
+export { PARSER_MODE, PARSER_MODE_LABELS } from './parserMode';
 export type { ParseResult, ParseDiagnostic, SysMLNode, PackageDefNode, SemanticModel };
+export type { ParserMode } from './parserMode';

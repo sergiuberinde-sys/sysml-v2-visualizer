@@ -1,0 +1,206 @@
+{
+  "component": "AcpdCdd",
+  "initialization": {
+    "entryPoint": "AcpdCdd_Main10ms",
+    "retryCounter": "setup_trial_counter",
+    "maxRetries": "SETUP_RESULT_BUFFER_MAX_ATTEMPTS",
+    "stateVariable": "AcpdCdd_active",
+    "flow": [
+      {
+        "step": 1,
+        "condition": "AcpdCdd_active == TRUE",
+        "action": "Execute cyclic tasks (Input -> Process -> Monitoring -> Output) in AcpdCdd_Main10ms"
+      },
+      {
+        "step": 2,
+        "condition": "AcpdCdd_active == FALSE",
+        "decision": "Has setup_trial_counter reached SETUP_RESULT_BUFFER_MAX_ATTEMPTS?",
+        "branches": [
+          {
+            "condition": "NO",
+            "actions": [
+              "Call AcpdCdd_StartInputCollector() in AcpdCdd_Input to setup ADC result buffers (Group0, Group1, Supply)",
+              "Call AcpdCdd_StartProcessing() in process module",
+              "Enable ADC notifications and hardware triggers",
+              "Set AcpdCdd_active = TRUE",
+              "Increment setup_trial_counter"
+            ]
+          },
+          {
+            "condition": "YES",
+            "actions": [
+              "Stop processing (do not call Input/Process/Monitoring/Output)",
+              "Update RTE output with safe/default values"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "mainCycle": {
+    "name": "AcpdCdd_Main10ms",
+    "period_ms": 10,
+    "task": "ASIL D",
+    "pipeline": [
+      "AcpdCdd_Activation() (powermanagement path)",
+      "AcpdCdd_CollectInputData()",
+      "AcpdCdd_Process()",
+      "AcpdCdd_PowermanagementCalcStatus()",
+      "AdcBist_GetVaref1ErrorStatus(), AdcBist_GetVaref2ErrorStatus()",
+      "AcpdCdd_Monitoring()",
+      "AcpdCdd_Output()"
+    ]
+  },
+  "sequenceDiagram": {
+    "name": "AcpdCdd_Runtime_Sequence",
+    "lifelines": [
+      "ADC",
+      "AdcBist",
+      "RTE",
+      "AcpdCdd",
+      "AcpdCdd_Input",
+      "AcpdCdd_Process",
+      "AcpdCdd_Powermanagement",
+      "AcpdCdd_Monitoring",
+      "AcpdCdd_Output"
+    ],
+    "messages": [
+      {
+        "from": "AcpdCdd",
+        "to": "AcpdCdd_Powermanagement",
+        "name": "AcpdCdd_Activation()",
+        "purpose": "Enable/disable accelerator pedal module"
+      },
+      {
+        "from": "AcpdCdd_Powermanagement",
+        "to": "RTE",
+        "name": "Rte_DRead_AcpdCdd_Activation_AcpdCdd_Activation",
+        "purpose": "Read activation status from RTE"
+      },
+      {
+        "from": "RTE",
+        "to": "AcpdCdd_Powermanagement",
+        "name": "return activation status",
+        "purpose": "Provide ACTIVATE/DEACTIVATE information"
+      },
+      {
+        "from": "AcpdCdd_Powermanagement",
+        "to": "AcpdCdd",
+        "name": "return",
+        "purpose": "Power management step complete"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AcpdCdd_Input",
+        "name": "AcpdCdd_CollectInputData()",
+        "purpose": "Fetch buffered sensor and supply data"
+      },
+      {
+        "from": "ADC",
+        "to": "AcpdCdd_Input",
+        "name": "interrupt notifications (AcpdCdd_AdcNotificationGroup0/1/Supply)",
+        "asynchronous": true,
+        "purpose": "Provide raw ADC samples and timestamps into buffers"
+      },
+      {
+        "from": "AcpdCdd_Input",
+        "to": "AcpdCdd",
+        "name": "return InputData",
+        "purpose": "Return buffered and grouped data for Sensor1/Sensor2"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AcpdCdd_Process",
+        "name": "AcpdCdd_Process()",
+        "purpose": "Calculate averages and preliminary qualifiers"
+      },
+      {
+        "from": "AcpdCdd_Process",
+        "to": "AcpdCdd",
+        "name": "return ProcessedData",
+        "purpose": "Return ChannelMeansType / processed voltages"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AcpdCdd_Powermanagement",
+        "name": "AcpdCdd_PowermanagementCalcStatus()",
+        "purpose": "Determine current power state and transitions"
+      },
+      {
+        "from": "AcpdCdd_Powermanagement",
+        "to": "AcpdCdd",
+        "name": "return PowerState",
+        "purpose": "Provide current power status for monitoring"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AdcBist",
+        "name": "AdcBist_GetVaref1ErrorStatus()",
+        "purpose": "Check VARef1 error flag"
+      },
+      {
+        "from": "AdcBist",
+        "to": "AcpdCdd",
+        "name": "return VARef1ErrorFlag",
+        "purpose": "Provide VARef1 error status"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AdcBist",
+        "name": "AdcBist_GetVaref2ErrorStatus()",
+        "purpose": "Check VARef2 error flag"
+      },
+      {
+        "from": "AdcBist",
+        "to": "AcpdCdd",
+        "name": "return VARef2ErrorFlag",
+        "purpose": "Provide VARef2 error status"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AcpdCdd_Monitoring",
+        "name": "AcpdCdd_Monitoring(InputData, ProcessedData, PowerState, VARef1ErrorFlag, VARef2ErrorFlag)",
+        "purpose": "Compute final qualifiers and adjusted values"
+      },
+      {
+        "from": "AcpdCdd_Monitoring",
+        "to": "AcpdCdd",
+        "name": "return AcceleratorData",
+        "purpose": "Return data with qualifiers"
+      },
+      {
+        "from": "AcpdCdd",
+        "to": "AcpdCdd_Output",
+        "name": "AcpdCdd_Output(AcceleratorData)",
+        "purpose": "Write to RTE"
+      },
+      {
+        "from": "AcpdCdd_Output",
+        "to": "RTE",
+        "name": "Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc",
+        "purpose": "Provide consistent accelerator pedal signals to RTE"
+      }
+    ]
+  },
+  "dataflowPipelines": [
+    {
+      "name": "SensorDataPipeline",
+      "stages": [
+        "ADC -> AcpdCdd_Input (interrupts)",
+        "AcpdCdd_Input -> Sensor1Data, Sensor2Data (mission/monitoring/supply grouping)",
+        "Sensor1Data & Sensor2Data -> AcpdCdd_Process (averaging)",
+        "AcpdCdd_Process -> ProcessedData",
+        "ProcessedData & InputData -> AcpdCdd_Monitoring (integrity + qualifiers)",
+        "AcpdCdd_Monitoring -> AcpdCdd_Output -> RTE"
+      ]
+    },
+    {
+      "name": "PowerManagementPipeline",
+      "stages": [
+        "RTE -> AcpdCdd_Powermanagement via Rte_DRead_AcpdCdd_Activation",
+        "AcpdCdd_Powermanagement -> Dio (switch sensor supply)",
+        "AcpdCdd_Powermanagement -> AcpdCdd_Monitoring (PowerState input for qualifier logic)"
+      ]
+    }
+  ]
+}

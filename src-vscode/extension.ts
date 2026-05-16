@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   analyzeSysML,
-  getDiagnostics,
   getSymbolAtPosition,
   getDefinitionForSymbol,
   getReferencesToSymbol,
@@ -29,10 +28,6 @@ export function activate(context: vscode.ExtensionContext): void {
   type NodeRange = { startLine: number; endLine: number };
   let nodeIdToRange = new Map<string, NodeRange>();
 
-  // Mirrors the webview's modelingMode so prototype diagnostics are suppressed
-  // in official mode without requiring a separate VS Code setting change.
-  let webviewModelingMode: 'prototypeSubset' | 'officialSysMLV2' = 'prototypeSubset';
-
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
   context.subscriptions.push(diagnosticCollection);
 
@@ -56,54 +51,52 @@ export function activate(context: vscode.ExtensionContext): void {
                                       vscode.DiagnosticSeverity.Information;
   }
 
-  // Publishes diagnostics for a .sysml document.
-  // In official mode, calls the parser-service; otherwise uses the prototype parser.
   function publishDiagnosticsForDocument(document: vscode.TextDocument): void {
     if (!document.fileName.endsWith('.sysml')) return;
-
-    const cfg = vscode.workspace.getConfiguration('sysmlVisualizer');
-    const officialMode = cfg.get<boolean>('officialParserMode', false);
-
-    // Use official diagnostics when either the VS Code setting is on OR the webview
-    // has switched to official mode — prototype diagnostics are obsolete in that context.
-    if (officialMode || webviewModelingMode === 'officialSysMLV2') {
-      void publishDiagnosticsOfficial(document);
-    } else {
-      publishDiagnosticsPrototype(document);
-    }
-  }
-
-  function publishDiagnosticsPrototype(document: vscode.TextDocument): void {
-    const analysis    = analyzeSysML(document.getText());
-    const diagnostics = getDiagnostics(analysis).map(d => {
-      const range = toVsCodeRange(document, d.line, d.column);
-      const vd    = new vscode.Diagnostic(range, d.message, mapSeverity(d));
-      vd.source   = 'SysML v2 Visualizer';
-      vd.code     = d.code;
-      return vd;
-    });
-    diagnosticCollection.set(document.uri, diagnostics);
-    console.log('[sysml-visualizer] prototype diagnostics:', document.uri.toString(), diagnostics.length);
+    void publishDiagnosticsOfficial(document);
   }
 
   async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
+    try {
     const cfg = vscode.workspace.getConfiguration('sysmlVisualizer');
     const serviceUrl = cfg.get<string>('parserServiceUrl', 'http://localhost:9001').replace(/\/$/, '');
     const uri = document.uri;
+    console.log(`[sysml-visualizer] START publishDiagnosticsOfficial: ${uri.fsPath}`);
+
+    // Collect all other .sysml files in the workspace as context so the parser
+    // can resolve cross-file imports (e.g. "private import Pkg::Types::*").
+    const contextFiles: { name: string; text: string }[] = [];
+    const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+    console.log(`[sysml-visualizer] findFiles returned ${allSysml.length} .sysml files`);
+    await Promise.all(allSysml.map(async (u) => {
+      if (u.toString() === uri.toString()) return;
+      try {
+        const bytes = await vscode.workspace.fs.readFile(u);
+        const text  = Buffer.from(bytes).toString('utf8');
+        const name  = u.path.split('/').pop() ?? u.path;
+        contextFiles.push({ name, text });
+      } catch {
+        // skip unreadable files silently
+      }
+    }));
+    console.log(`[sysml-visualizer] contextFiles=${contextFiles.length}`);
 
     let raw: unknown;
     try {
       const res = await fetch(`${serviceUrl}/parse`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: document.getText() }),
+        body: JSON.stringify({
+          text: document.getText(),
+          ...(contextFiles.length ? { context: contextFiles } : {}),
+        }),
       });
       raw = await res.json();
     } catch (err) {
       console.error('[sysml-visualizer] parser-service unreachable:', err);
       const vd = new vscode.Diagnostic(
         new vscode.Range(0, 0, 0, 0),
-        `SysML parser service unreachable at ${serviceUrl}. Start parser-service or disable officialParserMode.`,
+        `SysML parser service unreachable at ${serviceUrl}. Start the parser-service (npm run parser:dev).`,
         vscode.DiagnosticSeverity.Warning,
       );
       vd.source = 'SysML v2 Visualizer';
@@ -155,6 +148,9 @@ export function activate(context: vscode.ExtensionContext): void {
         const nodeCount = gNodes.length || '?';
         console.log(`[sysml-visualizer] updateGraph sent: ${nodeCount} nodes, behavior=${behavior != null}, rangeIndex=${nodeIdToRange.size}`);
       }
+    }
+    } catch (err) {
+      console.error('[sysml-visualizer] publishDiagnosticsOfficial ERROR:', err);
     }
   }
 
@@ -284,7 +280,6 @@ export function activate(context: vscode.ExtensionContext): void {
     panel.webview.onDidReceiveMessage(async (msg: {
       type: string;
       newText?: string;
-      mode?: string;
       edit?: {
         kind: 'insert' | 'replace' | 'delete';
         position?: { line: number; column: number };
@@ -414,14 +409,6 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         console.log(`[sysml-visualizer] revealSemanticElement "${semanticId}" → L${range.startLine}–${range.endLine}`);
 
-      } else if (msg.type === 'modelingModeChange') {
-        const newMode = msg.mode as 'prototypeSubset' | 'officialSysMLV2';
-        webviewModelingMode = newMode;
-        console.log(`[sysml-visualizer] modelingModeChange → ${newMode}`);
-        if (currentSysmlUri) {
-          const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
-          publishDiagnosticsForDocument(doc);
-        }
       }
     }, undefined, disposables);
 

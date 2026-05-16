@@ -6,4 +6,8 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: process.env['VITE_BASE'] ?? './',
+  // Pre-bundle elkjs's UMD bundle so Vite can serve it as ESM in dev mode.
+  optimizeDeps: {
+    include: ['elkjs/lib/elk.bundled.js'],
+  },
 })
