@@ -1,4 +1,4 @@
-import subprocess
+import runpy
 import sys
 from pathlib import Path
 
@@ -17,16 +17,26 @@ checks = [
     ("Typed parts", PROJECT_ROOT / "tools" / "check_typed_parts.py"),
     ("Typed items", PROJECT_ROOT / "tools" / "check_typed_items.py"),
     ("Conditional behavior views", PROJECT_ROOT / "tools" / "check_conditional_behavior_views.py"),
+    ("Guarded conditional successions", PROJECT_ROOT / "tools" / "check_guarded_conditional_successions.py"),
+    ("AcpdCdd AdcGroup0 conditional behavior", PROJECT_ROOT / "tools" / "check_adc_group0_conditional_behavior.py"),
+    ("Input action entry/data continuity", PROJECT_ROOT / "tools" / "check_input_action_entry_and_continuity.py"),
+    ("File-by-file action refactor", PROJECT_ROOT / "tools" / "check_file_by_file_action_refactor.py"),
     ("SysML safety analysis experiment", PROJECT_ROOT / "tools" / "check_sysml_safety_analysis_experiment.py"),
     ("Component interaction sequences", PROJECT_ROOT / "tools" / "check_component_interaction_sequences.py"),
 ]
 
 failed = False
 for name, script in checks:
-    print(f"\n=== Running {name} ===")
-    result = subprocess.run([sys.executable, str(script)], cwd=PROJECT_ROOT)
-    if result.returncode != 0:
+    print(f"\n=== Running {name} ===", flush=True)
+    try:
+        runpy.run_path(str(script), run_name="__main__")
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+        if code != 0:
+            failed = True
+    except Exception as exc:
         failed = True
+        print(f"{name}: ERROR: {exc}")
 
 print("\n=== SUMMARY ===")
 if failed:

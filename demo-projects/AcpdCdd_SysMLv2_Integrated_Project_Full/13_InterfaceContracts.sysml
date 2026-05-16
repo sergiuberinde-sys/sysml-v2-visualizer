@@ -1,4 +1,3 @@
-
 package InterfaceContracts {
 
     private import Types::*;

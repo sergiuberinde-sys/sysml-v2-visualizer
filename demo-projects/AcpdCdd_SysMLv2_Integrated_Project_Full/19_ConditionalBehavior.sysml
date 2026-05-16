@@ -1,34 +1,223 @@
-
 package ConditionalBehaviorViews {
 
+    private import ScalarValues::*;
     private import Types::*;
 
-    // Conditional behavior view.
-    // Use this file to visualize decision/merge-style behavior in Eclipse.
-    // Sequence ordering remains in 14_ComponentInteractionSequences.sysml.
-    // Typed data movement remains in 18_ComponentDataflows.sysml.
+    item def DecodeAdcGroupsDecisionType {
+        attribute timestampFresh : Boolean;
+    }
+
+
+    item def ReceiveAdcNotificationDecisionType {
+        attribute notificationArrived : Boolean;
+    }
+
+
+    item def ValidateGroup0SampleDecisionType {
+        attribute group0SampleValid : Boolean;
+    }
+
+
+    item def ValidateGroup1SampleDecisionType {
+        attribute group1SampleValid : Boolean;
+    }
+
+
+    item def ValidateSensorPairPlausibilityDecisionType {
+        attribute sensorPairPlausible : Boolean;
+    }
+
+
+    item def ValidateSupplySampleDecisionType {
+        attribute supplySampleValid : Boolean;
+    }
+
+
+    // Conditional behavior views.
+    // Official SysML v2 action/control semantics are modeled textually.
+    // A visualizer may render action usages with these names as:
+    // - Decision_* : decision diamond
+    // - Merge_*    : merge diamond
+    // - Fork_*     : fork bar
+    // - Join_*     : join bar
+    // The model remains parser-safe: these are normal action usages, not pseudo-SysML syntax.
+
+    action def AcpdCdd_Input_Main10ms_Branching {
+
+        in item notificationPayload : AdcNotificationPayloadType;
+        out item inputData : InputDataType;
+
+        // Guard values are typed Boolean features of the action outputs.
+        // The guarded successions below follow the official pattern:
+        // first <source> if <Boolean expression> then <target>;
+        // A behavior visualizer can render these as dotted guarded arrows.
+
+        action ReceiveAdcNotification {
+            out item decision : ReceiveAdcNotificationDecisionType;
+            out item notification : AdcNotificationPayloadType;
+        }
+
+        action DecodeAdcGroups {
+            out item decision : DecodeAdcGroupsDecisionType;
+            in item notification : AdcNotificationPayloadType;
+            out item decodedInputData : InputDataType;
+        }
+
+        action IncrementMissingNotificationCounter;
+        action KeepPreviousInputBuffer {
+            out item fallbackInputData : InputDataType;
+        }
+        action SetMissingNotificationQualifier {
+            in item fallbackInputData : InputDataType;
+            out item qualifiedFallbackInputData : InputDataType;
+        }
+
+        action ValidateTimestamp {
+            in item decodedInputData : InputDataType;
+            out item timestampCheckedInputData : InputDataType;
+        }
+        action MarkNotificationStale {
+            in item decodedInputData : InputDataType;
+            out item staleInputData : InputDataType;
+        }
+
+        action Fork_IndependentInputChecks;
+        action ValidateGroup0Sample {
+            out item decision : ValidateGroup0SampleDecisionType;
+            in item inputData : InputDataType;
+            out item group0CheckedInputData : InputDataType;
+        }
+        action ValidateGroup1Sample {
+            out item decision : ValidateGroup1SampleDecisionType;
+            in item inputData : InputDataType;
+            out item group1CheckedInputData : InputDataType;
+        }
+        action ValidateSupplySample {
+            out item decision : ValidateSupplySampleDecisionType;
+            in item inputData : InputDataType;
+            out item supplyCheckedInputData : InputDataType;
+        }
+        action Join_IndependentInputChecks;
+
+        action SetGroup0InvalidQualifier;
+        action SetGroup1InvalidQualifier;
+        action SetSupplyInvalidQualifier;
+
+        action ValidateSensorPairPlausibility {
+            out item decision : ValidateSensorPairPlausibilityDecisionType;
+            in item inputData : InputDataType;
+            out item plausibilityCheckedInputData : InputDataType;
+        }
+        action SetSensorPairImplausibleQualifier;
+
+        action ComposeValidInputData {
+            out item composedInputData : InputDataType;
+        }
+        action ComposeFallbackInputData {
+            out item composedInputData : InputDataType;
+        }
+        action PublishInputData {
+            in item inputData : InputDataType;
+        }
+
+        // Decision: ADC notification available?
+        first ReceiveAdcNotification if ReceiveAdcNotification.decision.notificationArrived then DecodeAdcGroups;
+
+        first ReceiveAdcNotification if not ReceiveAdcNotification.decision.notificationArrived then IncrementMissingNotificationCounter;
+
+        first IncrementMissingNotificationCounter then KeepPreviousInputBuffer;
+        first KeepPreviousInputBuffer then SetMissingNotificationQualifier;
+
+        flow from ReceiveAdcNotification.notification to DecodeAdcGroups.notification;
+        flow from KeepPreviousInputBuffer.fallbackInputData to SetMissingNotificationQualifier.fallbackInputData;
+
+        // Decision: timestamp fresh?
+        first DecodeAdcGroups if DecodeAdcGroups.decision.timestampFresh then ValidateTimestamp;
+
+        first DecodeAdcGroups if not DecodeAdcGroups.decision.timestampFresh then MarkNotificationStale;
+
+        flow from DecodeAdcGroups.decodedInputData to ValidateTimestamp.decodedInputData;
+        flow from DecodeAdcGroups.decodedInputData to MarkNotificationStale.decodedInputData;
+
+        // Fork/fan-out of independent checks.
+        first ValidateTimestamp then Fork_IndependentInputChecks;
+        first Fork_IndependentInputChecks then ValidateGroup0Sample;
+        first Fork_IndependentInputChecks then ValidateGroup1Sample;
+        first Fork_IndependentInputChecks then ValidateSupplySample;
+
+        flow from ValidateTimestamp.timestampCheckedInputData to ValidateGroup0Sample.inputData;
+        flow from ValidateTimestamp.timestampCheckedInputData to ValidateGroup1Sample.inputData;
+        flow from ValidateTimestamp.timestampCheckedInputData to ValidateSupplySample.inputData;
+
+        // Guarded outputs from each check. A visualizer may render the false branch as a dotted guarded edge.
+        first ValidateGroup0Sample if not ValidateGroup0Sample.decision.group0SampleValid then SetGroup0InvalidQualifier;
+
+        first ValidateGroup1Sample if not ValidateGroup1Sample.decision.group1SampleValid then SetGroup1InvalidQualifier;
+
+        first ValidateSupplySample if not ValidateSupplySample.decision.supplySampleValid then SetSupplyInvalidQualifier;
+
+        // Join/convergence before plausibility evaluation.
+        first ValidateGroup0Sample then Join_IndependentInputChecks;
+        first ValidateGroup1Sample then Join_IndependentInputChecks;
+        first ValidateSupplySample then Join_IndependentInputChecks;
+        first Join_IndependentInputChecks then ValidateSensorPairPlausibility;
+
+        flow from ValidateGroup0Sample.group0CheckedInputData to ValidateSensorPairPlausibility.inputData;
+        flow from ValidateGroup1Sample.group1CheckedInputData to ValidateSensorPairPlausibility.inputData;
+        flow from ValidateSupplySample.supplyCheckedInputData to ValidateSensorPairPlausibility.inputData;
+
+        // Decision: sensor pair plausible?
+        first ValidateSensorPairPlausibility if ValidateSensorPairPlausibility.decision.sensorPairPlausible then ComposeValidInputData;
+
+        first ValidateSensorPairPlausibility if not ValidateSensorPairPlausibility.decision.sensorPairPlausible then SetSensorPairImplausibleQualifier;
+
+        first SetSensorPairImplausibleQualifier then ComposeFallbackInputData;
+        first MarkNotificationStale then ComposeFallbackInputData;
+        first SetMissingNotificationQualifier then ComposeFallbackInputData;
+
+        first ComposeValidInputData then PublishInputData;
+        first ComposeFallbackInputData then PublishInputData;
+
+        flow from ComposeValidInputData.composedInputData to PublishInputData.inputData;
+        flow from ComposeFallbackInputData.composedInputData to PublishInputData.inputData;
+    }
 
     action def AcpdCdd_InputNotificationHandling_Conditional {
 
         in item notificationPayload : AdcNotificationPayloadType;
         out item inputData : InputDataType;
 
+        attribute notificationArrived : boolean;
+
         action receiveAdcNotification;
-
-        if notificationArrived {
-            action updateAdcInputBuffer;
-            action updateNotificationTimestamp;
-            action clearMissingNotificationCounter;
-        }
-        else {
-            action incrementMissingNotificationCounter;
-            action keepPreviousInputBuffer;
-        }
-
+        action Decision_NotificationAvailable;
+        action updateAdcInputBuffer;
+        action updateNotificationTimestamp;
+        action clearMissingNotificationCounter;
+        action incrementMissingNotificationCounter;
+        action keepPreviousInputBuffer;
+        action Merge_NotificationHandling;
         action publishInputData;
 
-        first receiveAdcNotification then notificationArrived;
-        first notificationArrived then publishInputData;
+        first receiveAdcNotification then Decision_NotificationAvailable;
+
+        if notificationArrived {
+            action updateAdcInputBufferPath;
+            action updateNotificationTimestampPath;
+            action clearMissingNotificationCounterPath;
+
+            first updateAdcInputBufferPath then updateNotificationTimestampPath;
+            first updateNotificationTimestampPath then clearMissingNotificationCounterPath;
+        }
+        else {
+            action incrementMissingNotificationCounterPath;
+            action keepPreviousInputBufferPath;
+
+            first incrementMissingNotificationCounterPath then keepPreviousInputBufferPath;
+        }
+
+        first Decision_NotificationAvailable then Merge_NotificationHandling;
+        first Merge_NotificationHandling then publishInputData;
     }
 
     action def AcpdCdd_TimestampSupervision_Conditional {
@@ -36,23 +225,36 @@ package ConditionalBehaviorViews {
         in item inputData : InputDataType;
         out item monitoringStatus : MonitoringStatusPayloadType;
 
+        attribute timestampWithinTolerance : boolean;
+
         action readNotificationTimestamps;
+        action Decision_TimestampWithinTolerance;
+        action markNotificationFresh;
+        action keepQualifierCandidateOk;
+        action markNotificationStale;
+        action requestQualifierErrorReaction;
+        action Merge_TimestampSupervision;
+        action publishMonitoringStatus;
+
+        first readNotificationTimestamps then Decision_TimestampWithinTolerance;
 
         if timestampWithinTolerance {
-            action markNotificationFresh;
-            action keepQualifierCandidateOk;
+            action markNotificationFreshPath;
+            action keepQualifierCandidateOkPath;
+
+            first markNotificationFreshPath then keepQualifierCandidateOkPath;
         }
         else {
             // trlc-satisfies: 28711565
             // trlc-satisfies: 28711591
-            action markNotificationStale;
-            action requestQualifierErrorReaction;
+            action markNotificationStalePath;
+            action requestQualifierErrorReactionPath;
+
+            first markNotificationStalePath then requestQualifierErrorReactionPath;
         }
 
-        action publishMonitoringStatus;
-
-        first readNotificationTimestamps then timestampWithinTolerance;
-        first timestampWithinTolerance then publishMonitoringStatus;
+        first Decision_TimestampWithinTolerance then Merge_TimestampSupervision;
+        first Merge_TimestampSupervision then publishMonitoringStatus;
     }
 
     action def AcpdCdd_DeviationCheck_Conditional {
@@ -60,22 +262,35 @@ package ConditionalBehaviorViews {
         in item processedData : ChannelMeansType;
         out item monitoringStatus : MonitoringStatusPayloadType;
 
+        attribute sensorDeviationWithinLimit : boolean;
+
         action readSensorPairMeans;
+        action Decision_SensorDeviationWithinLimit;
+        action acceptSensorPairPlausible;
+        action keepSensorQualifierOk;
+        action detectSensorPairImplausible;
+        action requestSensorQualifierError;
+        action Merge_DeviationCheck;
+        action publishDeviationCheckResult;
+
+        first readSensorPairMeans then Decision_SensorDeviationWithinLimit;
 
         if sensorDeviationWithinLimit {
-            action acceptSensorPairPlausible;
-            action keepSensorQualifierOk;
+            action acceptSensorPairPlausiblePath;
+            action keepSensorQualifierOkPath;
+
+            first acceptSensorPairPlausiblePath then keepSensorQualifierOkPath;
         }
         else {
             // trlc-satisfies: 25090543
-            action detectSensorPairImplausible;
-            action requestSensorQualifierError;
+            action detectSensorPairImplausiblePath;
+            action requestSensorQualifierErrorPath;
+
+            first detectSensorPairImplausiblePath then requestSensorQualifierErrorPath;
         }
 
-        action publishDeviationCheckResult;
-
-        first readSensorPairMeans then sensorDeviationWithinLimit;
-        first sensorDeviationWithinLimit then publishDeviationCheckResult;
+        first Decision_SensorDeviationWithinLimit then Merge_DeviationCheck;
+        first Merge_DeviationCheck then publishDeviationCheckResult;
     }
 
     action def AcpdCdd_OutputQualifier_Conditional {
@@ -84,21 +299,31 @@ package ConditionalBehaviorViews {
         in item monitoringStatus : MonitoringStatusPayloadType;
         out item rteOutput : ProcessedSensorOutputPayloadType;
 
+        attribute monitoringStatusOk : boolean;
+
         action readProcessedDataAndMonitoringStatus;
+        action Decision_MonitoringStatusOk;
+        action writeQualifiedSensorValuesToRte;
+        action forceErrorQualifier;
+        action writeErrorQualifiedValuesToRte;
+        action Merge_OutputQualifier;
+        action publishRteOutput;
+
+        first readProcessedDataAndMonitoringStatus then Decision_MonitoringStatusOk;
 
         if monitoringStatusOk {
-            action writeQualifiedSensorValuesToRte;
+            action writeQualifiedSensorValuesToRtePath;
         }
         else {
             // trlc-satisfies: 28711397
-            action forceErrorQualifier;
-            action writeErrorQualifiedValuesToRte;
+            action forceErrorQualifierPath;
+            action writeErrorQualifiedValuesToRtePath;
+
+            first forceErrorQualifierPath then writeErrorQualifiedValuesToRtePath;
         }
 
-        action publishRteOutput;
-
-        first readProcessedDataAndMonitoringStatus then monitoringStatusOk;
-        first monitoringStatusOk then publishRteOutput;
+        first Decision_MonitoringStatusOk then Merge_OutputQualifier;
+        first Merge_OutputQualifier then publishRteOutput;
     }
 
     action def AcpdCdd_Powermanagement_Conditional {
@@ -106,51 +331,71 @@ package ConditionalBehaviorViews {
         in item activationStatus : ActivationStatusPayloadType;
         out item dioCommand : DioCommandPayloadType;
 
+        attribute activationRequested : boolean;
+
         action readActivationStatus;
-
-        if activationRequested {
-            action commandPowerOn;
-        }
-        else {
-            action commandPowerOff;
-        }
-
+        action Decision_ActivationRequested;
+        action commandPowerOn;
+        action commandPowerOff;
+        action Merge_PowermanagementCommand;
         action publishDioCommand;
 
-        first readActivationStatus then activationRequested;
-        first activationRequested then publishDioCommand;
+        first readActivationStatus then Decision_ActivationRequested;
+
+        if activationRequested {
+            action commandPowerOnPath;
+        }
+        else {
+            action commandPowerOffPath;
+        }
+
+        first Decision_ActivationRequested then Merge_PowermanagementCommand;
+        first Merge_PowermanagementCommand then publishDioCommand;
     }
 
     action def AcpdCdd_Main10ms_ConditionalOverview {
 
+        attribute inputDataFresh : boolean;
+        attribute sensorPairPlausible : boolean;
+
         action collectInputData;
+        action Decision_InputDataFresh;
         action checkInputFreshness;
         action computeProcessedSensorValues;
+        action requestErrorQualifierDueToStaleInput;
+        action Merge_InputFreshness;
         action checkSensorPlausibility;
+        action Decision_SensorPairPlausible;
+        action keepQualifierOk;
+        action requestErrorQualifierDueToImplausibility;
+        action Merge_SensorPlausibility;
         action updateOutputQualifier;
         action writeRteOutput;
 
         first collectInputData then checkInputFreshness;
+        first checkInputFreshness then Decision_InputDataFresh;
 
         if inputDataFresh {
             action continueWithProcessing;
             first continueWithProcessing then computeProcessedSensorValues;
         }
         else {
-            action requestErrorQualifierDueToStaleInput;
-            first requestErrorQualifierDueToStaleInput then updateOutputQualifier;
+            action requestErrorQualifierDueToStaleInputPath;
         }
 
-        first computeProcessedSensorValues then checkSensorPlausibility;
+        first Decision_InputDataFresh then Merge_InputFreshness;
+        first Merge_InputFreshness then checkSensorPlausibility;
+        first checkSensorPlausibility then Decision_SensorPairPlausible;
 
         if sensorPairPlausible {
-            action keepQualifierOk;
+            action keepQualifierOkPath;
         }
         else {
-            action requestErrorQualifierDueToImplausibility;
+            action requestErrorQualifierDueToImplausibilityPath;
         }
 
-        first sensorPairPlausible then updateOutputQualifier;
+        first Decision_SensorPairPlausible then Merge_SensorPlausibility;
+        first Merge_SensorPlausibility then updateOutputQualifier;
         first updateOutputQualifier then writeRteOutput;
     }
 }

@@ -1,4 +1,3 @@
-
 package ComponentDesign {
 
     private import Input::*;
@@ -15,7 +14,13 @@ package ComponentDesign {
         part powermanagement : AcpdCdd_Powermanagement;
         part monitoring : AcpdCdd_Monitoring;
         part output : AcpdCdd_Output;
-    }
+    
+        // Internal component port bindings.
+        // These bindings express structural equivalence / topology between
+        // component boundary ports where the AcpdCdd composition owns both ends.
+bind input.inputDataOut = monitoring.inputDataIn;
+bind powermanagement.powerStatusOut = monitoring.powerStatusIn;
+}
 
     part acpdCdd : AcpdCdd;
 }

@@ -3,6 +3,25 @@ package Monitoring {
     private import ScalarValues::*;
     private import Types::*;
 
+    item def CheckPowerStateOffDecisionType {
+        attribute CheckPowerStateOff_allows_CheckSwitchToOff : Boolean;
+        attribute CheckPowerStateOff_allows_CheckSwitchToOn : Boolean;
+    }
+
+
+    item def CheckPowerStateOnDecisionType {
+        attribute CheckPowerStateOn_allows_ApplyStableOnChecks : Boolean;
+        attribute CheckPowerStateOn_allows_CheckSwitchToOff : Boolean;
+        attribute CheckPowerStateOn_allows_CheckSwitchToOn : Boolean;
+    }
+
+
+    item def CompareWithCrosscheckBoundDecisionType {
+        attribute CompareWithCrosscheckBound_allows_ReturnFalseIfOutOfRange : Boolean;
+        attribute CompareWithCrosscheckBound_allows_ReturnTrueIfInRange : Boolean;
+    }
+
+
     port def InputDataInPort {
         in item InputData : InputDataType;
     }
@@ -34,18 +53,22 @@ package Monitoring {
         in attribute timestampOffset;
         out attribute result;
 
+        action entry;
+        first ComputeInitialOffset;
         action ComputeInitialOffset;
         action ComputeCurrentOffset;
         action ComputeOffsetDifference;
-        action CompareWithCrosscheckBound;
+        action CompareWithCrosscheckBound {
+            out item decision : CompareWithCrosscheckBoundDecisionType;
+        }
         action ReturnTrueIfInRange;
         action ReturnFalseIfOutOfRange;
 
         first ComputeInitialOffset then ComputeCurrentOffset;
         first ComputeCurrentOffset then ComputeOffsetDifference;
         first ComputeOffsetDifference then CompareWithCrosscheckBound;
-        first CompareWithCrosscheckBound then ReturnTrueIfInRange;
-        first CompareWithCrosscheckBound then ReturnFalseIfOutOfRange;
+        first CompareWithCrosscheckBound if CompareWithCrosscheckBound.decision.CompareWithCrosscheckBound_allows_ReturnTrueIfInRange then ReturnTrueIfInRange;
+        first CompareWithCrosscheckBound if CompareWithCrosscheckBound.decision.CompareWithCrosscheckBound_allows_ReturnFalseIfOutOfRange then ReturnFalseIfOutOfRange;
     }
 
     // trlc-satisfies: 28710924
@@ -58,6 +81,8 @@ package Monitoring {
         in item InputData : InputDataType;
         out item ErrorCounters : AcpdCddCheckErrorCountersType;
 
+        action entry;
+        first InitializeErrorCounters;
         action InitializeErrorCounters;
         action IterateAdcUpdateCycleCount;
         action ComputeGroup0TimestampDelta;
@@ -91,6 +116,8 @@ package Monitoring {
         in item InputData : InputDataType;
         out item ErrorCounters : AcpdCddCheckErrorCountersType;
 
+        action entry;
+        first InitializeMissingDataCounters;
         action InitializeMissingDataCounters;
         action IterateSensor0Data;
         action IterateSensor1Data;
@@ -119,6 +146,8 @@ package Monitoring {
     action def AcpdCdd_DeviationCheck {
         in item ProcessedData : ChannelMeansType;
 
+        action entry;
+        first SelectSensor0MissionAndMonitoringMeans;
         action SelectSensor0MissionAndMonitoringMeans;
         action ComputeSensor0AcceptableInterval;
         action CheckSensor0MonitoringWithinInterval;
@@ -143,6 +172,8 @@ package Monitoring {
 
     action def ResultPlausibilityCheck {
 
+        action entry;
+        first CheckSensor0VoltageLowerBound;
         action CheckSensor0VoltageLowerBound;
         action ClampSensor0ToZeroAndSetErrorIfBelow;
         action CheckSensor0VoltageUpperBound;
@@ -163,42 +194,38 @@ package Monitoring {
 
     // trlc-satisfies: 28883887
     // trlc-satisfies: 28883920
-    action def SupplyVoltageCheck {
-
-        action CheckSupply1LowOrHighBound;
-        action SetSensor1AndSupply1QualifierErrorIfOutOfRange;
-        action CheckSupply2LowOrHighBound;
-        action SetSensor2AndSupply2QualifierErrorIfOutOfRange;
-
-        first CheckSupply1LowOrHighBound then SetSensor1AndSupply1QualifierErrorIfOutOfRange;
-        first SetSensor1AndSupply1QualifierErrorIfOutOfRange then CheckSupply2LowOrHighBound;
-        first CheckSupply2LowOrHighBound then SetSensor2AndSupply2QualifierErrorIfOutOfRange;
-    }
-
-    // trlc-satisfies: 25188589
+// trlc-satisfies: 25188589
     action def PowerStateVsQualifiers {
 
-        action CheckPowerStateOff;
-        action CheckPowerStateOn;
+        action entry;
+        first CheckPowerStateOff;
+        action CheckPowerStateOff {
+            out item decision : CheckPowerStateOffDecisionType;
+        }
+        action CheckPowerStateOn {
+            out item decision : CheckPowerStateOnDecisionType;
+        }
         action CheckSwitchToOn;
         action SetAllQualifiersInit;
         action CheckSwitchToOff;
         action SetAllQualifiersNotAvailable;
         action ApplyStableOnChecks;
 
-        first CheckPowerStateOff then CheckSwitchToOn;
+        first CheckPowerStateOff if CheckPowerStateOff.decision.CheckPowerStateOff_allows_CheckSwitchToOn then CheckSwitchToOn;
         first CheckSwitchToOn then SetAllQualifiersInit;
-        first CheckPowerStateOff then CheckSwitchToOff;
+        first CheckPowerStateOff if CheckPowerStateOff.decision.CheckPowerStateOff_allows_CheckSwitchToOff then CheckSwitchToOff;
         first CheckSwitchToOff then SetAllQualifiersNotAvailable;
-        first CheckPowerStateOn then CheckSwitchToOn;
-        first CheckPowerStateOn then CheckSwitchToOff;
-        first CheckPowerStateOn then ApplyStableOnChecks;
+        first CheckPowerStateOn if CheckPowerStateOn.decision.CheckPowerStateOn_allows_CheckSwitchToOn then CheckSwitchToOn;
+        first CheckPowerStateOn if CheckPowerStateOn.decision.CheckPowerStateOn_allows_CheckSwitchToOff then CheckSwitchToOff;
+        first CheckPowerStateOn if CheckPowerStateOn.decision.CheckPowerStateOn_allows_ApplyStableOnChecks then ApplyStableOnChecks;
     }
 
     // trlc-satisfies: 30477411
     // trlc-satisfies: 30477478
     action def ADC_Error_Callbacks {
 
+        action entry;
+        first AcpdCdd_IncrementAdcConvErrGroup0;
         action AcpdCdd_IncrementAdcConvErrGroup0;
         action AcpdCdd_IncrementAdcConvErrGroup1;
         action AcpdCdd_IncrementAdcConvErrSupply;
@@ -230,6 +257,8 @@ package Monitoring {
         out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
 
         // trlc-satisfies: 25094047
+        action entry;
+        first InitializeQualifiersFromProcessedData;
         action InitializeQualifiersFromProcessedData;
         action AcpdCdd_MissingDataCheck;
         action AcpdCdd_CheckTimestamps;
@@ -255,6 +284,8 @@ package Monitoring {
     }
 
     action def AcpdCdd_Monitoring_Behavior {
+        action entry;
+        first AcpdCdd_Monitoring;
         action AcpdCdd_Monitoring;
         action AcpdCdd_MissingDataCheck;
         action AcpdCdd_CheckTimestamps;
@@ -283,20 +314,25 @@ package Monitoring {
         port varef2ErrorIn : VARef2ErrorInPort;
         port acceleratorDataOut : AcceleratorDataOutPort;
 
-        action monitoring;
-        action crossCheckTimestamps;
-        action checkTimestamps;
-        action missingDataCheck;
-        action deviationCheck;
-        action resultPlausibilityCheck;
+        action monitoring : AcpdCdd_Monitoring;
+        action crossCheckTimestamps : AcpdCdd_CrossCheckTimestamps;
+        action checkTimestamps : AcpdCdd_CheckTimestamps;
+        action missingDataCheck : AcpdCdd_MissingDataCheck;
+        action deviationCheck : AcpdCdd_DeviationCheck;
+        action resultPlausibilityCheck : ResultPlausibilityCheck;
         action supplyVoltageCheck;
-        action powerStateVsQualifiers;
-        action adcErrorCallbacks;
-        action monitoringBehavior;
+        action powerStateVsQualifiers : PowerStateVsQualifiers;
+        action adcErrorCallbacks : ADC_Error_Callbacks;
+        action monitoringBehavior : AcpdCdd_Monitoring_Behavior;
+bind processedDataIn.ProcessedData = monitoring.ProcessedData;
+bind varef1ErrorIn.VARef1ErrorPresent = monitoring.VARef1ErrorPresent;
+bind acceleratorDataOut.acceleratorData = monitoring.acceleratorData;
     }
 
     action def AcpdCdd_Monitoring_Sequence_AsActionFlow {
 
+        action entry;
+        first MonitoringReceivesProcessedData;
         action MonitoringReceivesProcessedData;
         action MonitoringReceivesPowerStatus;
 

@@ -3,6 +3,19 @@ package Powermanagement {
     private import ScalarValues::*;
     private import Types::*;
 
+    item def CompareActivationWithActivateDecisionType {
+        attribute CompareActivationWithActivate_allows_ExecutePowerOff : Boolean;
+        attribute CompareActivationWithActivate_allows_ExecutePowerOn : Boolean;
+    }
+
+
+    item def StoreNewPowerStateDecisionType {
+        attribute StoreNewPowerState_allows_LatchPreviousSwitchOnEvent : Boolean;
+        attribute StoreNewPowerState_allows_SetPowerDioOff : Boolean;
+        attribute StoreNewPowerState_allows_SetPowerDioOn : Boolean;
+    }
+
+
     // trlc-satisfies: 25188489
     port def ActivationInPort {
         in attribute activation;
@@ -18,6 +31,8 @@ package Powermanagement {
     }
 
     action def AcpdCdd_InitPowerDio {
+        action entry;
+        first SetDioChannelCto5vapp1Low;
         action SetDioChannelCto5vapp1Low;
         action SetDioChannelCto5vapp2Low;
         action Return;
@@ -29,6 +44,8 @@ package Powermanagement {
     action def AcpdCdd_SetPowerDio {
         in attribute Status;
 
+        action entry;
+        first WriteDioChannelCto5vapp1;
         action WriteDioChannelCto5vapp1;
         action WriteDioChannelCto5vapp2;
         action OptionalReadbackVerification;
@@ -41,6 +58,8 @@ package Powermanagement {
 
     action def AcpdCdd_PowermanagementInit {
 
+        action entry;
+        first AcpdCdd_InitPowerDio;
         action AcpdCdd_InitPowerDio;
         // trlc-satisfies: 41716503
         action SetCurrentPowerStatePowerOff;
@@ -56,6 +75,8 @@ package Powermanagement {
     action def AcpdCdd_PowermanagementCalcStatus {
         out item Status : PowerStatusType;
 
+        action entry;
+        first CopyCurrentPowerStateToStatus;
         action CopyCurrentPowerStateToStatus;
         action CopyCurrentPowerTransitionToStatus;
         action ResetCurrentPowerTransitionToNone;
@@ -69,6 +90,8 @@ package Powermanagement {
     action def AcpdCdd_PowermanagementExecute {
         in attribute PowerState;
 
+        action entry;
+        first RangeCheckPowerState;
         action RangeCheckPowerState;
         // trlc-satisfies: 28826666
         action DeterminePowerOffToPowerOnTransition;
@@ -76,7 +99,9 @@ package Powermanagement {
         action DeterminePowerOnToPowerOffTransition;
         // trlc-satisfies: 25188528
         action DetermineNoTransition;
-        action StoreNewPowerState;
+        action StoreNewPowerState {
+            out item decision : StoreNewPowerStateDecisionType;
+        }
         action SetPowerDioOn;
         action SetSwitchOnEventTrue;
         action SetPowerDioOff;
@@ -88,32 +113,38 @@ package Powermanagement {
         first DeterminePowerOffToPowerOnTransition then DeterminePowerOnToPowerOffTransition;
         first DeterminePowerOnToPowerOffTransition then DetermineNoTransition;
         first DetermineNoTransition then StoreNewPowerState;
-        first StoreNewPowerState then SetPowerDioOn;
+        first StoreNewPowerState if StoreNewPowerState.decision.StoreNewPowerState_allows_SetPowerDioOn then SetPowerDioOn;
         first SetPowerDioOn then SetSwitchOnEventTrue;
         first SetSwitchOnEventTrue then Return;
-        first StoreNewPowerState then SetPowerDioOff;
+        first StoreNewPowerState if StoreNewPowerState.decision.StoreNewPowerState_allows_SetPowerDioOff then SetPowerDioOff;
         first SetPowerDioOff then Return;
-        first StoreNewPowerState then LatchPreviousSwitchOnEvent;
+        first StoreNewPowerState if StoreNewPowerState.decision.StoreNewPowerState_allows_LatchPreviousSwitchOnEvent then LatchPreviousSwitchOnEvent;
         first LatchPreviousSwitchOnEvent then ResetSwitchOnEventFalse;
         first ResetSwitchOnEventFalse then Return;
     }
 
     action def AcpdCdd_Activation {
 
+        action entry;
+        first ReadActivationSignalFromRte;
         action ReadActivationSignalFromRte;
-        action CompareActivationWithActivate;
+        action CompareActivationWithActivate {
+            out item decision : CompareActivationWithActivateDecisionType;
+        }
         action ExecutePowerOn;
         action ExecutePowerOff;
         action Return;
 
         first ReadActivationSignalFromRte then CompareActivationWithActivate;
-        first CompareActivationWithActivate then ExecutePowerOn;
-        first CompareActivationWithActivate then ExecutePowerOff;
+        first CompareActivationWithActivate if CompareActivationWithActivate.decision.CompareActivationWithActivate_allows_ExecutePowerOn then ExecutePowerOn;
+        first CompareActivationWithActivate if CompareActivationWithActivate.decision.CompareActivationWithActivate_allows_ExecutePowerOff then ExecutePowerOff;
         first ExecutePowerOn then Return;
         first ExecutePowerOff then Return;
     }
 
     action def AcpdCdd_Powermanagement_Behavior {
+        action entry;
+        first AcpdCdd_PowermanagementInit;
         action AcpdCdd_PowermanagementInit;
         action AcpdCdd_Activation;
         action AcpdCdd_PowermanagementExecute;
@@ -135,17 +166,21 @@ package Powermanagement {
         attribute CurrentPowerTransition;
         attribute SwitchOnEvent;
 
-        action powermanagementInit;
-        action powermanagementCalcStatus;
-        action powermanagementExecute;
-        action activation;
-        action initPowerDio;
-        action setPowerDio;
-        action powermanagementBehavior;
+        action powermanagementInit : AcpdCdd_PowermanagementInit;
+        action powermanagementCalcStatus : AcpdCdd_PowermanagementCalcStatus;
+        action powermanagementExecute : AcpdCdd_PowermanagementExecute;
+        action activation : AcpdCdd_Activation;
+        action initPowerDio : AcpdCdd_InitPowerDio;
+        action setPowerDio : AcpdCdd_SetPowerDio;
+        action powermanagementBehavior : AcpdCdd_Powermanagement_Behavior;
+bind activationIn.activation = powermanagementExecute.PowerState;
+bind dioStatusOut.Status = setPowerDio.Status;
     }
 
     action def AcpdCdd_Powermanagement_Sequence_AsActionFlow {
 
+        action entry;
+        first PowermanagementInitializesModule;
         action PowermanagementInitializesModule;
         action PowermanagementCalculatesPowerStatus;
 

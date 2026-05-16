@@ -1,4 +1,3 @@
-
 package ComponentInteractionSequences {
 
     part def AcpdCdd_Input_Sequence_AcpdCddParticipant {
