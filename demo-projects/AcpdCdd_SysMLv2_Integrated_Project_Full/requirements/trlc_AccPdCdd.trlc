@@ -1,0 +1,338 @@
+package AcpdCdd_ReqSpec
+import IPF
+
+// 25093540 – Partitioning (Component level)
+IPF.Requirement Acpd25093540
+{
+    description = "The AcpdCdd shall be allocated to an ASIL D operating system taskchain and to an ASIL D memory section."
+    asil = "D"
+}
+
+// 28596119 – 10 ms main runnable (AcpdCdd_Main10ms)
+IPF.Requirement Acpd28596119
+{
+    description = "The runnable \"AcpdCdd_Main10ms()\" shall be invoked by the operating system every 10 ms. The time between two consecutive invocations of \"AcpdCdd_Main10ms()\" shall be 10 ms within system-level tolerated jitter."
+    asil = "C"
+}
+
+// 25090543 – FFI separation between Sensor1 and Sensor2 (Component level)
+IPF.Requirement Acpd25090543
+{
+    description = "The calculation results and the RTE output signal of Sensor1 shall only be based on ADC data samples of Sensor1 and shall not be influenced by data samples of Sensor2. The calculation results and the RTE output signal of Sensor2 shall only be based on ADC data samples of Sensor2 and shall not be influenced by data samples of Sensor1."
+    asil = "C"
+}
+
+// 25094200 – ADC notification interfaces for Group0, Group1, Supply (Component level)
+IPF.Requirement Acpd25094200
+{
+    description = "The AcpdCdd shall provide ADC notification interfaces that are called in the interrupt service routine of the ADC groups. The interfaces shall be named AcpdCdd_AdcNotificationGroup0 for ADC Group0, AcpdCdd_AdcNotificationGroup1 for ADC Group1 and AcpdCdd_AdcNotificationSupply for the ADC Supply group."
+    asil = "C"
+}
+
+// 28712675 – Notification processing only when AcpdCdd is ACTIVE (Component level)
+IPF.Requirement Acpd28712675
+{
+    description = "The notification interfaces of AcpdCdd shall only fetch and process ADC conversion results if the AcpdCdd is in the state ACTIVE, meaning the component is initialized and active."
+    asil = "C"
+}
+
+// 30477411 – ADC error callback interfaces (Component level)
+IPF.Requirement Acpd30477411
+{
+    description = "The AcpdCdd shall provide callback interfaces to the ADC to be informed about conversion errors for Group0, Group1 and Supply. The interfaces shall be named AcpdCdd_Group0ErrorCbk, AcpdCdd_Group1ErrorCbk and AcpdCdd_SupplyErrorCbk."
+    asil = "C"
+}
+
+// 25094059 – Structure for signal value and qualifier (Component level / Output)
+IPF.Requirement Acpd25094059
+{
+    description = "The AcpdCdd shall provide each signal value together with its associated qualifier in a structure that contains at least the elements \"signal value\" and \"qualifier\"."
+    asil = "C"
+}
+
+// 25094008 – RTE write in Main10ms (Output + Main10ms)
+IPF.Requirement Acpd25094008
+{
+    description = "In every invocation of \"AcpdCdd_Main10ms()\" the AcpdCdd shall perform exactly one RTE write of accelerator pedal related signals. This RTE write shall contain the current signal values and their associated qualifiers for all AcpdCdd output signals."
+    asil = "C"
+}
+
+// 25094047 – Qualifiers consistent with signal values (Monitoring + Main10ms)
+IPF.Requirement Acpd25094047
+{
+    description = "In each execution of \"AcpdCdd_Main10ms()\", for every output signal S the AcpdCdd shall compute a qualifier Q(S) that is consistent with the checks applied to S in that same execution. \"Consistent\" means that Q(S) reflects the most severe active diagnostic result for S in this cycle (for example, ERROR overrides DEGRADED, DEGRADED overrides OK)."
+    asil = "C"
+}
+
+// 44879821 – Final values to RTE in the 10 ms task (Output)
+IPF.Requirement Acpd44879821
+{
+    description = "In every execution of \"AcpdCdd_Main10ms()\" the AcpdCdd shall write to RTE exactly one record containing the final values of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply. \"Final values\" are the values after applying scaling, moving average and diagnostic updates for the current 10 ms window."
+    asil = "C"
+}
+
+// 25131815 – Final qualifiers to RTE in the 10 ms task (Output)
+IPF.Requirement Acpd25131815
+{
+    description = "In every execution of \"AcpdCdd_Main10ms()\" the AcpdCdd shall write to RTE the final qualifier values for Sensor1, Sensor2, Sensor1Supply and Sensor2Supply together with their final signal values. \"Final qualifier values\" are computed after evaluating all applicable diagnostic checks for the current 10 ms period."
+    asil = "C"
+}
+
+// 25131787 – Single consistent RTE write (Output)
+IPF.Requirement Acpd25131787
+{
+    description = "The AcpdCdd shall provide Sensor1, Sensor2, Sensor1Supply and Sensor2Supply signal values and their qualifiers in a single RTE write operation. All values and qualifiers in this record shall originate from the same 10 ms processing cycle of \"AcpdCdd_Main10ms()\"."
+    asil = "C"
+}
+
+// 28824427 – Moving averages (Process)
+IPF.Requirement Acpd28824427
+{
+    description = "For each of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply the AcpdCdd shall compute a moving average from the corresponding ADC sample buffer. The moving average for a signal X shall be calculated as the arithmetic mean of all valid ADC samples of X stored in its buffer since the last execution of \"AcpdCdd_Main10ms()\"."
+    asil = "C"
+}
+
+// 28824395 – ADC buffers (Input)
+IPF.Requirement Acpd28824395
+{
+    description = "The AcpdCdd shall maintain separate ADC sample buffers for Sensor1, Sensor2, Sensor1Supply and Sensor2Supply. Each buffer shall be dimensioned to store at least 10 samples, corresponding to 1 ms ADC notifications within a 10 ms \"AcpdCdd_Main10ms()\" period."
+    asil = "C"
+}
+
+// 25094087 – float32 for voltage conversion (Process)
+IPF.Requirement Acpd25094087
+{
+    description = "The AcpdCdd shall convert 12-bit ADC raw samples to numerical voltage values using the float32 datatype so that the effective resolution of the samples is not degraded."
+    asil = "C"
+}
+
+// 25094135 – uint16 buffers (Input)
+IPF.Requirement Acpd25094135
+{
+    description = "The AcpdCdd shall store each ADC raw conversion result in buffer arrays of datatype uint16."
+    asil = "C"
+}
+
+// 28820111 – Normalisation factors (Process)
+IPF.Requirement Acpd28820111
+{
+    description = "The normalisation factor for all ADC data samples of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply shall be 5/4095. For each ADC raw value RawX, the AcpdCdd shall compute the corresponding voltage value VoltX as VoltX = RawX * (5 / 4095). For supply signals Sensor1Supply and Sensor2Supply, the AcpdCdd shall additionally apply the hardware factor 1.26157 such that VoltSupply = RawSupply * (5 / 4095) * 1.26157."
+    asil = "C"
+}
+
+// 28820750 – Apply conversion factors to every sample (Process)
+IPF.Requirement Acpd28820750
+{
+    description = "For every ADC sample of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply the AcpdCdd shall apply the normalisation and conversion factors defined in requirement 28820111 before any subsequent processing such as averaging or diagnostic checks."
+    asil = "C"
+}
+
+// 25127428 – Store Sensor1/2 mission and monitoring samples (Input)
+IPF.Requirement Acpd25127428
+{
+    description = "In AcpdCdd_AdcNotificationGroup0 the ADC data samples for Sensor1 (mission signal) and Sensor2 (mission signal) shall be written to their corresponding buffers. In AcpdCdd_AdcNotificationGroup1 the ADC data samples for Sensor1 (monitoring signal) and Sensor2 (monitoring signal) shall be written to their corresponding buffers."
+    asil = "C"
+}
+
+// 25127531 – Store supply voltage samples (Input)
+IPF.Requirement Acpd25127531
+{
+    description = "In AcpdCdd_AdcNotificationSupply the ADC data samples for Sensor1Supply and Sensor2Supply shall be written to their corresponding buffers."
+    asil = "C"
+}
+
+// 25130711 – Avoid buffer corruption during processing (Input)
+IPF.Requirement Acpd25130711
+{
+    description = "The AcpdCdd shall ensure that, during the processing of the buffered ADC data samples for Sensor1, Sensor2, Sensor1Supply and Sensor2Supply, the data set is not corrupted by updates from the ADC notification interfaces."
+    asil = "C"
+}
+
+// 25187813 – Write mission+monitoring pair only when both samples are present (Input)
+IPF.Requirement Acpd25187813
+{
+    description = "The AcpdCdd shall write the mission and monitoring ADC data samples of Sensor1 to the data buffer only when both samples have been received. The same rule shall apply for the mission and monitoring ADC data samples of Sensor2."
+    asil = "C"
+}
+
+// 28710933 – Buffer timestamps with ADC samples (Input)
+IPF.Requirement Acpd28710933
+{
+    description = "The AcpdCdd shall read and buffer the timestamps provided by ADC Group0, ADC Group1 and ADC Group Supply in the same notification call in which the corresponding ADC data samples are stored."
+    asil = "C"
+}
+
+// 25128928 – Deviation check (±40 mV) (Monitoring)
+IPF.Requirement Acpd25128928
+{
+    description = "The acceptable error for the redundancy check shall be 0.04 V (40 mV). For each sensor, the AcpdCdd shall compute LowerBoundary = MissionSignal − 0.04 V and UpperBoundary = MissionSignal + 0.04 V. The redundancy crosscheck result shall be VALID if LowerBoundary < MonitoringSignal < UpperBoundary; otherwise the result shall be INVALID."
+    asil = "C"
+}
+
+// 44880031 – Processing order (scale → avg → deviation) (Process + Monitoring)
+IPF.Requirement Acpd44880031
+{
+    description = "For each sensor channel, the AcpdCdd shall process measurements in the following order: (1) scaling of ADC raw values using the conversion factors defined in requirement 28820111, (2) computation of moving averages for mission and monitoring signals as defined in requirement 28824427, (3) execution of the deviation check on the averaged mission and monitoring signals as defined in requirement 25128928."
+    asil = "C"
+}
+
+// 44879718 – Deviation check Sensor1 (Monitoring)
+IPF.Requirement Acpd44879718
+{
+    description = "For Sensor1 the AcpdCdd shall perform the deviation check defined in requirement 25128928 using the averaged mission and monitoring signals of Sensor1."
+    asil = "C"
+}
+
+// 44879786 – Deviation check Sensor2 (Monitoring)
+IPF.Requirement Acpd44879786
+{
+    description = "For Sensor2 the AcpdCdd shall perform the deviation check defined in requirement 25128928 using the averaged mission and monitoring signals of Sensor2."
+    asil = "C"
+}
+
+// 25128720 – Sensor1 qualifier ERROR on INVALID (Monitoring)
+IPF.Requirement Acpd25128720
+{
+    description = "If the deviation check result for Sensor1 is INVALID, then the AcpdCdd shall set the qualifier of Sensor1 to ERROR for the current 10 ms cycle."
+    asil = "C"
+}
+
+// 25128907 – Sensor2 qualifier ERROR on INVALID (Monitoring)
+IPF.Requirement Acpd25128907
+{
+    description = "If the deviation check result for Sensor2 is INVALID, then the AcpdCdd shall set the qualifier of Sensor2 to ERROR for the current 10 ms cycle."
+    asil = "C"
+}
+
+// 25187609 – Qualifier datatype and values (Monitoring + value type)
+IPF.Requirement Acpd25187609
+{
+    description = "The datatype of each final qualifier value shall be uint8. Final qualifier values shall be restricted to the set {0x00 (OK), 0x07 (DEBOUNCE), 0x09 (INIT), 0x0C (NOT_AVAILABLE), 0x0F (ERROR)}."
+    asil = "C"
+}
+
+// 28710924 – Time tolerance window 500 µs (Monitoring)
+IPF.Requirement Acpd28710924
+{
+    description = "The time tolerance window to detect missing or unintended ADC notification calls shall be 500 microseconds."
+    asil = "C"
+}
+
+// 28711397 – Qualifiers ERROR if notification outside time window (Monitoring)
+IPF.Requirement Acpd28711397
+{
+    description = "If any notification call of ADC Group0 or ADC Group1 arrives outside the defined time tolerance window, the qualifiers of the Sensor1 and Sensor2 signals shall be set to ERROR."
+    asil = "C"
+}
+
+// 41781961 – Qualifiers ERROR on update frequency violation (Monitoring)
+IPF.Requirement Acpd41781961
+{
+    description = "If the notification for either ADC Group0 or ADC Group1 is called outside the expected update frequency tolerance, the qualifiers for the Sensor1 and Sensor2 signals shall be set to ERROR."
+    asil = "C"
+}
+
+// 41781989 – Supply qualifiers ERROR on update frequency violation (Monitoring)
+IPF.Requirement Acpd41781989
+{
+    description = "If the notification of ADC Group Supply is called outside the expected update frequency tolerance, the qualifiers for the Sensor1Supply and Sensor2Supply signals shall be set to ERROR."
+    asil = "C"
+}
+
+// 28711565 – Supervise arrivals and update frequency of notifications (Monitoring)
+IPF.Requirement Acpd28711565
+{
+    description = "The AcpdCdd shall check that the notifications of ADC Group0, ADC Group1 and ADC Group Supply are called and that they arrive with the expected update frequency. The supervision may be implemented for example by evaluating alive counters or buffer clearing and by using the timestamps provided by the ADC."
+    asil = "C"
+}
+
+// 28711591 – More than one missing notification ⇒ qualifiers ERROR (Monitoring)
+IPF.Requirement Acpd28711591
+{
+    description = "If more than one notification call of either ADC Group0 or ADC Group1 is missing, the qualifiers for the Sensor1 and Sensor2 signals shall be set to ERROR. If more than one notification call of ADC Group Supply is missing, the qualifiers for the Sensor1Supply and Sensor2Supply signals shall be set to ERROR."
+    asil = "C"
+}
+
+// 28883887 – Monitor Sensor1Supply voltage range (Monitoring)
+IPF.Requirement Acpd28883887
+{
+    description = "The AcpdCdd shall monitor the averaged Sensor1Supply signal. If Sensor1Supply exceeds 4.11 V or falls below 3.81 V at the ADC pin level, the qualifier of Sensor1Supply and the qualifier of Sensor1 shall be set to ERROR."
+    asil = "C"
+}
+
+// 28883920 – Monitor Sensor2Supply voltage range (Monitoring)
+IPF.Requirement Acpd28883920
+{
+    description = "The AcpdCdd shall monitor the averaged Sensor2Supply signal. If Sensor2Supply exceeds 4.11 V or falls below 3.81 V at the ADC pin level, the qualifier of Sensor2Supply and the qualifier of Sensor2 shall be set to ERROR."
+    asil = "C"
+}
+
+// 30477478 – Reaction to ADC conversion errors (Monitoring)
+IPF.Requirement Acpd30477478
+{
+    description = "When AcpdCdd_Group0ErrorCbk or AcpdCdd_Group1ErrorCbk reports an ADC conversion error, the qualifiers of Sensor1 and Sensor2 signals shall be set to ERROR. When AcpdCdd_SupplyErrorCbk reports an ADC conversion error, the qualifiers of Sensor1Supply and Sensor2Supply signals shall be set to ERROR."
+    asil = "C"
+}
+
+// 28710854 – Detect missing or unintended notification calls between Group0 and Group1 (Monitoring)
+IPF.Requirement Acpd28710854
+{
+    description = "The AcpdCdd shall detect missing or unintended notification calls of ADC Group0 and ADC Group1. If the notification for ADC Group0 is called, it shall be checked that the notification of ADC Group1 is called within the defined time tolerance window, and vice versa."
+    asil = "C"
+}
+
+// 25188489 – Activation interface (Powermanagement)
+IPF.Requirement Acpd25188489
+{
+    description = "The AcpdCdd shall provide a RTE interface named \"AcpdCdd_Activation\" that allows switching the accelerator pedal power supply ON or OFF."
+    asil = "C"
+}
+
+// 25188507 – Activate power supply via DIO (Powermanagement)
+IPF.Requirement Acpd25188507
+{
+    description = "The AcpdCdd shall activate the power supply of the accelerator pedal via the DIO port interface."
+    asil = "C"
+}
+
+// 41716503 – PowerState (Powermanagement)
+IPF.Requirement Acpd41716503
+{
+    description = "The AcpdCdd shall maintain an internal state \"PowerState\" that represents whether the accelerator pedal is turned ON or OFF. PowerState shall only take values from the set {OFF, ON}."
+    asil = "C"
+}
+
+// 25188528 – Repeated ACTIVATE / DEACTIVATE behavior (Powermanagement)
+IPF.Requirement Acpd25188528
+{
+    description = "If the AcpdCdd receives the activation command ACTIVATE(0) and the previous activation command was also ACTIVATE(0), then PowerState shall remain ON. If the AcpdCdd receives the activation command DEACTIVATE(1) and the previous activation command was also DEACTIVATE(1), then PowerState shall remain OFF."
+    asil = "C"
+}
+
+// 28826666 – DEACTIVATE→ACTIVATE behavior (Powermanagement)
+IPF.Requirement Acpd28826666
+{
+    description = "If the activation signal changes from DEACTIVATE(1) to ACTIVATE(0), then the AcpdCdd shall set PowerState to ON and shall set DioConf_DioChannel_DIO_CH_CTO_5VAPP1_EN to STD_LOW (POWER_ON) and DioConf_DioChannel_DIO_CH_CTO_5VAPP2_EN to STD_LOW (POWER_ON)."
+    asil = "C"
+}
+
+// 28826692 – ACTIVATE→DEACTIVATE behavior (Powermanagement)
+IPF.Requirement Acpd28826692
+{
+    description = "If the activation signal changes from ACTIVATE(0) to DEACTIVATE(1), then the AcpdCdd shall set PowerState to OFF and shall set DioConf_DioChannel_DIO_CH_CTO_5VAPP1_EN to STD_HIGH (POWER_OFF) and DioConf_DioChannel_DIO_CH_CTO_5VAPP2_EN to STD_HIGH (POWER_OFF)."
+    asil = "C"
+}
+
+// 25188589 – PowerState → qualifiers (Monitoring + Powermanagement)
+IPF.Requirement Acpd25188589
+{
+    description = "If PowerState = OFF, the AcpdCdd shall set all signal qualifiers to NOT_AVAILABLE (0x0C). When PowerState changes from OFF to ON, the AcpdCdd shall set all signal qualifiers to INIT (0x09) for at least one 10 ms cycle. When PowerState = ON and outside the INIT phase, each signal qualifier shall be determined solely by the results of the safety and diagnostic checks."
+    asil = "C"
+}
+
+// 30474716 – Update frequency of notifications (Input + Monitoring)
+IPF.Requirement Acpd30474716
+{
+    description = "The notification calls for ADC Group0, ADC Group1 and ADC Group Supply shall occur with a nominal period of 1 ms. For each group the time interval between two consecutive notifications shall be between 0.5 ms and 1.5 ms."
+    asil = "C"
+}

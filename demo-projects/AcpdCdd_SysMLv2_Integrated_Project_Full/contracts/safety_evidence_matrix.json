@@ -1,0 +1,1057 @@
+{
+  "source": "requirements/trlc_AccPdCdd.trlc",
+  "note": "Evidence-based matrix. It classifies only evidence already present in the uploaded/project model and does not invent new safety behavior. Updated for the latest ASIL TRLC including FFI, ADC notifications/callbacks, buffer/timestamp integrity, supervision, supply monitoring, and ASIL D partitioning.",
+  "allowed_statuses": [
+    "TRACED_ONLY",
+    "ALLOCATED",
+    "BEHAVIOR_MODELED",
+    "INTERACTION_MODELED",
+    "GAP"
+  ],
+  "entries": [
+    {
+      "requirement_id": "25093540",
+      "asil": "D",
+      "safety_goals": [
+        "SG_ACPD_06"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Incorrect OS taskchain or memory-section partitioning could violate intended ASIL D containment and freedom-from-interference assumptions.",
+      "evidence_status": "TRACED_ONLY",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25093540 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall be allocated to an ASIL D operating system taskchain and to an ASIL D memory section."
+    },
+    {
+      "requirement_id": "28596119",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28596119 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The runnable \"AcpdCdd_Main10ms()\" shall be invoked by the operating system every 10 ms. The time between two consecutive invocations of \"AcpdCdd_Main10ms()\" shall be 10 ms within system-level tolerated jitter."
+    },
+    {
+      "requirement_id": "25090543",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_07"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Cross-influence between Sensor1 and Sensor2 data paths could violate independence assumptions for redundant pedal signal processing.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25090543 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The calculation results and the RTE output signal of Sensor1 shall only be based on ADC data samples of Sensor1 and shall not be influenced by data samples of Sensor2. The calculation results and the RTE output signal of..."
+    },
+    {
+      "requirement_id": "25094200",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094200 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall provide ADC notification interfaces that are called in the interrupt service routine of the ADC groups. The interfaces shall be named AcpdCdd_AdcNotificationGroup0 for ADC Group0, AcpdCdd_AdcNotificatio..."
+    },
+    {
+      "requirement_id": "28712675",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28712675 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The notification interfaces of AcpdCdd shall only fetch and process ADC conversion results if the AcpdCdd is in the state ACTIVE, meaning the component is initialized and active."
+    },
+    {
+      "requirement_id": "30477411",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 30477411 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall provide callback interfaces to the ADC to be informed about conversion errors for Group0, Group1 and Supply. The interfaces shall be named AcpdCdd_Group0ErrorCbk, AcpdCdd_Group1ErrorCbk and AcpdCdd_Supp..."
+    },
+    {
+      "requirement_id": "25094059",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level",
+        "Output"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094059 to AcpdCdd Component Level."
+        },
+        {
+          "file": "06_Output.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094059 to Output."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall provide each signal value together with its associated qualifier in a structure that contains at least the elements \"signal value\" and \"qualifier\"."
+    },
+    {
+      "requirement_id": "25094008",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "Output",
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "06_Output.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094008 to Output."
+        },
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094008 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "In every invocation of \"AcpdCdd_Main10ms()\" the AcpdCdd shall perform exactly one RTE write of accelerator pedal related signals. This RTE write shall contain the current signal values and their associated qualifiers for..."
+    },
+    {
+      "requirement_id": "25094047",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "Monitoring",
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094047 to Monitoring."
+        },
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094047 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "In each execution of \"AcpdCdd_Main10ms()\", for every output signal S the AcpdCdd shall compute a qualifier Q(S) that is consistent with the checks applied to S in that same execution. \"Consistent\" means that Q(S) reflect..."
+    },
+    {
+      "requirement_id": "44879821",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "Output"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "06_Output.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 44879821 to Output."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "In every execution of \"AcpdCdd_Main10ms()\" the AcpdCdd shall write to RTE exactly one record containing the final values of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply. \"Final values\" are the values after applying ..."
+    },
+    {
+      "requirement_id": "25131815",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "Output"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "06_Output.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25131815 to Output."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "In every execution of \"AcpdCdd_Main10ms()\" the AcpdCdd shall write to RTE the final qualifier values for Sensor1, Sensor2, Sensor1Supply and Sensor2Supply together with their final signal values. \"Final qualifier values\"..."
+    },
+    {
+      "requirement_id": "25131787",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "Output"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "06_Output.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25131787 to Output."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall provide Sensor1, Sensor2, Sensor1Supply and Sensor2Supply signal values and their qualifiers in a single RTE write operation. All values and qualifiers in this record shall originate from the same 10 ms..."
+    },
+    {
+      "requirement_id": "28824427",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Process"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "03_Process.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28824427 to Process."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "For each of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply the AcpdCdd shall compute a moving average from the corresponding ADC sample buffer. The moving average for a signal X shall be calculated as the arithmetic m..."
+    },
+    {
+      "requirement_id": "28824395",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28824395 to Input."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall maintain separate ADC sample buffers for Sensor1, Sensor2, Sensor1Supply and Sensor2Supply. Each buffer shall be dimensioned to store at least 10 samples, corresponding to 1 ms ADC notifications within ..."
+    },
+    {
+      "requirement_id": "25094087",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Process"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "03_Process.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094087 to Process."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall convert 12-bit ADC raw samples to numerical voltage values using the float32 datatype so that the effective resolution of the samples is not degraded."
+    },
+    {
+      "requirement_id": "25094135",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25094135 to Input."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall store each ADC raw conversion result in buffer arrays of datatype uint16."
+    },
+    {
+      "requirement_id": "28820111",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Process"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "03_Process.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28820111 to Process."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The normalisation factor for all ADC data samples of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply shall be 5/4095. For each ADC raw value RawX, the AcpdCdd shall compute the corresponding voltage value VoltX as Volt..."
+    },
+    {
+      "requirement_id": "28820750",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Process"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "03_Process.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28820750 to Process."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "For every ADC sample of Sensor1, Sensor2, Sensor1Supply and Sensor2Supply the AcpdCdd shall apply the normalisation and conversion factors defined in requirement 28820111 before any subsequent processing such as averagin..."
+    },
+    {
+      "requirement_id": "25127428",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25127428 to Input."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "In AcpdCdd_AdcNotificationGroup0 the ADC data samples for Sensor1 (mission signal) and Sensor2 (mission signal) shall be written to their corresponding buffers. In AcpdCdd_AdcNotificationGroup1 the ADC data samples for S..."
+    },
+    {
+      "requirement_id": "25127531",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25127531 to Input."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "In AcpdCdd_AdcNotificationSupply the ADC data samples for Sensor1Supply and Sensor2Supply shall be written to their corresponding buffers."
+    },
+    {
+      "requirement_id": "25130711",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25130711 to Input."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall ensure that, during the processing of the buffered ADC data samples for Sensor1, Sensor2, Sensor1Supply and Sensor2Supply, the data set is not corrupted by updates from the ADC notification interfaces."
+    },
+    {
+      "requirement_id": "25187813",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25187813 to Input."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall write the mission and monitoring ADC data samples of Sensor1 to the data buffer only when both samples have been received. The same rule shall apply for the mission and monitoring ADC data samples of Se..."
+    },
+    {
+      "requirement_id": "28710933",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "Input"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28710933 to Input."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall read and buffer the timestamps provided by ADC Group0, ADC Group1 and ADC Group Supply in the same notification call in which the corresponding ADC data samples are stored."
+    },
+    {
+      "requirement_id": "25128928",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25128928 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The acceptable error for the redundancy check shall be 0.04 V (40 mV). For each sensor, the AcpdCdd shall compute LowerBoundary = MissionSignal \u2212 0.04 V and UpperBoundary = MissionSignal + 0.04 V. The redundancy crossche..."
+    },
+    {
+      "requirement_id": "44880031",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_03"
+      ],
+      "allocated_units": [
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Input acquisition, buffering, timestamping, conversion, or processing error could corrupt computed pedal signals.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 44880031 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "For each sensor channel, the AcpdCdd shall process measurements in the following order: (1) scaling of ADC raw values using the conversion factors defined in requirement 28820111, (2) computation of moving averages for m..."
+    },
+    {
+      "requirement_id": "44879718",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 44879718 to Monitoring."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "For Sensor1 the AcpdCdd shall perform the deviation check defined in requirement 25128928 using the averaged mission and monitoring signals of Sensor1."
+    },
+    {
+      "requirement_id": "44879786",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 44879786 to Monitoring."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "For Sensor2 the AcpdCdd shall perform the deviation check defined in requirement 25128928 using the averaged mission and monitoring signals of Sensor2."
+    },
+    {
+      "requirement_id": "25128720",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25128720 to Monitoring."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "If the deviation check result for Sensor1 is INVALID, then the AcpdCdd shall set the qualifier of Sensor1 to ERROR for the current 10 ms cycle."
+    },
+    {
+      "requirement_id": "25128907",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25128907 to Monitoring."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "If the deviation check result for Sensor2 is INVALID, then the AcpdCdd shall set the qualifier of Sensor2 to ERROR for the current 10 ms cycle."
+    },
+    {
+      "requirement_id": "25187609",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_01"
+      ],
+      "allocated_units": [
+        "Monitoring",
+        "AcpdCdd Component Level"
+      ],
+      "safety_concern": "Incorrect, stale, or inconsistent accelerator pedal signal/qualifier could be propagated to downstream software.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25187609 to Monitoring."
+        },
+        {
+          "file": "07_ComponentDesign.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25187609 to AcpdCdd Component Level."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The datatype of each final qualifier value shall be uint8. Final qualifier values shall be restricted to the set {0x00 (OK), 0x07 (DEBOUNCE), 0x09 (INIT), 0x0C (NOT_AVAILABLE), 0x0F (ERROR)}."
+    },
+    {
+      "requirement_id": "28710924",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28710924 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The time tolerance window to detect missing or unintended ADC notification calls shall be 500 microseconds."
+    },
+    {
+      "requirement_id": "28711397",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28711397 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "If any notification call of ADC Group0 or ADC Group1 arrives outside the defined time tolerance window, the qualifiers of the Sensor1 and Sensor2 signals shall be set to ERROR."
+    },
+    {
+      "requirement_id": "41781961",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 41781961 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "If the notification for either ADC Group0 or ADC Group1 is called outside the expected update frequency tolerance, the qualifiers for the Sensor1 and Sensor2 signals shall be set to ERROR."
+    },
+    {
+      "requirement_id": "41781989",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 41781989 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "If the notification of ADC Group Supply is called outside the expected update frequency tolerance, the qualifiers for the Sensor1Supply and Sensor2Supply signals shall be set to ERROR."
+    },
+    {
+      "requirement_id": "28711565",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28711565 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall check that the notifications of ADC Group0, ADC Group1 and ADC Group Supply are called and that they arrive with the expected update frequency. The supervision may be implemented for example by evaluati..."
+    },
+    {
+      "requirement_id": "28711591",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28711591 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "If more than one notification call of either ADC Group0 or ADC Group1 is missing, the qualifiers for the Sensor1 and Sensor2 signals shall be set to ERROR. If more than one notification call of ADC Group Supply is missin..."
+    },
+    {
+      "requirement_id": "28883887",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28883887 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall monitor the averaged Sensor1Supply signal. If Sensor1Supply exceeds 4.11 V or falls below 3.81 V at the ADC pin level, the qualifier of Sensor1Supply and the qualifier of Sensor1 shall be set to ERROR."
+    },
+    {
+      "requirement_id": "28883920",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28883920 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall monitor the averaged Sensor2Supply signal. If Sensor2Supply exceeds 4.11 V or falls below 3.81 V at the ADC pin level, the qualifier of Sensor2Supply and the qualifier of Sensor2 shall be set to ERROR."
+    },
+    {
+      "requirement_id": "30477478",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_02"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Diagnostic failure or missing reaction could allow invalid pedal, timing, ADC, or supply conditions to remain represented as valid.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 30477478 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "When AcpdCdd_Group0ErrorCbk or AcpdCdd_Group1ErrorCbk reports an ADC conversion error, the qualifiers of Sensor1 and Sensor2 signals shall be set to ERROR. When AcpdCdd_SupplyErrorCbk reports an ADC conversion error, the..."
+    },
+    {
+      "requirement_id": "28710854",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "ALLOCATED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28710854 to Monitoring."
+        }
+      ],
+      "rationale": "The current project provides trace/allocation evidence for this requirement. No stronger behavioral or implementation evidence is claimed in the model.",
+      "description_excerpt": "The AcpdCdd shall detect missing or unintended notification calls of ADC Group0 and ADC Group1. If the notification for ADC Group0 is called, it shall be checked that the notification of ADC Group1 is called within the d..."
+    },
+    {
+      "requirement_id": "25188489",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25188489 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall provide a RTE interface named \"AcpdCdd_Activation\" that allows switching the accelerator pedal power supply ON or OFF."
+    },
+    {
+      "requirement_id": "25188507",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25188507 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall activate the power supply of the accelerator pedal via the DIO port interface."
+    },
+    {
+      "requirement_id": "41716503",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 41716503 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The AcpdCdd shall maintain an internal state \"PowerState\" that represents whether the accelerator pedal is turned ON or OFF. PowerState shall only take values from the set {OFF, ON}."
+    },
+    {
+      "requirement_id": "25188528",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25188528 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "If the AcpdCdd receives the activation command ACTIVATE(0) and the previous activation command was also ACTIVATE(0), then PowerState shall remain ON. If the AcpdCdd receives the activation command DEACTIVATE(1) and the p..."
+    },
+    {
+      "requirement_id": "28826666",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28826666 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "If the activation signal changes from DEACTIVATE(1) to ACTIVATE(0), then the AcpdCdd shall set PowerState to ON and shall set DioConf_DioChannel_DIO_CH_CTO_5VAPP1_EN to STD_LOW (POWER_ON) and DioConf_DioChannel_DIO_CH_CT..."
+    },
+    {
+      "requirement_id": "28826692",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "INTERACTION_MODELED",
+      "evidence_refs": [
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 28826692 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "If the activation signal changes from ACTIVATE(0) to DEACTIVATE(1), then the AcpdCdd shall set PowerState to OFF and shall set DioConf_DioChannel_DIO_CH_CTO_5VAPP1_EN to STD_HIGH (POWER_OFF) and DioConf_DioChannel_DIO_CH..."
+    },
+    {
+      "requirement_id": "25188589",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_04"
+      ],
+      "allocated_units": [
+        "Monitoring",
+        "Powermanagement"
+      ],
+      "safety_concern": "Incorrect power-supply control or state handling could make pedal-supply availability inconsistent with reported qualifiers.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25188589 to Monitoring."
+        },
+        {
+          "file": "04_Powermanagement.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 25188589 to Powermanagement."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "If PowerState = OFF, the AcpdCdd shall set all signal qualifiers to NOT_AVAILABLE (0x0C). When PowerState changes from OFF to ON, the AcpdCdd shall set all signal qualifiers to INIT (0x09) for at least one 10 ms cycle. W..."
+    },
+    {
+      "requirement_id": "30474716",
+      "asil": "C",
+      "safety_goals": [
+        "SG_ACPD_05"
+      ],
+      "allocated_units": [
+        "Input",
+        "Monitoring"
+      ],
+      "safety_concern": "Violation of cyclic execution or notification timing assumptions could invalidate data freshness and diagnostic supervision.",
+      "evidence_status": "BEHAVIOR_MODELED",
+      "evidence_refs": [
+        {
+          "file": "02_Input.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 30474716 to Input."
+        },
+        {
+          "file": "05_Monitoring.sysml",
+          "evidence_type": "trace_comment",
+          "claim": "SysML trace comment allocates requirement 30474716 to Monitoring."
+        }
+      ],
+      "rationale": "The current model contains trace/allocation evidence and, where already present, behavior or interaction naming evidence. This matrix does not introduce new safety behavior and does not claim code or test verification.",
+      "description_excerpt": "The notification calls for ADC Group0, ADC Group1 and ADC Group Supply shall occur with a nominal period of 1 ms. For each group the time interval between two consecutive notifications shall be between 0.5 ms and 1.5 ms."
+    }
+  ]
+}

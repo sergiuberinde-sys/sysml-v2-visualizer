@@ -503,8 +503,10 @@ function toVizNode(
     case 'ConnectionDefinition':
       return { kind: 'interfaceDef', name, namespace, line: 0 };
 
-    case 'PortDefinition':
-      return { kind: 'portDef', name, namespace, line: 0 };
+    case 'PortDefinition': {
+      const portItems = body.filter(b => b.kind === 'itemAlias');
+      return { kind: 'portDef', name, namespace, line: 0, ...(portItems.length ? { body: portItems } : {}) };
+    }
 
     case 'PortUsage':
       return {

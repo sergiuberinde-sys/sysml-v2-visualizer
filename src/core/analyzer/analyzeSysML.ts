@@ -19,6 +19,8 @@ import { Resolver } from '../symbols/resolver';
 import { validate } from '../validator/validator';
 import type { ASTResult } from '../ast/astTypes';
 import type { ParseDiagnostic, SysMLNode } from '../modelTypes';
+import { PARSER_MODE } from '../parserMode';
+import type { ParserMode } from '../parserMode';
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -29,6 +31,7 @@ export interface SysMLAnalysis {
   model:       SemanticModel;
   symbols:     SymbolTable;
   diagnostics: ParseDiagnostic[];
+  parserMode:  ParserMode;
 }
 
 /**
@@ -70,7 +73,7 @@ export function analyzeSysML(text: string): SysMLAnalysis {
   const symbols    = buildSymbolTable(model.nodes);
   const semDiags   = validate({ nodes: model.nodes, packages: model.packages, diagnostics: [] });
   const diagnostics = [...ast.diagnostics, ...semDiags];
-  return { ast, model, symbols, diagnostics };
+  return { ast, model, symbols, diagnostics, parserMode: PARSER_MODE };
 }
 
 // ── Query APIs ────────────────────────────────────────────────────────────────

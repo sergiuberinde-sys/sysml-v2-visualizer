@@ -9,5 +9,9 @@ export interface ModelNode {
   type: string;
   name: string | null;
   direction?: string | null;
+  /** 1-based start line from Xtext parse tree (0 = unavailable). */
+  startLine?: number;
+  /** 1-based end line from Xtext parse tree (0 = unavailable). */
+  endLine?: number;
   children: ModelNode[];
 }

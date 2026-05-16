@@ -451,3 +451,40 @@ describe('structural ownership — ActionDefinition inside PartDefinition', () =
     expect(def?.owningDefName).toBeUndefined();
   });
 });
+
+// ── 9. ActionUsage typed by ActionDefinition (actionType from FeatureTyping) ────
+//
+// action def ReadSensor { ... }
+// action def Startup {
+//   action read : ReadSensor;   ← ActionUsage with FeatureTyping child
+// }
+//
+// EMF: ActionUsage "read" has child FeatureTyping name="ReadSensor"
+
+describe('ActionUsage typed by ActionDefinition — actionType field', () => {
+  const featureTyping = (name: string): ModelNode => n('FeatureTyping', name, []);
+
+  const root = actionDef('Startup', [
+    fm(actionUsage('read', [featureTyping('ReadSensor')])),
+    fm(actionUsage('evaluate', [featureTyping('EvaluateSensor')])),
+    fm(actionUsage('activate')),
+  ]);
+
+  const { actions } = buildBehavior([root]);
+
+  it('extracts actionType from FeatureTyping child for read', () => {
+    const read = actions.find(a => a.name === 'read');
+    expect(read).toBeDefined();
+    expect(read?.actionType).toBe('ReadSensor');
+  });
+
+  it('extracts actionType from FeatureTyping child for evaluate', () => {
+    const evaluate = actions.find(a => a.name === 'evaluate');
+    expect(evaluate?.actionType).toBe('EvaluateSensor');
+  });
+
+  it('does not set actionType when no FeatureTyping child is present', () => {
+    const activate = actions.find(a => a.name === 'activate');
+    expect(activate?.actionType).toBeUndefined();
+  });
+});

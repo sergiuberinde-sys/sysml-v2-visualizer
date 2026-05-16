@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { ReactFlow, Background, MarkerType, type Node, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGraph';
+import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
+import type { SelectionState } from '../../app/selection';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -102,10 +103,54 @@ function buildLayout(graph: ContainmentGraph): { nodes: Node[]; edges: Edge[] } 
   return { nodes, edges };
 }
 
+// ── EMF type → SelectionState type mapping ────────────────────────────────────
+
+function emfTypeToSelType(emfType: string): NonNullable<SelectionState>['type'] {
+  switch (emfType) {
+    case 'PartDefinition':
+    case 'PartUsage':       return 'part';
+    case 'PortUsage':
+    case 'PortDefinition':  return 'port';
+    case 'ActionDefinition':return 'behavior';
+    case 'ActionUsage':
+    case 'PerformActionUsage': return 'actionInst';
+    case 'Package':
+    case 'LibraryPackage':  return 'packageDef';
+    case 'InterfaceDefinition':
+    case 'ConnectionDefinition': return 'interface';
+    case 'OccurrenceDefinition': return 'occurrence';
+    default:                return 'part';
+  }
+}
+
+// Index graph nodes by id for fast lookup during click handling.
+function buildNodeIndex(graph: ContainmentGraph): Map<string, GraphNode> {
+  return new Map(graph.nodes.map(n => [n.id, n]));
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function ContainmentGraphView({ graph }: { graph: ContainmentGraph }) {
+export default function ContainmentGraphView({
+  graph,
+  onSelect,
+}: {
+  graph: ContainmentGraph;
+  onSelect?: (s: SelectionState) => void;
+}) {
   const { nodes, edges } = useMemo(() => buildLayout(graph), [graph]);
+  const nodeIndex = useMemo(() => buildNodeIndex(graph), [graph]);
+
+  const handleNodeClick = useCallback((_e: React.MouseEvent, rfNode: Node) => {
+    if (!onSelect) return;
+    const gn = nodeIndex.get(rfNode.id);
+    if (!gn) return;
+    // Skip transparent wrappers and anonymous nodes (label === type means no name)
+    if (gn.label === gn.type) return;
+    const selType = emfTypeToSelType(gn.type);
+    const sel: NonNullable<SelectionState> = { id: `cgv-${gn.id}`, type: selType, name: gn.label };
+    console.log('[ContainmentGraphView] click → selection:', sel);
+    onSelect(sel);
+  }, [onSelect, nodeIndex]);
 
   if (nodes.length === 0) {
     return (
@@ -124,7 +169,8 @@ export default function ContainmentGraphView({ graph }: { graph: ContainmentGrap
         fitViewOptions={{ padding: 0.15 }}
         nodesDraggable={false}
         nodesConnectable={false}
-        elementsSelectable={false}
+        elementsSelectable={!!onSelect}
+        onNodeClick={onSelect ? handleNodeClick : undefined}
       >
         <Background color="#2a2a3a" gap={24} />
       </ReactFlow>

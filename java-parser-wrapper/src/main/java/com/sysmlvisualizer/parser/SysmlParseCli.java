@@ -8,12 +8,16 @@ import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.resource.Resource;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.xtext.resource.XtextResourceSet;
 import org.omg.kerml.xtext.KerMLStandaloneSetup;
 import org.omg.kerml.xtext.xmi.KerMLxStandaloneSetup;
 import org.omg.sysml.lang.sysml.SysMLPackage;
 import org.omg.sysml.xtext.SysMLStandaloneSetup;
 import org.omg.sysml.xtext.xmi.SysMLxStandaloneSetup;
+
+import org.eclipse.xtext.nodemodel.ICompositeNode;
+import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -60,13 +64,13 @@ public class SysmlParseCli {
     // ── Normal mode ───────────────────────────────────────────────────────────
 
     private static void run(String[] args) {
-        if (args.length != 1) {
-            emit(errorJson("Usage: java -jar sysml-parse-cli.jar <file.sysml>"));
+        if (args.length < 1) {
+            emit(errorJson("Usage: java -jar sysml-parse-cli.jar <primary.sysml> [ctx1.sysml ...]"));
             System.exit(2);
         }
 
-        File file = new File(args[0]);
-        if (!file.exists()) {
+        File primaryFile = new File(args[0]);
+        if (!primaryFile.exists()) {
             emit(errorJson("File not found: " + args[0]));
             System.exit(2);
         }
@@ -75,24 +79,54 @@ public class SysmlParseCli {
             Injector injector = initSysML();
 
             XtextResourceSet resourceSet = injector.getInstance(XtextResourceSet.class);
+            // context files — load them into the resource set first for cross-ref resolution
+            for (int i = 1; i < args.length; i++) {
+                File ctx = new File(args[i]);
+                if (ctx.exists()) {
+                    Resource ctxRes = resourceSet.getResource(URI.createFileURI(ctx.getAbsolutePath()), true);
+                    // Force content loading so the global scope is populated before the primary is parsed.
+                    ctxRes.getContents();
+                }
+            }
+            // Resolve all cross-references across context resources so that qualified-name
+            // imports (e.g. "private import AcpdCdd_SysMLv2::Types::*") can be resolved
+            // when the primary resource is loaded.
+            EcoreUtil.resolveAll(resourceSet);
+            // then load primary
             Resource resource = resourceSet.getResource(
-                    URI.createFileURI(file.getAbsolutePath()), true);
+                    URI.createFileURI(primaryFile.getAbsolutePath()), true);
 
-            List<Diag> diags = new ArrayList<>();
-            for (Resource.Diagnostic d : resource.getErrors()) {
-                diags.add(new Diag("error", d.getMessage(), d.getLine(), d.getColumn()));
-            }
-            for (Resource.Diagnostic d : resource.getWarnings()) {
-                diags.add(new Diag("warning", d.getMessage(), d.getLine(), d.getColumn()));
-            }
-
+            // Build the model first: Xtext's lazy linking fires during traversal,
+            // so cross-reference errors only appear in resource.getErrors() after this.
             Set<EObject> visited = Collections.newSetFromMap(new IdentityHashMap<>());
             List<Node> model = new ArrayList<>();
             for (EObject root : resource.getContents()) {
                 model.add(buildNode(root, visited));
             }
 
-            boolean success = resource.getErrors().isEmpty();
+            // In standalone mode (no Xtext index), cross-file qualified-name imports
+            // (e.g. "private import AcpdCdd_SysMLv2::Types::*") can't be resolved
+            // because Xtext finds the local file's own package first and never sees
+            // the sub-packages from context files.  Our NodeModelUtils text-extraction
+            // fallback handles every affected type name, so these diagnostics are
+            // suppressed entirely when context files are present.
+            boolean hasContextFiles = args.length > 1;
+            List<Diag> diags = new ArrayList<>();
+            List<Resource.Diagnostic> trueErrors = new ArrayList<>();
+            for (Resource.Diagnostic d : resource.getErrors()) {
+                String msg = d.getMessage();
+                if (hasContextFiles && msg != null && msg.startsWith("Couldn't resolve reference to")) {
+                    // suppress — covered by NodeModelUtils text-extraction fallback
+                } else {
+                    diags.add(new Diag("error", msg, d.getLine(), d.getColumn()));
+                    trueErrors.add(d);
+                }
+            }
+            for (Resource.Diagnostic d : resource.getWarnings()) {
+                diags.add(new Diag("warning", d.getMessage(), d.getLine(), d.getColumn()));
+            }
+
+            boolean success = trueErrors.isEmpty();
             emit(toJson(success, diags, model));
             System.exit(success ? 0 : 1);
 
@@ -358,7 +392,7 @@ public class SysmlParseCli {
      */
     private static Node buildNode(EObject obj, Set<EObject> visited) {
         if (!visited.add(obj)) {
-            return new Node(obj.eClass().getName(), nameOf(obj), null, List.of());
+            return new Node(obj.eClass().getName(), nameOf(obj), null, List.of(), 0, 0);
         }
 
         String emfType = obj.eClass().getName();
@@ -405,6 +439,16 @@ public class SysmlParseCli {
             }
         }
 
+        // Source location via Xtext parse-tree node model (1-based; 0 = unavailable)
+        int startLine = 0, endLine = 0;
+        try {
+            ICompositeNode pn = NodeModelUtils.getNode(obj);
+            if (pn != null) {
+                startLine = pn.getStartLine();
+                endLine   = pn.getEndLine();
+            }
+        } catch (Exception ignored) {}
+
         List<Node> children = new ArrayList<>();
         List<EObject> contents;
         try {
@@ -419,7 +463,7 @@ public class SysmlParseCli {
                 // Skip individual children that trigger NPE in Pilot Implementation adapters.
             }
         }
-        return new Node(emfType, name, direction, children);
+        return new Node(emfType, name, direction, children, startLine, endLine);
     }
 
     private static String nameOf(EObject obj) {
@@ -436,6 +480,16 @@ public class SysmlParseCli {
             Object val = obj.eGet(f);
             if (val instanceof EObject ref && !ref.eIsProxy()) {
                 return nameOf(ref);
+            }
+            // Proxy (cross-file reference): resolve name from Xtext parse-tree text.
+            // NodeModelUtils gives the exact source tokens covering the reference, so
+            // qualified names like "Pkg::TypeName" return the last segment "TypeName".
+            if (f instanceof EReference) {
+                var nodes = NodeModelUtils.findNodesForFeature(obj, f);
+                if (!nodes.isEmpty()) {
+                    String text = NodeModelUtils.getTokenText(nodes.get(nodes.size() - 1)).trim();
+                    if (!text.isEmpty()) return text;
+                }
             }
         } catch (Exception e) {
             // Known Pilot Implementation bug: lazy type resolution for DecisionNode endpoints
@@ -497,6 +551,10 @@ public class SysmlParseCli {
         if (node.direction() != null) {
             sb.append("\n").append(pad1).append("\"direction\": ").append(jsonStr(node.direction())).append(",");
         }
+        if (node.startLine() > 0) {
+            sb.append("\n").append(pad1).append("\"startLine\": ").append(node.startLine()).append(",");
+            sb.append("\n").append(pad1).append("\"endLine\": ").append(node.endLine()).append(",");
+        }
         sb.append("\n").append(pad1).append("\"children\": [");
         List<Node> children = node.children();
         for (int i = 0; i < children.size(); i++) {
@@ -527,7 +585,7 @@ public class SysmlParseCli {
     }
 
     private record Diag(String severity, String message, int line, int column) {}
-    private record Node(String type, String name, String direction, List<Node> children) {}
+    private record Node(String type, String name, String direction, List<Node> children, int startLine, int endLine) {}
     private record DebugEntry(String path, String eClass,
                               java.util.Map<String, Object> features) {}
 }

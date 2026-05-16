@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { ParseResult, SysMLNode } from '../../core/modelTypes';
+import type { VisualizerModel, VizNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 
 const LANE_W         = 170;
@@ -11,10 +11,10 @@ const FIRST_MSG      = 70;
 const MSG_STEP       = 56;
 const LIFELINE_EXTRA = 30;
 
-type MsgNode = Extract<SysMLNode, { kind: 'message' }>;
+type MsgNode = Extract<VizNode, { kind: 'message' }>;
 
 interface Props {
-  result: ParseResult;
+  result: VisualizerModel;
   occurrenceName: string;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
@@ -23,7 +23,7 @@ interface Props {
 export default function SequenceView({ result, occurrenceName, selection, onSelect }: Props) {
   const { participants, messages } = useMemo(() => {
     const occ = result.nodes.find(
-      (n): n is Extract<SysMLNode, { kind: 'occurrenceDef' }> =>
+      (n): n is Extract<VizNode,{ kind: 'occurrenceDef' }> =>
         n.kind === 'occurrenceDef' && n.name === occurrenceName,
     );
 

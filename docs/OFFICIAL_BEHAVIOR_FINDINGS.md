@@ -483,3 +483,336 @@ parser rejects the `then` and `else` keywords; they are not part of the
 | `DecisionNode` (no successions) | `decide;` | ✅ as `«decide»` node | ❌ no edges |
 | `DecisionNode` (incoming succession) | `succession first a then d;` | ✅ node + edge `a → d` | ✅ incoming edge safe |
 | `DecisionNode` (outgoing successions) | `succession first d then b;` | ✅ node only | ❌ outgoing edges unresolved — filtered out |
+
+---
+
+## 11. Action reuse / invocation semantics
+
+Research conducted 2026-05-12.  All examples run through `sysml-parse-cli.jar` with
+`--debug`; Java 21 required (class-file version 65).
+
+### 11.1 Research question
+
+Does official SysML v2 give us safe "call-like" relationships between action definitions?
+What EMF types carry those relationships, and which are visualizable without fabricating runtime semantics?
+
+### 11.2 EMF types examined
+
+Seven syntactic forms were tested with the standalone JAR.
+
+#### Form A — ActionUsage typed by ActionDefinition (already implemented)
+
+```sysml
+action def Read   { action fetch;    }
+action def Pipeline {
+    action r : Read;
+    ...
+}
+```
+
+**Result: `success: true`.**
+
+```
+ActionUsage "r"
+  FeatureTyping "Read"     ← cross-ref to ActionDefinition "Read"
+```
+
+**Semantic**: `r` is a feature occurrence that *conforms to type* `Read`.  This is type
+conformance — the SysML equivalent of "here is an action slot whose classifier is `Read`".
+It is **not** a procedure call or invocation.
+
+**Already in our system**: the containment graph produces a `typedBy` edge
+`(ActionUsage "r") → (ActionDefinition "Read")`, surfaced in the Inspector under
+"Used as type by" when selecting `Read`.
+
+**What can be shown**: "r is typed by Read" — a classifier relationship.
+**What must not be said**: "r invokes Read", "r calls Read", "Read is executed here".
+
+---
+
+#### Form B — PerformActionUsage (inline)
+
+```sysml
+action def Calibrate { action measure; action adjust; succession first measure then adjust; }
+
+action def ControlLoop {
+    action init;
+    perform action cal : Calibrate;
+    action execute;
+    succession first init then cal;
+    succession first cal then execute;
+}
+```
+
+**Result: `success: true`.**
+
+```
+PerformActionUsage "cal"
+  FeatureTyping "Calibrate"    ← cross-ref to ActionDefinition "Calibrate"
+```
+
+The `--debug` output on the `PerformActionUsage` node shows:
+
+```
+"type": [ActionDefinition "Calibrate"]
+"actionDefinition": [ActionDefinition "Calibrate"]
+"performedAction": {PerformActionUsage "cal"}    ← self-reference
+"behavior": [ActionDefinition "Calibrate"]
+"inheritedMembership": [FeatureMembership, FeatureMembership, FeatureMembership]
+"member": ["measure", "adjust", SuccessionAsUsage]   ← INHERITED from Calibrate
+```
+
+Key observations:
+- `performedAction` is **self-referential** — it points back to `cal` itself, not to `Calibrate`.
+  This is the SysML v2 specification's way of saying "this occurrence IS the performed action".
+- The `member` list includes `measure`, `adjust`, and the succession *via inheritance*, not via
+  containment.  These are not separate contained steps in `ControlLoop`.
+- In succession chains, `PerformActionUsage "cal"` participates **identically** to a plain
+  `ActionUsage`: `succession first init then cal;` resolves with source=`init`, target=`cal`.
+
+**Semantic**: `perform action cal : Calibrate` asserts that occurrence `cal` in this context
+performs the behavior defined by `Calibrate`.  It is a *classifier conformance with perform
+semantics*, not a sub-routine call.  The internal steps of `Calibrate` (measure, adjust) do
+not appear as nodes in `ControlLoop`'s behavior graph.
+
+**Safe to visualize**: `cal` as a node labelled `«perform»` or `cal : Calibrate` in
+`ControlLoop`'s flow, with a `typedBy` edge to `Calibrate`.  The succession edges `init → cal`
+and `cal → execute` are fully resolved and safe.
+
+**Not safe**: Drawing edges from `ControlLoop`'s flow into `Calibrate`'s internal actions.
+`Calibrate`'s internal structure is a separate behavior definition.
+
+---
+
+#### Form C — PerformActionUsage (two-step: declare then perform)
+
+```sysml
+action def Main {
+    action sub : SubA;
+    perform sub;
+}
+```
+
+**Result: `success: true`.**
+
+```
+ActionUsage "sub"
+  FeatureTyping "SubA"
+
+PerformActionUsage "sub"
+  ReferenceSubsetting "sub"    ← points to the pre-declared ActionUsage
+```
+
+Both nodes share the same name `"sub"`.  The `PerformActionUsage` carries a
+`ReferenceSubsetting` child (not a `FeatureTyping`) because it is referencing a pre-declared
+usage rather than typing inline.
+
+**Extractor note**: When walking the containment tree, both `ActionUsage "sub"` and
+`PerformActionUsage "sub"` appear as siblings under `FeatureMembership`.  Our current
+`behaviorBuilder.ts` would emit two entries for the same name.  This form is rare in practice;
+prefer the inline `perform action sub : SubA;` form.
+
+---
+
+#### Form D — AcceptActionUsage
+
+```sysml
+action def Handler {
+    accept start : StartSignal;
+    action process;
+    succession first start then process;
+}
+```
+
+**Result: `success: false`** (cross-ref to `StartSignal` fails without stdlib, but the structure
+is present).
+
+```
+AcceptActionUsage                  name: null  ← the accept itself is ANONYMOUS
+  ParameterMembership
+    ReferenceUsage "start"  [in]   ← trigger binding variable
+      FeatureTyping "StartSignal"  ← (null if cross-ref fails)
+```
+
+**Critical finding — succession source is unresolvable**:
+
+`succession first start then process;` produces:
+
+```
+SuccessionAsUsage
+  EndFeatureMembership
+    ReferenceUsage
+      ReferenceSubsetting  name: null    ← source endpoint UNRESOLVED
+  EndFeatureMembership
+    ReferenceUsage
+      ReferenceSubsetting "process"      ← target resolves fine
+```
+
+The source `ReferenceSubsetting` is `null` because `start` is a *parameter binding* inside
+`AcceptActionUsage`, not a named peer-level feature accessible from the enclosing scope.
+The parser resolves `start` in the succession but the wrapper cannot extract its name via
+the standard `ReferenceSubsetting.name` path.
+
+**What is safe**: Recognising `AcceptActionUsage` as an event-wait node.  The trigger type
+(`StartSignal`) is readable from `ParameterMembership → ReferenceUsage → FeatureTyping.name`.
+
+**What must not be done**: Using `AcceptActionUsage` as a named source in a succession flow —
+the source endpoint is unresolvable and the flow must be treated as unresolved.
+
+---
+
+#### Form E — SendActionUsage
+
+```sysml
+action def SendAction {
+    out port out1;
+    send Signal() to out1;
+}
+```
+
+**Result: `success: true`.**
+
+```
+SendActionUsage    name: null
+  ParameterMembership [0]          ← payload
+    ReferenceUsage [in]
+      FeatureValue
+        InvocationExpression
+          Membership "Signal"      ← signal type name
+  ParameterMembership [1]          ← via clause (empty)
+    ReferenceUsage [in]
+  ParameterMembership [2]          ← receiver
+    ReferenceUsage [in]
+      FeatureValue
+        FeatureReferenceExpression
+          Membership "out1"        ← receiver port name
+```
+
+`SendActionUsage` is structurally equivalent to a function call expression.  It has no `name`,
+does not participate in succession chains, and its payload/receiver are buried three levels
+deep in `ParameterMembership` chains.
+
+**Safe**: Recognising `SendActionUsage` exists and noting the signal type name.
+**Not safe**: Treating `SendActionUsage` as a named action node or succession endpoint.
+Extraction would require dedicated handling of the `ParameterMembership` chain.
+
+---
+
+#### Form F — ExhibitStateUsage
+
+```sysml
+action def Main {
+    exhibit state sm : ControlSM;
+}
+```
+
+**Result: `success: true`.**
+
+```
+ExhibitStateUsage "sm"
+  FeatureTyping "ControlSM"
+```
+
+Structurally identical to `PerformActionUsage` but for `StateDefinition` types.
+The `name` is present when the state usage is named inline.
+
+**Safe**: Treating `ExhibitStateUsage` like `PerformActionUsage` — it is a named occurrence
+in the parent action's flow, typed by a `StateDefinition`.  Succession edges work normally.
+Can be shown as `«exhibit»` or `sm : ControlSM` in the behavior graph.
+
+---
+
+#### Form G — Cross-definition composition (key negative result)
+
+```sysml
+action def Initialize { action setup; action calibrate; succession first setup then calibrate; }
+action def Process    { action transform; action validate; succession first transform then validate; }
+
+action def Pipeline {
+    action init : Initialize;
+    action proc : Process;
+    succession first init then proc;
+}
+```
+
+**Result: `success: true`.**
+
+```
+ActionDefinition "Pipeline"
+  ActionUsage "init"  →  FeatureTyping "Initialize"
+  ActionUsage "proc"  →  FeatureTyping "Process"
+  SuccessionAsUsage   →  source "init",  target "proc"
+```
+
+**There is no edge** from `Pipeline`'s containment tree into `Initialize`'s internal actions
+(`setup`, `calibrate`).  The `--debug` output confirms that `init`'s `inheritedMembership`
+includes `Initialize`'s internal features, but these are *inherited*, not *contained*:
+they live in `Initialize`'s own subtree and do not appear as nodes in `Pipeline`'s
+containment children.
+
+The succession `first init then proc` is a *temporal ordering* of two typed occurrences
+within `Pipeline`.  It has no connection to Initialize's internal `setup → calibrate` chain.
+
+**Verdict**: Cross-definition composition in SysML v2 is type conformance, not invocation.
+There are no call edges between `Pipeline` and the internals of `Initialize` or `Process`.
+
+---
+
+### 11.3 EMF eClass summary
+
+| eClass | Syntax | Name in tree | FeatureTyping? | Succession source safe? | Safe to visualize? |
+|---|---|---|---|---|---|
+| `ActionUsage` | `action r : Read;` | ✅ `"r"` | ✅ | ✅ | ✅ already implemented |
+| `PerformActionUsage` | `perform action cal : Calibrate;` | ✅ `"cal"` | ✅ | ✅ | ✅ already in emfTypeToSelType |
+| `PerformActionUsage` (two-step) | `action sub : SubA; perform sub;` | ✅ `"sub"` | via ReferenceSubsetting | ✅ | ⚠️ may emit duplicate — prefer inline form |
+| `AcceptActionUsage` | `accept start : Signal;` | ❌ null | inside ParameterMembership | ❌ source null | ⚠️ event-wait node only, no flow extraction |
+| `SendActionUsage` | `send S() to port;` | ❌ null | buried in ParameterMembership chain | N/A | ⚠️ payload/receiver readable but not a succession node |
+| `ExhibitStateUsage` | `exhibit state sm : ControlSM;` | ✅ `"sm"` | ✅ | ✅ | ✅ safe, treat like PerformActionUsage |
+
+---
+
+### 11.4 Key conclusions
+
+**There is no call-graph semantics in official SysML v2.**
+
+`ActionUsage : ActionDefinition` is *classifier conformance* — the usage is an occurrence
+slot whose type is the definition.  It is **not** a procedure call, sub-routine invocation,
+or message send.  The internal steps of the typed definition do not flow into the using
+definition's behavior graph.
+
+`PerformActionUsage` adds *perform semantics* (the occurrence identity is asserted to be
+the performer) but is structurally identical to `ActionUsage` for flow extraction purposes.
+
+**What can be safely shown**:
+1. `ActionUsage` / `PerformActionUsage` typed by an `ActionDefinition` → a `typedBy` classifier
+   edge.  Already in the ContainmentGraph and surfaced in the Inspector.
+2. `PerformActionUsage` in a succession chain → safe, already extracted as a named node.
+3. `ExhibitStateUsage` in a succession chain → safe, treat identically to `PerformActionUsage`.
+4. `AcceptActionUsage` as an event-wait node with a trigger type label — recognisable but
+   cannot be a named succession source endpoint.
+5. `SendActionUsage` with payload and receiver names — recognisable but not a succession node.
+
+**What must NOT be implemented**:
+1. Cross-definition "call arrows" from one `ActionDefinition`'s flow into another's internals.
+2. `AcceptActionUsage` as a named succession source — source endpoint is null/unresolvable.
+3. Any "invocation" label on a `typedBy` edge — the relationship is type conformance.
+4. Expanding a typed `ActionUsage` inline into its definition's body — definitions are separate scopes.
+5. Sequence-diagram lifelines for these relationships — no message semantics exist at this level.
+
+---
+
+### 11.5 Validated test fixtures
+
+All seven examples were run through `sysml-parse-cli.jar --debug` on 2026-05-12.
+
+| Fixture | `success` | Key finding |
+|---|---|---|
+| `action r : Read` (ActionTyped) | ✅ true | FeatureTyping child naming ActionDefinition |
+| `perform action cal : Calibrate` (PerformInline) | ✅ true | PerformActionUsage + FeatureTyping, participates in succession |
+| `action sub : SubA; perform sub;` (PerformTwoStep) | ✅ true | PerformActionUsage + ReferenceSubsetting (not FeatureTyping) |
+| `accept start : StartSignal` (Accept) | ❌ false* | AcceptActionUsage anonymous, source null in succession |
+| `send Signal() to out1` (Send) | ✅ true | SendActionUsage anonymous, payload/receiver in ParameterMembership chain |
+| `exhibit state sm : ControlSM` (Exhibit) | ✅ true | ExhibitStateUsage, identical structure to PerformActionUsage |
+| Cross-definition composition Pipeline | ✅ true | No cross-definition edges, internal structures are separate |
+
+\* `success: false` due to missing stdlib cross-reference; model structure is correct.

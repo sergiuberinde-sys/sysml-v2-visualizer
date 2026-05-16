@@ -8,7 +8,7 @@ export interface Project {
 
 const KEY_PROJECTS  = 'sysml-projects';
 const KEY_ACTIVE    = 'sysml-active-project';
-const KEY_AUTOSAVE  = 'sysml-autosave';
+const KEY_AUTOSAVE  = 'sysml-autosave-v2';
 
 export function loadProjects(): Project[] {
   try {

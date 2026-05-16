@@ -1,4 +1,4 @@
-import type { ParseResult, SysMLNode, PackageDefNode } from '../core/modelTypes';
+import type { VisualizerModel, VizNode, VizPackageNode } from '../core/visualizerModel';
 import type { SelectionState } from './selection';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -9,7 +9,7 @@ interface Candidate {
   endLine: number;
 }
 
-function endOf(n: SysMLNode): number {
+function endOf(n: VizNode): number {
   return (n as { endLine?: number }).endLine ?? n.line;
 }
 
@@ -17,7 +17,7 @@ function endOf(n: SysMLNode): number {
 
 export function findElementAtLine(
   cursorLine: number,
-  result: ParseResult,
+  result: VisualizerModel,
 ): SelectionState {
   const candidates: Candidate[] = [];
 
@@ -52,7 +52,7 @@ export function findElementAtLine(
 
 // ── Package traversal ─────────────────────────────────────────────────────────
 
-function addPackages(packages: PackageDefNode[], out: Candidate[]): void {
+function addPackages(packages: VizPackageNode[], out: Candidate[]): void {
   for (const pkg of packages) {
     const ns = pkg.namespace ? `${pkg.namespace}::${pkg.name}` : pkg.name;
     out.push({
@@ -65,7 +65,7 @@ function addPackages(packages: PackageDefNode[], out: Candidate[]): void {
     });
     // Recurse only into nested packageDefs — their non-pkg children are in result.nodes
     addPackages(
-      pkg.body.filter((n): n is PackageDefNode => n.kind === 'packageDef'),
+      pkg.body.filter((n): n is VizPackageNode => n.kind === 'packageDef'),
       out,
     );
   }
@@ -74,7 +74,7 @@ function addPackages(packages: PackageDefNode[], out: Candidate[]): void {
 // ── Top-level node dispatch ───────────────────────────────────────────────────
 
 function addTopNode(
-  n: SysMLNode,
+  n: VizNode,
   traceLinkIdx: number,
   out: Candidate[],
 ): void {
@@ -164,7 +164,7 @@ function addTopNode(
 
 // ── Body traversal ────────────────────────────────────────────────────────────
 
-type BlockNode = Extract<SysMLNode, { name: string; body: SysMLNode[] }>;
+type BlockNode = Extract<VizNode, { name: string; body: VizNode[] }>;
 
 function addBody(parent: BlockNode, out: Candidate[]): void {
   const parentName = parent.name;

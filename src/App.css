@@ -1000,6 +1000,61 @@ html, body, #root {
 
 .insp-diag-msg { opacity: 0.9; }
 
+/* ── Inspector: impact trace ─────────────────────────────── */
+
+.insp-impact-group {
+  margin-bottom: 8px;
+}
+.insp-impact-group:last-child { margin-bottom: 0; }
+
+.insp-impact-group-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #45475a;
+  margin-bottom: 3px;
+}
+
+.insp-impact-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.insp-impact-type {
+  color: #585b70;
+  font-style: italic;
+  font-size: 10px;
+  flex-shrink: 0;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.insp-impact-name {
+  color: #cdd6f4;
+  font-family: monospace;
+  word-break: break-word;
+}
+
+.insp-impact-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: #93c5fd;
+  font-family: monospace;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-word;
+}
+.insp-impact-link:hover { color: #bfdbfe; }
+
 /* ── Inspector: model health ─────────────────────────────── */
 
 .insp-health {

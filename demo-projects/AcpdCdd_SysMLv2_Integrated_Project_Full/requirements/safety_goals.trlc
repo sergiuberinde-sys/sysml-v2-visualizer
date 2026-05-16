@@ -1,0 +1,54 @@
+package AcpdCdd_SafetyGoals
+import IPF
+
+// Derived software-level safety goal clusters based on AcpdCdd ASIL TRLC requirements.
+// Not a vehicle-level HARA replacement.
+
+// SG_ACPD_01
+IPF.Requirement SG_ACPD_01
+{
+    description = "Prevent incorrect accelerator pedal signal output. Covered AcpdCdd requirement IDs: 25094059, 25094008, 25094047, 44879821, 25131815, 25131787, 25187609."
+    asil = "C"
+}
+
+// SG_ACPD_02
+IPF.Requirement SG_ACPD_02
+{
+    description = "Detect and react to invalid sensor, timing, ADC and supply diagnostics. Covered AcpdCdd requirement IDs: 30477411, 25128928, 44879718, 44879786, 25128720, 25128907, 28883887, 28883920, 30477478."
+    asil = "C"
+}
+
+// SG_ACPD_03
+IPF.Requirement SG_ACPD_03
+{
+    description = "Ensure correct ADC acquisition, buffering, conversion and processing chain. Covered AcpdCdd requirement IDs: 25094200, 28712675, 28824427, 28824395, 25094087, 25094135, 28820111, 28820750, 25127428, 25127531, 25130711, 25187813, 28710933, 44880031."
+    asil = "C"
+}
+
+// SG_ACPD_04
+IPF.Requirement SG_ACPD_04
+{
+    description = "Maintain safe accelerator pedal power-supply control state. Covered AcpdCdd requirement IDs: 25188489, 25188507, 41716503, 25188528, 28826666, 28826692, 25188589."
+    asil = "C"
+}
+
+// SG_ACPD_05
+IPF.Requirement SG_ACPD_05
+{
+    description = "Preserve real-time execution and ADC notification assumptions. Covered AcpdCdd requirement IDs: 28596119, 28710924, 28711397, 41781961, 41781989, 28711565, 28711591, 28710854, 30474716."
+    asil = "C"
+}
+
+// SG_ACPD_06
+IPF.Requirement SG_ACPD_06
+{
+    description = "Preserve ASIL D partitioning assumptions. Covered AcpdCdd requirement IDs: 25093540."
+    asil = "D"
+}
+
+// SG_ACPD_07
+IPF.Requirement SG_ACPD_07
+{
+    description = "Maintain Sensor1/Sensor2 freedom-from-interference at AcpdCdd level. Covered AcpdCdd requirement IDs: 25090543."
+    asil = "C"
+}

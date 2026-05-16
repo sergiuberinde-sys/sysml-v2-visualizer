@@ -3,3 +3,5 @@ export type { SysMLV2ParserService } from './SysMLV2ParserService';
 export type { ModelNode } from './ModelNode';
 export type { ContainmentGraph, GraphNode, GraphEdge } from './ContainmentGraph';
 export { HttpSysMLV2ParserService } from './HttpSysMLV2ParserService';
+export type { ImpactTrace, ImpactedElement, ImpactedFlow, ImpactedBehavior, AttributeEntry } from './impactTrace';
+export { computeImpactTrace } from './impactTrace';

@@ -14,8 +14,8 @@ import type { SelectionState } from '../../app/selection';
 import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGraph';
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
-import { ElkEdge } from '../layout/ElkEdge';
-import { applyElkLayout } from '../layout/graphLayout';
+import { ElkEdge, roundedPolyline } from '../layout/ElkEdge';
+import { applyHierarchicalLayout } from '../layout/graphLayout';
 
 // ── Layout direction context (consumed by custom node type) ───────────────────
 
@@ -71,14 +71,30 @@ const COMP_STROKE = '#94a3b8';   // Composition — filled diamond at owner end
 type WayPt = { x: number; y: number };
 
 /** Build an orthogonal polyline from ELK waypoints, or fall back to smoothstep. */
+/**
+ * Build an edge path from ELK waypoints or fall back to smoothstep.
+ *
+ * useHandleEndpoints — when TRUE the React Flow handle position is prepended /
+ *   appended to the waypoint list.  Use this for edges whose source handle is
+ *   a PORT-SPECIFIC handle (port-X-ft, port-X-ft-right) because those handles
+ *   sit at a unique y-position per port, so including them naturally spreads
+ *   the edges apart from their first segment.
+ *   Set FALSE (default) for edges that share a GENERIC handle (__source,
+ *   __source_left …) — for those, the handle center is identical for all
+ *   edges on the node and including it would collapse ELK's spread back to one
+ *   pixel.  Instead we use ELK's attachment points directly.
+ */
 function elkOrSmoothPath(
   sourceX: number, sourceY: number, sourcePosition: import('@xyflow/react').Position,
   targetX: number, targetY: number, targetPosition: import('@xyflow/react').Position,
   waypoints: WayPt[] | undefined,
+  useHandleEndpoints = false,
 ): string {
   if (waypoints && waypoints.length >= 2) {
-    const pts: WayPt[] = [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }];
-    return `M ${pts[0].x} ${pts[0].y}` + pts.slice(1).map(p => ` L ${p.x} ${p.y}`).join('');
+    const pts: WayPt[] = useHandleEndpoints
+      ? [{ x: sourceX, y: sourceY }, ...waypoints, { x: targetX, y: targetY }]
+      : waypoints;
+    return roundedPolyline(pts);
   }
   const [p] = getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, borderRadius: 4 });
   return p;
@@ -87,11 +103,15 @@ function elkOrSmoothPath(
 function FeatureTypingEdge({
   id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data,
 }: EdgeProps) {
-  const waypoints   = (data as Record<string, unknown>)?.waypoints as WayPt[] | undefined;
-  const highlighted = !!(data as Record<string, unknown>)?.highlighted;
+  const d           = data as Record<string, unknown>;
+  const waypoints   = d?.waypoints as WayPt[] | undefined;
+  const highlighted = !!d?.highlighted;
   const stroke      = highlighted ? SEL_BORDER : FT_STROKE;
   const strokeWidth = highlighted ? 2.5 : 1;
-  const edgePath    = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints);
+  // Always use pure ELK attachment points — ELK spreads every edge on a node face
+  // independently, so the endpoint for this edge never coincides with the endpoint
+  // of another edge (e.g. a composition edge leaving the same portDef face).
+  const edgePath    = elkOrSmoothPath(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, waypoints, false);
   const mid = `sysml-ft-${id}`;
   return (
     <g>
@@ -361,10 +381,34 @@ interface Props {
   onSelect: (s: SelectionState) => void;
 }
 
+// Definition types that map to top-level nodes in the General View.
+const TOP_DEF_TYPES = new Set([
+  'PortDefinition', 'ActionDefinition', 'BehaviorDefinition', 'PartDefinition',
+  'ItemDefinition', 'AttributeDefinition', 'InterfaceDefinition',
+  'ConnectionDefinition', 'RequirementDefinition', 'StateDefinition',
+  'AllocationDefinition', 'UseCaseDefinition', 'ViewDefinition',
+]);
+
+/** Walk the graph to find the outermost (largest-range) definition containing `line`. */
+function findTopLevelDefInGraph(line: number, graph: ContainmentGraph): string | null {
+  const candidates = graph.nodes.filter(n =>
+    TOP_DEF_TYPES.has(n.type) &&
+    n.label !== n.type &&
+    n.startLine != null && n.endLine != null &&
+    n.startLine <= line && line <= n.endLine!,
+  );
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) =>
+    ((b.endLine ?? 0) - (b.startLine ?? 0)) - ((a.endLine ?? 0) - (a.startLine ?? 0)),
+  );
+  return candidates[0].id;
+}
+
 export default function StructureView({ result, graph, selection, onSelect }: Props) {
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
   const [displayEdges,   setDisplayEdges]   = useState<Edge[]>([]);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
+  const [focusedNodeId,  setFocusedNodeId]  = useState<string | null>(null);
 
   // nodeTypes / edgeTypes are stable references
   const nodeTypes = useMemo(() => ({ sysmlPart: SysmlPartNode }), []);
@@ -376,7 +420,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   }), []);
 
   // ── Pass 1: manual layout (recomputes when model changes) ─────────────────
-  const { baseNodes, baseEdges } = useMemo(() => {
+  const { baseNodes, baseEdges, graphIdToRfId } = useMemo(() => {
     const baseNodes: Node[] = [];
     const baseEdges: Edge[] = [];
 
@@ -523,6 +567,12 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           Math.max(nodeWidth(alias.type ? `«item» : ${alias.type}` : '«item»', alias.name, []), MIN_NODE_W)
         ),
       ]),
+      ...portDefs.flatMap(n => (n.body ?? []).filter((b): b is IA => b.kind === 'itemAlias').map(alias =>
+        Math.max(nodeWidth(alias.type ? `«item» : ${alias.type}` : '«item»', alias.name, []), MIN_NODE_W)
+      )),
+      ...behaviorDefs.flatMap(n => n.body.filter((b): b is IA => b.kind === 'itemAlias').map(alias =>
+        Math.max(nodeWidth(alias.type ? `«item» : ${alias.type}` : '«item»', alias.name, []), MIN_NODE_W)
+      )),
       ...legacyStructOccs.map(n => nodeWidth('«occurrence def»', n.name, [])),
       ...scenarios.map(n => nodeWidth('«scenario»', n.name, [])),
     );
@@ -628,6 +678,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           source: e.nodeId, target: targetId,
           sourceHandle: `port-${port.name}-ft`, targetHandle: '__target_right',
           type: 'featureTypingEdge',
+          data: { portDirection: port.direction },
           zIndex: 5,
         });
       }
@@ -651,6 +702,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
 
     // ── Column 3 ─ Standalone part usages ─────────────────────────────────────
     const partUsageGid = gid('PartUsage');
+    const itemUsageGid = gid('ItemUsage');
     for (const n of standaloneUsages) {
       const nodeId    = `usage-${n.name}`;
       const gidVal    = partUsageGid(n.name);
@@ -712,7 +764,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         const palette  = isItem ? PAL.item : PAL.inst;
         const instW    = Math.max(nodeWidth(stereo, alias.name, []), MIN_NODE_W);
         const h        = partH(ports.length);
-        const instGid  = partUsageGid(alias.name);
+        const instGid  = isItem ? itemUsageGid(alias.name) : partUsageGid(alias.name);
         const instRfId = `inst-${ownerName}-${alias.name}`;
         regGid(instGid, instRfId);
 
@@ -736,11 +788,32 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         });
 
         // FeatureTyping edge: instance → type definition in col2 (part def or item def)
-        const ftTarget = alias.type
+        let ftTarget = alias.type
           ? (baseNodes.some(bn => bn.id === `def-${alias.type}`)     ? `def-${alias.type}`
           :  baseNodes.some(bn => bn.id === `itemdef-${alias.type}`)  ? `itemdef-${alias.type}`
           :  null)
           : null;
+
+        // For item aliases whose type is defined in another file (not in result.nodes),
+        // create a synthetic «item def» placeholder so the FT edge and focused-view
+        // BFS can reach it.  Guard against duplicates — multiple portDefs often share
+        // the same payload type (e.g. both In and Out variants carry AdcNotification…).
+        if (isItem && !ftTarget && alias.type) {
+          const synId = `itemdef-${alias.type}`;
+          if (!baseNodes.some(bn => bn.id === synId)) {
+            const synW = nodeWidth('«item def»', alias.type, []);
+            baseNodes.push(makePartNode(
+              synId, { x: C2CX - synW / 2, y: col2Y },
+              '«item def»', alias.type, [], PAL.item, undefined,
+              { id: synId, type: 'part' as const, name: alias.type, line: 0 },
+              [],
+              synW,
+            ));
+            col2Y += PART_BASE_H + V_STACK_GAP;
+          }
+          ftTarget = synId;
+        }
+
         if (ftTarget) {
           baseEdges.push({
             id: `typing-inst-${ownerName}-${alias.name}`,
@@ -852,6 +925,20 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       if (aliases.length > 0) emitInstances(usageId, n.name, aliases, conns);
     }
 
+    // ── Column 3 ─ Items owned by port defs ───────────────────────────────────
+    for (const n of portDefs) {
+      const items = (n.body ?? []).filter((b): b is IA => b.kind === 'itemAlias');
+      if (items.length === 0) continue;
+      emitInstances(`portdef-${n.name}`, n.name, items, []);
+    }
+
+    // ── Column 3 ─ Items owned by behavior / action defs ──────────────────────
+    for (const n of behaviorDefs) {
+      const items = n.body.filter((b): b is IA => b.kind === 'itemAlias');
+      if (items.length === 0) continue;
+      emitInstances(`actdef-${n.name}`, n.name, items, []);
+    }
+
     // ── Column 3 ─ Legacy structural occurrenceDef ────────────────────────────
     const occDefGid  = gid('OccurrenceDefinition');
     for (const n of legacyStructOccs) {
@@ -936,38 +1023,117 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       }
     }
 
-    return { baseNodes, baseEdges };
+    return { baseNodes, baseEdges, graphIdToRfId };
   }, [result, graph]);
+
+  // ── Reset focus when the model changes ────────────────────────────────────────
+  useEffect(() => { setFocusedNodeId(null); }, [result, graph]);
+
+  // ── Cursor sync: editor line → focused element ────────────────────────────────
+  useEffect(() => {
+    if (!graph) return;
+    const handler = (ev: MessageEvent) => {
+      const msg = ev.data as { type: string; sourceLocation?: { line: number } };
+      if (msg.type !== 'revealElementAtSource' || !msg.sourceLocation) return;
+      const defGraphId = findTopLevelDefInGraph(msg.sourceLocation.line, graph);
+      if (!defGraphId) return;
+      const rfId = graphIdToRfId.get(defGraphId);
+      if (rfId) setFocusedNodeId(rfId);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [graph, graphIdToRfId]);
+
+  // ── Neighbourhood filter ───────────────────────────────────────────────────────
+  // Directional BFS from the focused node: follow edges only in their natural
+  // source → target direction.  This limits the subgraph to the definition
+  // and its type/composition descendants (portDefs, items, owned instances, etc.)
+  // without pulling in unrelated subtrees via reverse traversal.
+  //
+  // Bidirectional BFS would traverse FT edges backward from a type-def to every
+  // instance that uses it, then backward through composition to the owner, then
+  // forward through ALL of the owner's instances — exploding the subgraph for
+  // models like AcpdCdd_DataflowInterconnection.
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    if (!focusedNodeId) return { filteredNodes: baseNodes, filteredEdges: baseEdges };
+
+    const visible = new Set<string>([focusedNodeId]);
+    const queue   = [focusedNodeId];
+
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      for (const e of baseEdges) {
+        if (e.source !== id) continue;
+        // Don't follow featureTyping edges FROM part instances (inst-*) to definition
+        // nodes (def-*, portdef-*, ...).  Those edges would pull in the full type-def
+        // subtree and re-expand the entire graph — e.g. selecting
+        // AcpdCdd_DataflowInterconnection would collect all partDefs and portDefs of
+        // its 10 instances, making the focused view identical to the general view.
+        // Exception: FT to itemdef-* is fine — item defs have no further outgoing
+        // edges, so they are bounded, and they carry useful payload-type information.
+        if (id.startsWith('inst-') && e.type === 'featureTypingEdge' &&
+            !e.target.startsWith('itemdef-')) continue;
+        if (!visible.has(e.target)) {
+          visible.add(e.target);
+          queue.push(e.target);
+        }
+      }
+    }
+
+    return {
+      filteredNodes: baseNodes.filter(n => visible.has(n.id)),
+      filteredEdges: baseEdges.filter(e => visible.has(e.source) && visible.has(e.target)),
+    };
+  }, [baseNodes, baseEdges, focusedNodeId]);
 
   // ── Layout effect ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
-    applyElkLayout(baseNodes, baseEdges, 'lr').then(({ nodes: positioned, edgeRoutes }) => {
+    const layoutOpts = focusedNodeId ? { algorithm: 'stress' as const } : {};
+
+    // In focused mode, redirect output-port featureTyping edges to the right-side
+    // handle so they exit the correct side of the partDef node.  Output ports are
+    // rendered on the right boundary, so their portDef should be to the right too.
+    const edgesForLayout = focusedNodeId
+      ? filteredEdges.map(e => {
+          if (e.type !== 'featureTypingEdge') return e;
+          const dir = (e.data as Record<string, unknown>)?.portDirection;
+          if (dir !== 'out') return e;
+          return {
+            ...e,
+            sourceHandle: e.sourceHandle ? e.sourceHandle.replace(/-ft$/, '-ft-right') : e.sourceHandle,
+            targetHandle: '__target',
+          };
+        })
+      : filteredEdges;
+
+    applyHierarchicalLayout(filteredNodes, edgesForLayout, layoutOpts).then(({ nodes: positioned, edgeRoutes }) => {
       if (cancelled) return;
-      // Keep explicit draggable: false on group containers; enable on all other nodes.
       setDisplayNodes(positioned.map(n => ({ ...n, draggable: n.draggable !== false })));
-      // Apply ELK obstacle-avoiding routes to ALL edges.
-      // Generic edges (no explicit handles) are switched to ElkEdge.
-      // Custom edge types (featureTypingEdge, compositionEdge) keep their type so
-      // markers render correctly, but receive waypoints in data so their component
-      // can draw the ELK-routed orthogonal polyline instead of a smoothstep curve.
-      // This ensures ELK spreads multiple edges across each node face — eliminating
-      // the overlap that occurs when several edges share the same handle anchor.
-      setDisplayEdges(baseEdges.map(e => {
+      // Apply ELK routes to SysML relationship edges only.
+      // • featureTypingEdge / compositionEdge / nonCompositeMembershipEdge: keep
+      //   their type so SVG markers render; waypoints go in data.
+      // • straight / smoothstep connection edges: skip ELK waypoints entirely.
+      //   These use port-specific handles (port-X-out, port-Y) and React Flow's
+      //   native path rendering connects them to the exact port square position.
+      //   ELK routes to node-boundary midpoints, which misses the port squares.
+      const CUSTOM_EDGE_TYPES = new Set(['featureTypingEdge', 'compositionEdge', 'nonCompositeMembershipEdge']);
+      const SKIP_WAYPOINTS    = new Set(['straight', 'smoothstep']);
+      setDisplayEdges(edgesForLayout.map(e => {
         const waypoints = edgeRoutes.get(e.id);
-        if (!waypoints) return e;
-        if (!e.sourceHandle && !e.targetHandle) {
-          return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints } };
+        if (!waypoints || SKIP_WAYPOINTS.has(e.type ?? '')) return e;
+        if (CUSTOM_EDGE_TYPES.has(e.type ?? '')) {
+          return { ...e, data: { ...(e.data ?? {}), waypoints } };
         }
-        return { ...e, data: { ...(e.data ?? {}), waypoints } };
+        return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints } };
       }));
       setAutoFitVersion(v => v + 1);
     });
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseNodes, baseEdges]);
+  }, [filteredNodes, filteredEdges]);
 
   // ── Drag handler ──────────────────────────────────────────────────────────────
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
@@ -976,8 +1142,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
 
   // ── Pass 2: apply selection highlight ────────────────────────────────────────
   const { rfNodes, rfEdges } = useMemo(() => {
-    const nodes = displayNodes.length > 0 ? displayNodes : baseNodes;
-    const edges = displayEdges.length > 0 ? displayEdges : baseEdges;
+    const nodes = displayNodes.length > 0 ? displayNodes : filteredNodes;
+    const edges = displayEdges.length > 0 ? displayEdges : filteredEdges;
 
     if (!selection) return { rfNodes: nodes, rfEdges: edges };
 
@@ -1026,7 +1192,28 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     if (s) onSelect(s);
   }, [onSelect]);
 
-  if (rfNodes.length === 0) {
+  // ── Element dropdown entries ──────────────────────────────────────────────────
+  const dropdownEntries = useMemo(() => {
+    return baseNodes
+      .filter(n => !n.id.startsWith('inst-') && !n.id.startsWith('conn-fallback'))
+      .map(n => {
+        const sel = n.data._sel as SelectionState | null;
+        const name = sel?.name ?? n.id;
+        const kind = n.id.startsWith('def-')      ? 'part def'
+                   : n.id.startsWith('portdef-')  ? 'port def'
+                   : n.id.startsWith('actdef-')   ? 'action def'
+                   : n.id.startsWith('itemdef-')  ? 'item def'
+                   : n.id.startsWith('attrdef-')  ? 'attr def'
+                   : n.id.startsWith('iface-')    ? 'interface def'
+                   : n.id.startsWith('usage-')    ? 'part'
+                   : n.id.startsWith('occ-')      ? 'occurrence def'
+                   : '';
+        return { id: n.id, name, kind, label: kind ? `«${kind}» ${name}` : name };
+      })
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [baseNodes]);
+
+  if (baseNodes.length === 0) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b7280', fontSize: 14, gap: 8 }}>
         Add <code style={{ background: '#313244', padding: '2px 6px', borderRadius: 4 }}>part def</code> or
@@ -1051,6 +1238,22 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           <Background color="#2a2a3a" gap={24} />
           <Controls />
           <FitPanel autoFitVersion={autoFitVersion} />
+          <Panel position="top-left">
+            <select
+              value={focusedNodeId ?? ''}
+              onChange={e => setFocusedNodeId(e.target.value || null)}
+              style={{
+                background: '#1e1e2e', color: '#cdd6f4', border: '1px solid #45475a',
+                borderRadius: 6, padding: '4px 8px', fontSize: 12, cursor: 'pointer',
+                maxWidth: 280, outline: 'none',
+              }}
+            >
+              <option value="">— Show all elements —</option>
+              {dropdownEntries.map(e => (
+                <option key={e.id} value={e.id}>{e.label}</option>
+              ))}
+            </select>
+          </Panel>
           <Panel position="bottom-right">
             <StructureLegend />
           </Panel>

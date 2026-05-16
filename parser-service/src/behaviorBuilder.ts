@@ -190,6 +190,8 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       if (ownerDefId !== null) action.ownerId = ownerDefId;
       if (conditionalId)       action.conditionalId = conditionalId;
       if (branch)              action.branch = branch;
+      const ft = node.children.find(c => c.type === 'FeatureTyping');
+      if (ft?.name) action.actionType = ft.name;
       actions.push(action);
       return;
     }

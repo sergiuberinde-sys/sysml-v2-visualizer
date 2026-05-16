@@ -1,0 +1,139 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "SysML v2",
+  "scopeName": "source.sysml",
+  "patterns": [
+    { "include": "#doc-comments" },
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#declaration-keywords" },
+    { "include": "#modifier-keywords" },
+    { "include": "#control-keywords" },
+    { "include": "#constant-literals" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "doc-comments": {
+      "name": "comment.block.documentation.sysml",
+      "begin": "doc\\s*/\\*",
+      "end": "\\*/",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.comment.begin.sysml" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.comment.end.sysml" }
+      }
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.sysml",
+          "begin": "//",
+          "end": "$",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.sysml" }
+          }
+        },
+        {
+          "name": "comment.block.sysml",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.begin.sysml" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.comment.end.sysml" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.sysml",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        { "name": "constant.character.escape.sysml", "match": "\\\\." }
+      ]
+    },
+    "numbers": {
+      "name": "constant.numeric.sysml",
+      "match": "\\b[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\b"
+    },
+    "declaration-keywords": {
+      "patterns": [
+        {
+          "comment": "Two-word declarations: 'part def', 'action def', etc.",
+          "name": "keyword.declaration.sysml",
+          "match": "\\b(package|part|attribute|item|port|connect|connection|interface|bind|flow|action|perform|exhibit|constraint|requirement|require|assume|subject|actor|stakeholder|frame|state|metadata|view|rendering|calc|analysis|case|use|allocation|occurrence|verification|concern|satisfy|verify|expose|alias|import|ref|language|filter|select|render)\\b"
+        },
+        {
+          "comment": "'def' keyword used after a declaration keyword",
+          "name": "keyword.declaration.def.sysml",
+          "match": "\\bdef\\b"
+        }
+      ]
+    },
+    "modifier-keywords": {
+      "name": "keyword.other.sysml",
+      "match": "\\b(in|out|inout|abstract|variation|variant|readonly|derived|ordered|nonunique|directed|end|about|at|from|to|of|over|via|send|assign|snapshot|timeslice|locale|private|public|protected|library|standard)\\b"
+    },
+    "control-keywords": {
+      "name": "keyword.control.sysml",
+      "match": "\\b(if|else|then|not|and|or|xor|all|first|decide|merge|fork|join|accept|when|do|entry|exit|transition|succession|redefines|subsets|conjugate|inverse|chains|binds|typed|by|as|returns|return|until|loop|while|start|end)\\b"
+    },
+    "constant-literals": {
+      "name": "constant.language.sysml",
+      "match": "\\b(true|false|null|self|this)\\b"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.scope.sysml",
+          "match": "::"
+        },
+        {
+          "name": "keyword.operator.arrow.sysml",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.comparison.sysml",
+          "match": "<=|>=|!=|==|[<>]"
+        },
+        {
+          "name": "keyword.operator.assignment.sysml",
+          "match": "(?<![=!<>])=(?!=)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.sysml",
+          "match": "[+\\-*/%]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.block.sysml",
+          "match": "[{}]"
+        },
+        {
+          "name": "punctuation.separator.sysml",
+          "match": "[;,]"
+        },
+        {
+          "name": "punctuation.accessor.sysml",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.definition.type.sysml",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.brackets.sysml",
+          "match": "[\\[\\]()]"
+        }
+      ]
+    }
+  }
+}

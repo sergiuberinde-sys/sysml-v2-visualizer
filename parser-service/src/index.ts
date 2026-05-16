@@ -30,7 +30,7 @@ app.options('*', (_req: Request, res: Response): void => {
   res.sendStatus(204);
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // ── GET /health ───────────────────────────────────────────────────────────────
 
@@ -47,6 +47,7 @@ app.get('/health', async (_req: Request, res: Response): Promise<void> => {
 
 interface ParseRequest {
   text?: unknown;
+  context?: unknown;
 }
 
 app.post('/parse', async (req: Request, res: Response): Promise<void> => {
@@ -61,7 +62,14 @@ app.post('/parse', async (req: Request, res: Response): Promise<void> => {
     return;
   }
 
-  const result = await backendClient.parse(body.text);
+  const rawContext = Array.isArray(body.context) ? body.context as { name: string; text: string }[] : [];
+  const context = rawContext.filter(
+    (f): f is { name: string; text: string } =>
+      typeof f === 'object' && f !== null &&
+      typeof (f as Record<string, unknown>).name === 'string' &&
+      typeof (f as Record<string, unknown>).text === 'string'
+  );
+  const result = await backendClient.parse(body.text, context);
 
   // Build and embed the containment graph (including connection edges) so
   // callers can read graph.edges without running the frontend adapter.

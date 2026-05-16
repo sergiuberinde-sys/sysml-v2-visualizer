@@ -15,6 +15,8 @@ export interface GraphNode {
   label: string;
   type: string;
   direction?: string;
+  startLine?: number;
+  endLine?: number;
 }
 
 export interface GraphEdge {
@@ -22,6 +24,7 @@ export interface GraphEdge {
   source: string;
   target: string;
   type: 'contains' | 'typedBy' | 'connection';
+  label?: string;
 }
 
 export interface ContainmentGraph {
