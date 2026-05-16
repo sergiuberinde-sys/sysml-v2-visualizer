@@ -37,7 +37,7 @@ package Output {
         in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
         out item RteData : tAcpdCdd_rc_AccrSnsr;
 
-        action entry {
+        action entryStep {
             out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
         }
         first CheckAcceleratorDataPointer;
@@ -71,9 +71,9 @@ package Output {
         }
         action Return;
 
-        flow from acceleratorData to entry.acceleratorData;
-first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer.decision.CheckAcceleratorDataPointer_allows_ConvertAcpdCddDataTypeToRteType then ConvertAcpdCddDataTypeToRteType;
-        first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer.decision.CheckAcceleratorDataPointer_allows_UseDefaultErrorValuesIfNull then UseDefaultErrorValuesIfNull;
+        flow from acceleratorData to entryStep.acceleratorData;
+first CheckAcceleratorDataPointer then ConvertAcpdCddDataTypeToRteType;
+        first CheckAcceleratorDataPointer then UseDefaultErrorValuesIfNull;
         flow from CheckAcceleratorDataPointer.validAcceleratorData to ConvertAcpdCddDataTypeToRteType.validAcceleratorData;
         flow from CheckAcceleratorDataPointer.invalidAcceleratorData to UseDefaultErrorValuesIfNull.invalidAcceleratorData;
         first ConvertAcpdCddDataTypeToRteType then CopySensor1Data;
@@ -91,7 +91,6 @@ first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer.decision.CheckA
     }
     action def AcpdCdd_Output_Behavior {
 
-        action entry;
         first ReceiveAcceleratorData;
         action ReceiveAcceleratorData {
             out item decision : ReceiveAcceleratorDataDecisionType;
@@ -100,8 +99,8 @@ first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer.decision.CheckA
         action WriteSafeDefaultOutput;
         action WriteRteOutput;
 
-        first ReceiveAcceleratorData if ReceiveAcceleratorData.decision.ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput then AcpdCdd_UpdateOutput;
-        first ReceiveAcceleratorData if ReceiveAcceleratorData.decision.ReceiveAcceleratorData_allows_WriteSafeDefaultOutput then WriteSafeDefaultOutput;
+        first ReceiveAcceleratorData then AcpdCdd_UpdateOutput;
+        first ReceiveAcceleratorData then WriteSafeDefaultOutput;
         first AcpdCdd_UpdateOutput then WriteRteOutput;
         first WriteSafeDefaultOutput then WriteRteOutput;
     }
@@ -117,7 +116,6 @@ bind rteDataOut.RteData = updateOutput.RteData;
 
     action def AcpdCdd_Output_Sequence_AsActionFlow {
 
-        action entry;
         first OutputReceivesAcceleratorData;
         action OutputReceivesAcceleratorData;
         action OutputReceivesMonitoringStatus {
@@ -129,8 +127,8 @@ bind rteDataOut.RteData = updateOutput.RteData;
         action RtePublishesOutputData;
 
         first OutputReceivesAcceleratorData then OutputReceivesMonitoringStatus;
-        first OutputReceivesMonitoringStatus if OutputReceivesMonitoringStatus.decision.OutputReceivesAcceleratorData_allows_OutputPreparesRteData then OutputPreparesRteData;
-        first OutputReceivesMonitoringStatus if OutputReceivesMonitoringStatus.decision.OutputReceivesAcceleratorData_allows_OutputRequestsSafeDefaultTransmission then OutputRequestsSafeDefaultTransmission;
+        first OutputReceivesMonitoringStatus then OutputPreparesRteData;
+        first OutputReceivesMonitoringStatus then OutputRequestsSafeDefaultTransmission;
         first OutputPreparesRteData then OutputRequestsRteTransmission;
         first OutputRequestsSafeDefaultTransmission then OutputRequestsRteTransmission;
         first OutputRequestsRteTransmission then RtePublishesOutputData;

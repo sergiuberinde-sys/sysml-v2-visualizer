@@ -31,7 +31,6 @@ package Powermanagement {
     }
 
     action def AcpdCdd_InitPowerDio {
-        action entry;
         first SetDioChannelCto5vapp1Low;
         action SetDioChannelCto5vapp1Low;
         action SetDioChannelCto5vapp2Low;
@@ -44,7 +43,6 @@ package Powermanagement {
     action def AcpdCdd_SetPowerDio {
         in attribute Status;
 
-        action entry;
         first WriteDioChannelCto5vapp1;
         action WriteDioChannelCto5vapp1;
         action WriteDioChannelCto5vapp2;
@@ -58,7 +56,6 @@ package Powermanagement {
 
     action def AcpdCdd_PowermanagementInit {
 
-        action entry;
         first AcpdCdd_InitPowerDio;
         action AcpdCdd_InitPowerDio;
         // trlc-satisfies: 41716503
@@ -75,7 +72,6 @@ package Powermanagement {
     action def AcpdCdd_PowermanagementCalcStatus {
         out item Status : PowerStatusType;
 
-        action entry;
         first CopyCurrentPowerStateToStatus;
         action CopyCurrentPowerStateToStatus;
         action CopyCurrentPowerTransitionToStatus;
@@ -90,7 +86,6 @@ package Powermanagement {
     action def AcpdCdd_PowermanagementExecute {
         in attribute PowerState;
 
-        action entry;
         first RangeCheckPowerState;
         action RangeCheckPowerState;
         // trlc-satisfies: 28826666
@@ -113,19 +108,18 @@ package Powermanagement {
         first DeterminePowerOffToPowerOnTransition then DeterminePowerOnToPowerOffTransition;
         first DeterminePowerOnToPowerOffTransition then DetermineNoTransition;
         first DetermineNoTransition then StoreNewPowerState;
-        first StoreNewPowerState if StoreNewPowerState.decision.StoreNewPowerState_allows_SetPowerDioOn then SetPowerDioOn;
+        first StoreNewPowerState then SetPowerDioOn;
         first SetPowerDioOn then SetSwitchOnEventTrue;
         first SetSwitchOnEventTrue then Return;
-        first StoreNewPowerState if StoreNewPowerState.decision.StoreNewPowerState_allows_SetPowerDioOff then SetPowerDioOff;
+        first StoreNewPowerState then SetPowerDioOff;
         first SetPowerDioOff then Return;
-        first StoreNewPowerState if StoreNewPowerState.decision.StoreNewPowerState_allows_LatchPreviousSwitchOnEvent then LatchPreviousSwitchOnEvent;
+        first StoreNewPowerState then LatchPreviousSwitchOnEvent;
         first LatchPreviousSwitchOnEvent then ResetSwitchOnEventFalse;
         first ResetSwitchOnEventFalse then Return;
     }
 
     action def AcpdCdd_Activation {
 
-        action entry;
         first ReadActivationSignalFromRte;
         action ReadActivationSignalFromRte;
         action CompareActivationWithActivate {
@@ -136,14 +130,13 @@ package Powermanagement {
         action Return;
 
         first ReadActivationSignalFromRte then CompareActivationWithActivate;
-        first CompareActivationWithActivate if CompareActivationWithActivate.decision.CompareActivationWithActivate_allows_ExecutePowerOn then ExecutePowerOn;
-        first CompareActivationWithActivate if CompareActivationWithActivate.decision.CompareActivationWithActivate_allows_ExecutePowerOff then ExecutePowerOff;
+        first CompareActivationWithActivate then ExecutePowerOn;
+        first CompareActivationWithActivate then ExecutePowerOff;
         first ExecutePowerOn then Return;
         first ExecutePowerOff then Return;
     }
 
     action def AcpdCdd_Powermanagement_Behavior {
-        action entry;
         first AcpdCdd_PowermanagementInit;
         action AcpdCdd_PowermanagementInit;
         action AcpdCdd_Activation;
@@ -179,7 +172,6 @@ bind dioStatusOut.Status = setPowerDio.Status;
 
     action def AcpdCdd_Powermanagement_Sequence_AsActionFlow {
 
-        action entry;
         first PowermanagementInitializesModule;
         action PowermanagementInitializesModule;
         action PowermanagementCalculatesPowerStatus;
