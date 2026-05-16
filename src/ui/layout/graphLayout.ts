@@ -59,8 +59,8 @@ function spreadFaceEndpoints(
   routes: ElkRouteMap,
   nodes:  Array<{ id: string; x?: number; y?: number; width?: number; height?: number }>,
 ): void {
-  const SNAP       = 3;  // px tolerance for "on a face"
-  const MIN_SPREAD = 8;  // skip redistribution if spread already >= this
+  const SNAP       = 6;  // px tolerance for "on a face"
+  const MIN_SPREAD = 14; // skip redistribution only when every adjacent pair is already >= this apart
 
   type FaceEntry = { edgeId: string; ptIdx: number };
   const faceMap = new Map<string, FaceEntry[]>();
@@ -107,7 +107,14 @@ function spreadFaceEndpoints(
       const pt = routes.get(e.edgeId)![e.ptIdx];
       return isLR ? pt.y : pt.x;
     });
-    if (Math.max(...coords) - Math.min(...coords) >= MIN_SPREAD) continue;
+    // Skip only when every adjacent pair is already spread enough.
+    // Checking overall range misses cases where some pairs are still stacked
+    // (e.g. 3 edges at y=100 and 1 at y=130 → range=30 but 3 are still overlapping).
+    const sorted = [...coords].sort((a, b) => a - b);
+    const minGap = sorted.length > 1
+      ? Math.min(...sorted.slice(1).map((c, i) => c - sorted[i]))
+      : Infinity;
+    if (minGap >= MIN_SPREAD) continue;
 
     // Redistribute evenly across the face
     const faceLen    = isLR ? nh : nw;

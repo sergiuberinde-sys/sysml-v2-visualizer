@@ -15,7 +15,7 @@ import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGra
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
 import { ElkEdge, roundedPolyline } from '../layout/ElkEdge';
-import { applyHierarchicalLayout } from '../layout/graphLayout';
+import { applyHierarchicalLayout, applyElkLayout } from '../layout/graphLayout';
 
 // ── Layout direction context (consumed by custom node type) ───────────────────
 
@@ -589,6 +589,10 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     let col2Y = 60;   // running Y for column 2
     let col3Y = 60;   // running Y for column 3
 
+    // Center-Y trackers for vertical alignment of col3 items with their owners.
+    const defCol1Y = new Map<string, number>(); // portDef/ifaceDef name → col1 center Y
+    const defCol2Y = new Map<string, number>(); // partDef/behaviorDef name → col2 center Y
+
     // ── Column 1 ─ Interface defs (purple) and Port defs (indigo) ─────────────
     const ifaceGid   = gid('InterfaceDefinition', 'ConnectionDefinition');
     const portDefGid = gid('PortDefinition');
@@ -608,6 +612,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const w1 = nodeWidth(c.stereo, c.name, []);
       baseNodes.push(makePartNode(c.nodeId, { x: C1CX - w1 / 2, y: col1Y }, c.stereo, c.name, [], c.palette, undefined, c.sel, [], w1));
       regGid(c.sel.extra?.graphId as string | undefined, c.nodeId);
+      defCol1Y.set(c.name, col1Y + Math.round(PART_BASE_H / 2));
       col1Y += PART_BASE_H + V_STACK_GAP;
     }
 
@@ -649,10 +654,6 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           ...(itemDefGid(n.name) ? { extra: { graphId: itemDefGid(n.name)! } } : {}) },
       })),
     ];
-    // Track each composedDef's col2 Y so instances in col3 can start at the same
-    // vertical position, shortening composition edges and reducing crossings.
-    const defCol2Y = new Map<string, number>();
-
     for (const e of section1Entries) {
       const h   = partH(e.ports.length, e.attrs.length);
       const w2e = nodeWidth(e.stereo, e.name, e.attrs);
@@ -697,6 +698,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         w2b,
       ));
       regGid(gidVal, nodeId);
+      defCol2Y.set(n.name, col2Y + Math.round(PART_BASE_H / 2));
       col2Y += PART_BASE_H + V_STACK_GAP;
     }
 
@@ -860,6 +862,38 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       }
     }
 
+    // ── Column 3 ─ Items owned by port defs (aligned with col1) ─────────────────
+    // Process portDef items FIRST so their col3 positions align with the portDef
+    // positions in col1, keeping composition edges short and horizontal.
+    // This also means FT edges from col2 partDef ports and portDef composition
+    // edges are at similar vertical positions, reducing crossings.
+    for (const n of portDefs) {
+      const items = (n.body ?? []).filter((b): b is IA => b.kind === 'itemAlias');
+      if (items.length === 0) continue;
+      const portDefCenterY = defCol1Y.get(n.name);
+      if (portDefCenterY !== undefined) {
+        // items always have height PART_BASE_H (no ports on item instances)
+        const clusterH = items.length * PART_BASE_H + (items.length - 1) * INST_V_GAP;
+        const alignedStart = portDefCenterY - Math.round(clusterH / 2);
+        if (alignedStart > col3Y) col3Y = alignedStart;
+      }
+      emitInstances(`portdef-${n.name}`, n.name, items, []);
+    }
+
+    // ── Column 3 ─ Items owned by behavior / action defs (aligned with col2) ───
+    for (const n of behaviorDefs) {
+      const items = n.body.filter((b): b is IA => b.kind === 'itemAlias');
+      if (items.length === 0) continue;
+      const actDefCenterY = defCol2Y.get(n.name);
+      if (actDefCenterY !== undefined) {
+        const clusterH = items.length * PART_BASE_H + (items.length - 1) * INST_V_GAP;
+        const alignedStart = actDefCenterY - Math.round(clusterH / 2);
+        if (alignedStart > col3Y) col3Y = alignedStart;
+      }
+      emitInstances(`actdef-${n.name}`, n.name, items, []);
+    }
+
+    // ── Column 3 ─ Instances from composed part defs ─────────────────────────
     for (const n of composedDefs) {
       const defRfId  = `def-${n.name}`;    // already created in col2 section1
       const aliases: (PA | IA)[] = n.body.filter((b): b is PA | IA =>
@@ -867,7 +901,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const conns    = n.body.filter((b): b is CN => b.kind === 'connection');
       if (aliases.length === 0) continue;
       // Vertically align the instance cluster with the owning def to shorten
-      // composition edges. If standalone usages already pushed col3Y past the
+      // composition edges. If prior col3 items already pushed col3Y past the
       // def's vertical position, stay at col3Y (no gap, no backwards jump).
       const defCenterY = defCol2Y.get(n.name);
       if (defCenterY !== undefined) {
@@ -923,20 +957,6 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         b.kind === 'partAlias' || b.kind === 'itemAlias');
       const conns   = n.body.filter((b): b is CN => b.kind === 'connection');
       if (aliases.length > 0) emitInstances(usageId, n.name, aliases, conns);
-    }
-
-    // ── Column 3 ─ Items owned by port defs ───────────────────────────────────
-    for (const n of portDefs) {
-      const items = (n.body ?? []).filter((b): b is IA => b.kind === 'itemAlias');
-      if (items.length === 0) continue;
-      emitInstances(`portdef-${n.name}`, n.name, items, []);
-    }
-
-    // ── Column 3 ─ Items owned by behavior / action defs ──────────────────────
-    for (const n of behaviorDefs) {
-      const items = n.body.filter((b): b is IA => b.kind === 'itemAlias');
-      if (items.length === 0) continue;
-      emitInstances(`actdef-${n.name}`, n.name, items, []);
     }
 
     // ── Column 3 ─ Legacy structural occurrenceDef ────────────────────────────
@@ -1090,8 +1110,6 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   useEffect(() => {
     let cancelled = false;
 
-    const layoutOpts = focusedNodeId ? { algorithm: 'stress' as const } : {};
-
     // In focused mode, redirect output-port featureTyping edges to the right-side
     // handle so they exit the correct side of the partDef node.  Output ports are
     // rendered on the right boundary, so their portDef should be to the right too.
@@ -1108,7 +1126,15 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         })
       : filteredEdges;
 
-    applyHierarchicalLayout(filteredNodes, edgesForLayout, layoutOpts).then(({ nodes: positioned, edgeRoutes }) => {
+    // "Show all elements": preserve the manual 3-column layout, only route edges
+    // orthogonally around nodes (ELK fixed).  Repositioning with ELK layered DOWN
+    // discards the column structure and spreads portDef items far below their owners.
+    // Focused mode: ELK layered RIGHT with crossing minimisation (algorithm='stress').
+    const layoutPromise = focusedNodeId
+      ? applyHierarchicalLayout(filteredNodes, edgesForLayout, { algorithm: 'stress' })
+      : applyElkLayout(filteredNodes, edgesForLayout, 'lr');
+
+    layoutPromise.then(({ nodes: positioned, edgeRoutes }) => {
       if (cancelled) return;
       setDisplayNodes(positioned.map(n => ({ ...n, draggable: n.draggable !== false })));
       // Apply ELK routes to SysML relationship edges only.
