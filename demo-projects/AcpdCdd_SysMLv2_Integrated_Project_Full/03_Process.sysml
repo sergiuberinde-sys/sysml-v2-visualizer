@@ -31,7 +31,6 @@ package Process {
     }
 
     action def AcpdCdd_StartProcessing {
-        action entry;
         first InitializeProcessWithDefault;
         action InitializeProcessWithDefault;
         action SetProcessingReady;
@@ -43,7 +42,7 @@ package Process {
         in item InputData : InputDataType;
         out item ProcessedData : ChannelMeansType;
 
-        action entry {
+        action entryStep {
             out item InputData : InputDataType;
         }
         first CheckInputDataPointer;
@@ -89,9 +88,9 @@ package Process {
             out item ProcessedData : ChannelMeansType;
         }
 
-        flow from InputData to entry.InputData;
-first CheckInputDataPointer if CheckInputDataPointer.decision.CheckInputDataPointer_allows_FetchSensorBuffers then FetchSensorBuffers;
-        first CheckInputDataPointer if CheckInputDataPointer.decision.CheckInputDataPointer_allows_UseDefaultProcessedData then UseDefaultProcessedData;
+        flow from InputData to entryStep.InputData;
+first CheckInputDataPointer then FetchSensorBuffers;
+        first CheckInputDataPointer then UseDefaultProcessedData;
 
         flow from CheckInputDataPointer.checkedInputData to FetchSensorBuffers.InputData;
         flow from CheckInputDataPointer.invalidInputData to UseDefaultProcessedData.invalidInputData;
@@ -116,7 +115,6 @@ first CheckInputDataPointer if CheckInputDataPointer.decision.CheckInputDataPoin
     }
 
     action def AcpdCdd_Process_Behavior {
-        action entry;
         first AcpdCdd_StartProcessing;
         action AcpdCdd_StartProcessing : AcpdCdd_StartProcessing_ActionDef {
             out item decision : AcpdCdd_StartProcessingDecisionType;
@@ -125,8 +123,8 @@ first CheckInputDataPointer if CheckInputDataPointer.decision.CheckInputDataPoin
         action StopProcessing;
         action Return;
 
-        first AcpdCdd_StartProcessing if AcpdCdd_StartProcessing.decision.StartProcessing_allows_ProcessCycle then AcpdCdd_Process;
-        first AcpdCdd_StartProcessing if AcpdCdd_StartProcessing.decision.StartProcessing_allows_StopProcessing then StopProcessing;
+        first AcpdCdd_StartProcessing then AcpdCdd_Process;
+        first AcpdCdd_StartProcessing then StopProcessing;
         first AcpdCdd_Process then Return;
         first StopProcessing then Return;
     }
@@ -143,7 +141,6 @@ bind processedDataOut.ProcessedData = process.ProcessedData;
 
     action def AcpdCdd_Process_Sequence_AsActionFlow {
 
-        action entry;
         first ProcessReceivesInputData;
         action ProcessReceivesInputData {
             out item decision : ProcessReceivesInputDataDecisionType;
@@ -153,8 +150,8 @@ bind processedDataOut.ProcessedData = process.ProcessedData;
         action ProcessPublishesDefaultProcessedData;
         action ProcessPublishesProcessedData;
 
-        first ProcessReceivesInputData if ProcessReceivesInputData.decision.ProcessReceivesInputData_allows_ProcessCalculatesAcceleratorPosition then ProcessCalculatesAcceleratorPosition;
-        first ProcessReceivesInputData if ProcessReceivesInputData.decision.ProcessReceivesInputData_allows_ProcessPublishesDefaultProcessedData then ProcessPublishesDefaultProcessedData;
+        first ProcessReceivesInputData then ProcessCalculatesAcceleratorPosition;
+        first ProcessReceivesInputData then ProcessPublishesDefaultProcessedData;
         first ProcessCalculatesAcceleratorPosition then ProcessGeneratesProcessedData;
         first ProcessGeneratesProcessedData then ProcessPublishesProcessedData;
         first ProcessPublishesDefaultProcessedData then ProcessPublishesProcessedData;

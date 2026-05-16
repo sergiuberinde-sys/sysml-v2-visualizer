@@ -17,7 +17,6 @@ package Behavior_Main10ms {
     // trlc-satisfies: 28596119
     action def AcpdCdd_Main10ms {
 
-        action entry;
         first AcpdCdd_Activation;
         action AcpdCdd_Activation : AcpdCdd_Activation_ActionDef {
             out item decision : AcpdCdd_ActivationDecisionType;
@@ -31,8 +30,8 @@ package Behavior_Main10ms {
         action AcpdCdd_Output;
         action AcpdCdd_SafeOutputOnly;
 
-        first AcpdCdd_Activation if AcpdCdd_Activation.decision.AcpdCdd_Activation_allows_CyclicExecution then AcpdCdd_CollectInputData;
-        first AcpdCdd_Activation if AcpdCdd_Activation.decision.AcpdCdd_Activation_allows_SafeOutputOnly then AcpdCdd_SafeOutputOnly;
+        first AcpdCdd_Activation then AcpdCdd_CollectInputData;
+        first AcpdCdd_Activation then AcpdCdd_SafeOutputOnly;
         first AcpdCdd_CollectInputData then AcpdCdd_Process;
         first AcpdCdd_Process then AcpdCdd_PowermanagementCalcStatus;
         first AcpdCdd_PowermanagementCalcStatus then AdcBist_GetVaref1ErrorStatus;
@@ -44,7 +43,6 @@ package Behavior_Main10ms {
 
     action def AcpdCdd_Runtime_Sequence_AsActionFlow {
 
-        action entry;
         first RuntimeActivatesAcpdCdd;
         action RuntimeActivatesAcpdCdd {
             out item decision : RuntimeActivatesAcpdCddDecisionType;
@@ -56,8 +54,8 @@ package Behavior_Main10ms {
         action RuntimeExecutesSafeOutputCycle;
         action RuntimeExecutesOutputCycle;
 
-        first RuntimeActivatesAcpdCdd if RuntimeActivatesAcpdCdd.decision.RuntimeActivatesAcpdCdd_allows_RuntimeExecutesInputCycle then RuntimeExecutesInputCycle;
-        first RuntimeActivatesAcpdCdd if RuntimeActivatesAcpdCdd.decision.RuntimeActivatesAcpdCdd_allows_RuntimeExecutesSafeOutputCycle then RuntimeExecutesSafeOutputCycle;
+        first RuntimeActivatesAcpdCdd then RuntimeExecutesInputCycle;
+        first RuntimeActivatesAcpdCdd then RuntimeExecutesSafeOutputCycle;
         first RuntimeExecutesInputCycle then RuntimeExecutesProcessingCycle;
         first RuntimeExecutesProcessingCycle then RuntimeExecutesPowermanagementCycle;
         first RuntimeExecutesPowermanagementCycle then RuntimeExecutesMonitoringCycle;

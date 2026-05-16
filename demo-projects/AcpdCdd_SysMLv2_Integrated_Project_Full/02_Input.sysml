@@ -206,9 +206,9 @@ action CheckSensorDataNotNull {
         first CopyRingBufferOldestToNewest then EvaluateUpdateCounter;
 
         // Decision: if the ring buffer does not contain enough updates, pad with invalid entries.
-        first EvaluateUpdateCounter if EvaluateUpdateCounter.decision.missingEntriesDetected then SetMissingEntriesToInvalidInputVoltage;
+        first EvaluateUpdateCounter then SetMissingEntriesToInvalidInputVoltage;
 
-        first EvaluateUpdateCounter if not EvaluateUpdateCounter.decision.missingEntriesDetected then ReturnBuffer;
+        first EvaluateUpdateCounter then ReturnBuffer;
 
         first SetMissingEntriesToInvalidInputVoltage then ReturnBuffer;
         first ReturnBuffer then DecrementUpdateCounter;
@@ -376,9 +376,9 @@ action GetGroup0SampleFromAdc {
 flow from GetGroup0SampleFromAdc.group0Sample to ValidateSampleCountPointerAndRange.group0Sample;
 
         // Decision: received Group0 sample is usable?
-        first ValidateSampleCountPointerAndRange if ValidateSampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid then UseActualGroup0Sample;
+        first ValidateSampleCountPointerAndRange then UseActualGroup0Sample;
 
-        first ValidateSampleCountPointerAndRange if not ValidateSampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid then UseInvalidGroup0Sample;
+        first ValidateSampleCountPointerAndRange then UseInvalidGroup0Sample;
 
         flow from GetGroup0SampleFromAdc.group0Sample to UseActualGroup0Sample.group0Sample;
 
@@ -386,9 +386,9 @@ flow from GetGroup0SampleFromAdc.group0Sample to ValidateSampleCountPointerAndRa
         first UseActualGroup0Sample then CheckOldGroup0Cache;
         first UseInvalidGroup0Sample then CheckOldGroup0Cache;
 // Decision: a previous unpaired Group0 sample already exists?
-        first CheckOldGroup0Cache if CheckOldGroup0Cache.decision.oldGroup0CacheFilled then PushOldGroup0WithInvalidGroup1IfNeeded;
+        first CheckOldGroup0Cache then PushOldGroup0WithInvalidGroup1IfNeeded;
 
-        first CheckOldGroup0Cache if not CheckOldGroup0Cache.decision.oldGroup0CacheFilled then CacheNewGroup0Sample;
+        first CheckOldGroup0Cache then CacheNewGroup0Sample;
 flow from Entry.groupDataEntryPair to CacheNewGroup0Sample.groupDataEntryPair;
         flow from UseActualGroup0Sample.normalizedGroup0Sample to CacheNewGroup0Sample.group0Sample;
         flow from UseInvalidGroup0Sample.normalizedGroup0Sample to CacheNewGroup0Sample.group0Sample;
@@ -404,9 +404,9 @@ flow from Entry.groupDataEntryPair to CacheNewGroup0Sample.groupDataEntryPair;
         flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to CheckBothGroup0AndGroup1Filled.groupDataEntryPair;
 
         // Decision: Group0 and Group1 now form a complete pair?
-        first CheckBothGroup0AndGroup1Filled if CheckBothGroup0AndGroup1Filled.decision.bothGroup0AndGroup1Filled then WriteConsistentPairToRingBuffer;
+        first CheckBothGroup0AndGroup1Filled then WriteConsistentPairToRingBuffer;
 
-        first CheckBothGroup0AndGroup1Filled if not CheckBothGroup0AndGroup1Filled.decision.bothGroup0AndGroup1Filled then KeepPartialPairCached;
+        first CheckBothGroup0AndGroup1Filled then KeepPartialPairCached;
 
         flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to WriteConsistentPairToRingBuffer.groupDataEntryPair;
         flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to KeepPartialPairCached.groupDataEntryPair;
@@ -493,14 +493,14 @@ action ValidateGroup1SampleCountPointerAndRange {
         first ValidateGroup1SampleCountPointerAndRange;
         flow from adcGroup1Sample to Entry.adcGroup1Sample;
         flow from groupDataEntryPair to Entry.groupDataEntryPair;
-first ValidateGroup1SampleCountPointerAndRange if ValidateGroup1SampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid then UseActualGroup1Sample;
+first ValidateGroup1SampleCountPointerAndRange then UseActualGroup1Sample;
 
-        first ValidateGroup1SampleCountPointerAndRange if not ValidateGroup1SampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid then UseInvalidGroup1Sample;
+        first ValidateGroup1SampleCountPointerAndRange then UseInvalidGroup1Sample;
 first UseActualGroup1Sample then CheckOldGroup1Cache;
         first UseInvalidGroup1Sample then CheckOldGroup1Cache;
-first CheckOldGroup1Cache if CheckOldGroup1Cache.decision.oldGroup1CacheFilled then PushOldGroup1WithInvalidGroup0IfNeeded;
+first CheckOldGroup1Cache then PushOldGroup1WithInvalidGroup0IfNeeded;
 
-        first CheckOldGroup1Cache if not CheckOldGroup1Cache.decision.oldGroup1CacheFilled then CacheNewGroup1Sample;
+        first CheckOldGroup1Cache then CacheNewGroup1Sample;
 flow from Entry.groupDataEntryPair to CacheNewGroup1Sample.groupDataEntryPair;
         flow from UseActualGroup1Sample.normalizedGroup1Sample to CacheNewGroup1Sample.group1Sample;
         flow from UseInvalidGroup1Sample.normalizedGroup1Sample to CacheNewGroup1Sample.group1Sample;
@@ -514,9 +514,9 @@ flow from Entry.groupDataEntryPair to CacheNewGroup1Sample.groupDataEntryPair;
         first SetIsGroup1FilledTrue then CheckBothGroup0AndGroup1Filled;
         flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to CheckBothGroup0AndGroup1Filled.groupDataEntryPair;
 
-        first CheckBothGroup0AndGroup1Filled if CheckBothGroup0AndGroup1Filled.decision.bothGroup0AndGroup1Filled then WriteConsistentPairToRingBuffer;
+        first CheckBothGroup0AndGroup1Filled then WriteConsistentPairToRingBuffer;
 
-        first CheckBothGroup0AndGroup1Filled if not CheckBothGroup0AndGroup1Filled.decision.bothGroup0AndGroup1Filled then KeepPartialPairCached;
+        first CheckBothGroup0AndGroup1Filled then KeepPartialPairCached;
 
         flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to WriteConsistentPairToRingBuffer.groupDataEntryPair;
         flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to KeepPartialPairCached.groupDataEntryPair;
@@ -566,9 +566,9 @@ action ValidateSupplySample {
         first ValidateSupplySample;
         flow from adcSupplySample to Entry.adcSupplySample;
         flow from supplyData to Entry.supplyData;
-first ValidateSupplySample if ValidateSupplySample.decision.supplySampleValid then UseActualSupplySample;
+first ValidateSupplySample then UseActualSupplySample;
 
-        first ValidateSupplySample if not ValidateSupplySample.decision.supplySampleValid then UseInvalidSupplySample;
+        first ValidateSupplySample then UseInvalidSupplySample;
 first UseActualSupplySample then WriteSupplySampleToRingBuffer;
         first UseInvalidSupplySample then WriteSupplySampleToRingBuffer;
 flow from UseActualSupplySample.normalizedSupplySample to WriteSupplySampleToRingBuffer.supplySample;
@@ -652,9 +652,9 @@ action EnterSensorGroupDataHandlingExclusiveArea;
         first MapGroup0Group1SupplyToSensor1Data then MapTimestamps;
         first MapTimestamps then ValidateCollectedInputData;
 
-        first ValidateCollectedInputData if ValidateCollectedInputData.decision.collectedInputDataValid then ReturnValidInputData;
+        first ValidateCollectedInputData then ReturnValidInputData;
 
-        first ValidateCollectedInputData if not ValidateCollectedInputData.decision.collectedInputDataValid then ReturnDegradedInputData;
+        first ValidateCollectedInputData then ReturnDegradedInputData;
 
         first ReturnValidInputData then ReturnInputData;
         first ReturnDegradedInputData then ReturnInputData;
@@ -681,7 +681,6 @@ flow from GetGroup0Data.group0Buffer to MapGroup0Group1SupplyToSensor0Data.group
 
     action def AcpdCdd_Input_Behavior {
 
-        action entry;
         first AcpdCdd_StartInputCollector;
         action AcpdCdd_StartInputCollector;
         action AcpdCdd_AdcGroup0NewData;
@@ -698,14 +697,13 @@ flow from GetGroup0Data.group0Buffer to MapGroup0Group1SupplyToSensor0Data.group
 
     // Main 10 ms Input behavior modeled with explicit guarded successions.
     // This follows the official SysML v2 conditional succession pattern:
-    // first <sourceAction> if <Boolean expression> then <targetAction>;
+    // first <sourceAction> then <targetAction>;
     // Visualizers can render those guarded successions as dotted conditional arrows.
     action def AcpdCdd_Input_Main10ms_GuardedBranching {
 
         in item adcNotification : AdcNotificationPayloadType;
         out item inputData : InputDataType;
 
-        action entry;
         first receiveAdcNotification;
         action receiveAdcNotification {
             out item decision : receiveAdcNotificationDecisionType;
@@ -774,9 +772,9 @@ flow from GetGroup0Data.group0Buffer to MapGroup0Group1SupplyToSensor0Data.group
         }
 
         // Decision: notification available?
-        first receiveAdcNotification if receiveAdcNotification.decision.notificationArrived then decodeAdcGroups;
+        first receiveAdcNotification then decodeAdcGroups;
 
-        first receiveAdcNotification if not receiveAdcNotification.decision.notificationArrived then incrementMissingNotificationCounter;
+        first receiveAdcNotification then incrementMissingNotificationCounter;
 
         first incrementMissingNotificationCounter then keepPreviousInputBuffer;
         first keepPreviousInputBuffer then setMissingNotificationQualifier;
@@ -785,9 +783,9 @@ flow from GetGroup0Data.group0Buffer to MapGroup0Group1SupplyToSensor0Data.group
         flow from keepPreviousInputBuffer.fallbackInputData to setMissingNotificationQualifier.fallbackInputData;
 
         // Decision: timestamp fresh?
-        first decodeAdcGroups if decodeAdcGroups.decision.timestampFresh then validateTimestamp;
+        first decodeAdcGroups then validateTimestamp;
 
-        first decodeAdcGroups if not decodeAdcGroups.decision.timestampFresh then markNotificationStale;
+        first decodeAdcGroups then markNotificationStale;
 
         flow from decodeAdcGroups.decodedInputData to validateTimestamp.decodedInputData;
         flow from decodeAdcGroups.decodedInputData to markNotificationStale.decodedInputData;
@@ -802,20 +800,20 @@ flow from GetGroup0Data.group0Buffer to MapGroup0Group1SupplyToSensor0Data.group
         flow from validateTimestamp.timestampCheckedInputData to validateSupplySample.inputData;
 
         // Decisions after independent checks.
-        first validateGroup0Sample if not validateGroup0Sample.decision.group0SampleValid then setGroup0InvalidQualifier;
+        first validateGroup0Sample then setGroup0InvalidQualifier;
 
-        first validateGroup1Sample if not validateGroup1Sample.decision.group1SampleValid then setGroup1InvalidQualifier;
+        first validateGroup1Sample then setGroup1InvalidQualifier;
 
-        first validateSupplySample if not validateSupplySample.decision.supplySampleValid then setSupplyInvalidQualifier;
+        first validateSupplySample then setSupplyInvalidQualifier;
 
         // Join-style convergence before plausibility check.
         first validateGroup0Sample then validateSensorPairPlausibility;
         first validateGroup1Sample then validateSensorPairPlausibility;
         first validateSupplySample then validateSensorPairPlausibility;
 
-        first validateSensorPairPlausibility if validateSensorPairPlausibility.decision.sensorPairPlausible then composeValidInputData;
+        first validateSensorPairPlausibility then composeValidInputData;
 
-        first validateSensorPairPlausibility if not validateSensorPairPlausibility.decision.sensorPairPlausible then setSensorPairImplausibleQualifier;
+        first validateSensorPairPlausibility then setSensorPairImplausibleQualifier;
 
         first setSensorPairImplausibleQualifier then composeFallbackInputData;
         first markNotificationStale then composeFallbackInputData;
@@ -860,7 +858,6 @@ bind group1Data = collectInputData.group1Data;
 
     action def AcpdCdd_Input_Sequence_AsActionFlow {
 
-        action entry;
         first InputInitializesAdcGroupData;
         action InputInitializesAdcGroupData;
         action InputAddsAdcGroupDataEntry;

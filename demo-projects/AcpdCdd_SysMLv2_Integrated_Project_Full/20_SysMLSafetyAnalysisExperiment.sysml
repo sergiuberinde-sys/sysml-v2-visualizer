@@ -8,7 +8,7 @@ package GoalOrientedSafetyReasoning {
     //
     // FailureMode is modeled as a part with attributes.
     // The FailureMode assumes the failure condition has happened.
-    // The FailureMode has an objective: reach/maintain a safe state.
+    // The FailureMode has an requirement: reach/maintain a safe state.
     // The FailureMode requires one or more ControlMeasures.
     //
     // If required control measures are not present/implemented,
@@ -47,7 +47,7 @@ package GoalOrientedSafetyReasoning {
         attribute asil : AsilKind;
         attribute assumedOccurred : boolean;
         attribute controlCoverage : ControlCoverageKind;
-        attribute state : FailureModeStateKind;
+        attribute failureState : FailureModeStateKind;
         attribute hasSafetyGap : boolean;
         attribute localEffect : ScalarValues::String;
         attribute endEffect : ScalarValues::String;
@@ -98,22 +98,22 @@ package GoalOrientedSafetyReasoning {
             attribute asil = ASIL_C;
             attribute assumedOccurred = true;
             attribute controlCoverage = FullControlMeasure;
-            attribute state = Controlled;
+            attribute failureState = Controlled;
             attribute hasSafetyGap = false;
             attribute localEffect = "ADC input buffer may not be refreshed.";
             attribute endEffect = "Downstream output could use stale sensor information if not mitigated.";
         }
 
-        objective mitigateFailureMode
+        requirement mitigateFailureMode
             : Objective_MitigateMissingAdcNotification;
 
-        assume failureHasOccurred
+        requirement failureHasOccurred
             : Assume_MissingAdcNotificationOccurred;
 
-        require timestampSupervisionRequired
+        requirement timestampSupervisionRequired
             : Require_TimestampSupervision;
 
-        require errorQualifierFallbackRequired
+        requirement errorQualifierFallbackRequired
             : Require_ErrorQualifierFallback;
 
         part timestampSupervision : ControlMeasure {
@@ -143,22 +143,22 @@ package GoalOrientedSafetyReasoning {
             attribute asil = ASIL_C;
             attribute assumedOccurred = true;
             attribute controlCoverage = PartialControlMeasure;
-            attribute state = Uncontrolled;
+            attribute failureState = Uncontrolled;
             attribute hasSafetyGap = true;
             attribute localEffect = "ADC input buffer may not be refreshed.";
             attribute endEffect = "Stale sensor information may reach output because required mitigation is missing.";
         }
 
-        objective mitigateFailureMode
+        requirement mitigateFailureMode
             : Objective_MitigateMissingAdcNotification;
 
-        assume failureHasOccurred
+        requirement failureHasOccurred
             : Assume_MissingAdcNotificationOccurred;
 
-        require timestampSupervisionRequired
+        requirement timestampSupervisionRequired
             : Require_TimestampSupervision;
 
-        require errorQualifierFallbackRequired
+        requirement errorQualifierFallbackRequired
             : Require_ErrorQualifierFallback;
 
         part timestampSupervision : ControlMeasure {

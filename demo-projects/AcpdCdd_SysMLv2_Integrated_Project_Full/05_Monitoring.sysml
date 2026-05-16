@@ -53,7 +53,6 @@ package Monitoring {
         in attribute timestampOffset;
         out attribute result;
 
-        action entry;
         first ComputeInitialOffset;
         action ComputeInitialOffset;
         action ComputeCurrentOffset;
@@ -67,8 +66,8 @@ package Monitoring {
         first ComputeInitialOffset then ComputeCurrentOffset;
         first ComputeCurrentOffset then ComputeOffsetDifference;
         first ComputeOffsetDifference then CompareWithCrosscheckBound;
-        first CompareWithCrosscheckBound if CompareWithCrosscheckBound.decision.CompareWithCrosscheckBound_allows_ReturnTrueIfInRange then ReturnTrueIfInRange;
-        first CompareWithCrosscheckBound if CompareWithCrosscheckBound.decision.CompareWithCrosscheckBound_allows_ReturnFalseIfOutOfRange then ReturnFalseIfOutOfRange;
+        first CompareWithCrosscheckBound then ReturnTrueIfInRange;
+        first CompareWithCrosscheckBound then ReturnFalseIfOutOfRange;
     }
 
     // trlc-satisfies: 28710924
@@ -81,7 +80,6 @@ package Monitoring {
         in item InputData : InputDataType;
         out item ErrorCounters : AcpdCddCheckErrorCountersType;
 
-        action entry;
         first InitializeErrorCounters;
         action InitializeErrorCounters;
         action IterateAdcUpdateCycleCount;
@@ -116,7 +114,6 @@ package Monitoring {
         in item InputData : InputDataType;
         out item ErrorCounters : AcpdCddCheckErrorCountersType;
 
-        action entry;
         first InitializeMissingDataCounters;
         action InitializeMissingDataCounters;
         action IterateSensor0Data;
@@ -146,7 +143,6 @@ package Monitoring {
     action def AcpdCdd_DeviationCheck {
         in item ProcessedData : ChannelMeansType;
 
-        action entry;
         first SelectSensor0MissionAndMonitoringMeans;
         action SelectSensor0MissionAndMonitoringMeans;
         action ComputeSensor0AcceptableInterval;
@@ -172,7 +168,6 @@ package Monitoring {
 
     action def ResultPlausibilityCheck {
 
-        action entry;
         first CheckSensor0VoltageLowerBound;
         action CheckSensor0VoltageLowerBound;
         action ClampSensor0ToZeroAndSetErrorIfBelow;
@@ -197,7 +192,6 @@ package Monitoring {
 // trlc-satisfies: 25188589
     action def PowerStateVsQualifiers {
 
-        action entry;
         first CheckPowerStateOff;
         action CheckPowerStateOff {
             out item decision : CheckPowerStateOffDecisionType;
@@ -211,20 +205,19 @@ package Monitoring {
         action SetAllQualifiersNotAvailable;
         action ApplyStableOnChecks;
 
-        first CheckPowerStateOff if CheckPowerStateOff.decision.CheckPowerStateOff_allows_CheckSwitchToOn then CheckSwitchToOn;
+        first CheckPowerStateOff then CheckSwitchToOn;
         first CheckSwitchToOn then SetAllQualifiersInit;
-        first CheckPowerStateOff if CheckPowerStateOff.decision.CheckPowerStateOff_allows_CheckSwitchToOff then CheckSwitchToOff;
+        first CheckPowerStateOff then CheckSwitchToOff;
         first CheckSwitchToOff then SetAllQualifiersNotAvailable;
-        first CheckPowerStateOn if CheckPowerStateOn.decision.CheckPowerStateOn_allows_CheckSwitchToOn then CheckSwitchToOn;
-        first CheckPowerStateOn if CheckPowerStateOn.decision.CheckPowerStateOn_allows_CheckSwitchToOff then CheckSwitchToOff;
-        first CheckPowerStateOn if CheckPowerStateOn.decision.CheckPowerStateOn_allows_ApplyStableOnChecks then ApplyStableOnChecks;
+        first CheckPowerStateOn then CheckSwitchToOn;
+        first CheckPowerStateOn then CheckSwitchToOff;
+        first CheckPowerStateOn then ApplyStableOnChecks;
     }
 
     // trlc-satisfies: 30477411
     // trlc-satisfies: 30477478
     action def ADC_Error_Callbacks {
 
-        action entry;
         first AcpdCdd_IncrementAdcConvErrGroup0;
         action AcpdCdd_IncrementAdcConvErrGroup0;
         action AcpdCdd_IncrementAdcConvErrGroup1;
@@ -257,7 +250,6 @@ package Monitoring {
         out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
 
         // trlc-satisfies: 25094047
-        action entry;
         first InitializeQualifiersFromProcessedData;
         action InitializeQualifiersFromProcessedData;
         action AcpdCdd_MissingDataCheck;
@@ -284,7 +276,6 @@ package Monitoring {
     }
 
     action def AcpdCdd_Monitoring_Behavior {
-        action entry;
         first AcpdCdd_Monitoring;
         action AcpdCdd_Monitoring;
         action AcpdCdd_MissingDataCheck;
@@ -331,7 +322,6 @@ bind acceleratorDataOut.acceleratorData = monitoring.acceleratorData;
 
     action def AcpdCdd_Monitoring_Sequence_AsActionFlow {
 
-        action entry;
         first MonitoringReceivesProcessedData;
         action MonitoringReceivesProcessedData;
         action MonitoringReceivesPowerStatus;

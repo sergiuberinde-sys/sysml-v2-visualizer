@@ -24,7 +24,6 @@ package Behavior_Init {
         attribute AcpdCdd_active;
         attribute setup_trial_counter;
 
-        action entry;
         first CheckAcpdCddActive;
         action CheckAcpdCddActive {
             out item decision : CheckAcpdCddActiveDecisionType;
@@ -41,20 +40,19 @@ package Behavior_Init {
         action StopProcessing;
         action UpdateRteOutputWithSafeDefaultValues;
 
-        first CheckAcpdCddActive if CheckAcpdCddActive.decision.AcpdCdd_active then ExecuteCyclicTasksIfActive;
-        first CheckAcpdCddActive if not CheckAcpdCddActive.decision.AcpdCdd_active then CheckSetupTrialCounterAgainstMaxAttempts;
-        first CheckSetupTrialCounterAgainstMaxAttempts if CheckSetupTrialCounterAgainstMaxAttempts.decision.CheckSetupTrialCounterAgainstMaxAttempts_allows_AcpdCdd_StartInputCollector then AcpdCdd_StartInputCollector;
+        first CheckAcpdCddActive then ExecuteCyclicTasksIfActive;
+        first CheckAcpdCddActive then CheckSetupTrialCounterAgainstMaxAttempts;
+        first CheckSetupTrialCounterAgainstMaxAttempts then AcpdCdd_StartInputCollector;
         first AcpdCdd_StartInputCollector then AcpdCdd_StartProcessing;
         first AcpdCdd_StartProcessing then EnableAdcNotificationsAndHardwareTriggers;
         first EnableAdcNotificationsAndHardwareTriggers then SetAcpdCddActiveTrue;
         first SetAcpdCddActiveTrue then IncrementSetupTrialCounter;
-        first CheckSetupTrialCounterAgainstMaxAttempts if CheckSetupTrialCounterAgainstMaxAttempts.decision.CheckSetupTrialCounterAgainstMaxAttempts_allows_StopProcessing then StopProcessing;
+        first CheckSetupTrialCounterAgainstMaxAttempts then StopProcessing;
         first StopProcessing then UpdateRteOutputWithSafeDefaultValues;
     }
 
     action def AcpdCdd_Init_Sequence_AsActionFlow {
 
-        action entry;
         first RuntimeInitializesInputModule;
         action RuntimeInitializesInputModule {
             out item decision : RuntimeInitializesInputModuleDecisionType;
@@ -65,8 +63,8 @@ package Behavior_Init {
         action RuntimeStopsInitialization;
         action RuntimeWritesSafeDefaultOutput;
 
-        first RuntimeInitializesInputModule if RuntimeInitializesInputModule.decision.RuntimeInitializesInputModule_allows_RuntimeInitializesPowermanagementModule then RuntimeInitializesPowermanagementModule;
-        first RuntimeInitializesInputModule if RuntimeInitializesInputModule.decision.RuntimeInitializesInputModule_allows_RuntimeStopsInitialization then RuntimeStopsInitialization;
+        first RuntimeInitializesInputModule then RuntimeInitializesPowermanagementModule;
+        first RuntimeInitializesInputModule then RuntimeStopsInitialization;
         first RuntimeInitializesPowermanagementModule then RuntimeInitializesMonitoringModule;
         first RuntimeInitializesMonitoringModule then RuntimeInitializesOutputModule;
         first RuntimeStopsInitialization then RuntimeWritesSafeDefaultOutput;
