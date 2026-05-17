@@ -3,6 +3,7 @@ package AcpdCdd_SysMLv2 {
 
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
+	private import ScalarValues::Boolean;
 
         port def AcceleratorDataInPort {
             in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
@@ -19,12 +20,7 @@ package AcpdCdd_SysMLv2 {
         action def AcpdCdd_UpdateOutput {
             in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
             out item RteData : tAcpdCdd_rc_AccrSnsr;
-
-            action entryAction {
-                out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
-            }
-            first entryAction then CheckAcceleratorDataPointer;
-            action CheckAcceleratorDataPointer {
+action CheckAcceleratorDataPointer {
                 in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
                 out item validAcceleratorData : tAcpdCdd_rc_AccrSnsr;
                 out item invalidAcceleratorData : tAcpdCdd_rc_AccrSnsr;
@@ -54,12 +50,10 @@ package AcpdCdd_SysMLv2 {
                 out item RteData : tAcpdCdd_rc_AccrSnsr;
             }
             action Return;
-
-            flow from acceleratorData to entry.acceleratorData;
-            flow from entryAction.acceleratorData to CheckAcceleratorDataPointer.acceleratorData;
-            first CheckAcceleratorDataPointer then ConvertAcpdCddDataTypeToRteType;
-            first CheckAcceleratorDataPointer then UseDefaultErrorValuesIfNull;
-            flow from CheckAcceleratorDataPointer.validAcceleratorData to ConvertAcpdCddDataTypeToRteType.validAcceleratorData;
+flow from acceleratorData to CheckAcceleratorDataPointer.acceleratorData;
+                first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer_allows_ConvertAcpdCddDataTypeToRteType then ConvertAcpdCddDataTypeToRteType;
+                first CheckAcceleratorDataPointer if not CheckAcceleratorDataPointer_allows_ConvertAcpdCddDataTypeToRteType then UseDefaultErrorValuesIfNull;
+flow from CheckAcceleratorDataPointer.validAcceleratorData to ConvertAcpdCddDataTypeToRteType.validAcceleratorData;
             flow from CheckAcceleratorDataPointer.invalidAcceleratorData to UseDefaultErrorValuesIfNull.invalidAcceleratorData;
             first ConvertAcpdCddDataTypeToRteType then CopySensor1Data;
             first CopySensor1Data then CopySensor2Data;
@@ -75,19 +69,16 @@ package AcpdCdd_SysMLv2 {
             flow from Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc.RteData to RteData;
         }
         action def AcpdCdd_Output_Behavior {
-
-            action entryAction;
-            first entryAction then ReceiveAcceleratorData;
-            attribute ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput : Boolean;
+attribute ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput : Boolean;
             attribute ReceiveAcceleratorData_allows_WriteSafeDefaultOutput : Boolean;
             action ReceiveAcceleratorData;
             action AcpdCdd_UpdateOutput;
             action WriteSafeDefaultOutput;
             action WriteRteOutput;
 
-            first ReceiveAcceleratorData then AcpdCdd_UpdateOutput;
-            first ReceiveAcceleratorData then WriteSafeDefaultOutput;
-            first AcpdCdd_UpdateOutput then WriteRteOutput;
+                first ReceiveAcceleratorData if ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput then AcpdCdd_UpdateOutput;
+                first ReceiveAcceleratorData if not ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput then WriteSafeDefaultOutput;
+first AcpdCdd_UpdateOutput then WriteRteOutput;
             first WriteSafeDefaultOutput then WriteRteOutput;
         }
 
@@ -100,10 +91,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Output_Sequence_AsActionFlow {
-
-            action entryAction;
-            first entryAction then OutputReceivesAcceleratorData;
-            attribute OutputReceivesAcceleratorData_allows_OutputPreparesRteData : Boolean;
+attribute OutputReceivesAcceleratorData_allows_OutputPreparesRteData : Boolean;
             attribute OutputReceivesAcceleratorData_allows_OutputRequestsSafeDefaultTransmission : Boolean;
             action OutputReceivesAcceleratorData;
             action OutputReceivesMonitoringStatus;
@@ -113,9 +101,9 @@ package AcpdCdd_SysMLv2 {
             action RtePublishesOutputData;
 
             first OutputReceivesAcceleratorData then OutputReceivesMonitoringStatus;
-            first OutputReceivesMonitoringStatus then OutputPreparesRteData;
-            first OutputReceivesMonitoringStatus then OutputRequestsSafeDefaultTransmission;
-            first OutputPreparesRteData then OutputRequestsRteTransmission;
+                first OutputReceivesMonitoringStatus if OutputReceivesAcceleratorData_allows_OutputPreparesRteData then OutputPreparesRteData;
+                first OutputReceivesMonitoringStatus if not OutputReceivesAcceleratorData_allows_OutputPreparesRteData then OutputRequestsSafeDefaultTransmission;
+first OutputPreparesRteData then OutputRequestsRteTransmission;
             first OutputRequestsSafeDefaultTransmission then OutputRequestsRteTransmission;
             first OutputRequestsRteTransmission then RtePublishesOutputData;
         }

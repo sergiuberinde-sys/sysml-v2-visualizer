@@ -17,12 +17,12 @@ EXPECTED_ACTIONS = [
 ]
 
 EXPECTED_INPUT_BRANCH_CONDITIONS = [
-    "notificationArrived",
-    "timestampFresh",
-    "group0SampleValid",
-    "group1SampleValid",
-    "supplySampleValid",
-    "sensorPairPlausible",
+    "AdcNotification_hasArrived",
+    "DecodedAdcTimestamp_isFresh",
+    "Group0Sample_isInvalid",
+    "Group1Sample_isInvalid",
+    "SupplySample_isInvalid",
+    "SensorPair_isPlausible",
 ]
 
 EXPECTED_VISUALIZATION_NODES = [
@@ -38,10 +38,10 @@ def main():
         if f"action def {action}" not in text:
             errors.append(f"missing conditional action view: {action}")
 
-    if text.count(" if ") < 9:
-        errors.append("expected at least 9 guarded conditional successions")
+    if len(re.findall(r"\bfirst\s+\w+\s+if\s+.+?\s+then\s+\w+\s*;", text)) < 9:
+        errors.append("expected at least 9 Boolean guarded successions")
     if "then" not in text:
-        errors.append("expected guarded successions for behavior visualization")
+        errors.append("expected explicit action successions with Boolean guards")
 
     for condition in EXPECTED_INPUT_BRANCH_CONDITIONS:
         if condition not in text:
@@ -64,7 +64,7 @@ def main():
     REPORT.write_text(
         "# Conditional Behavior View Check\n\n"
         + ("Result: PASS\n" if not errors else "Result: FAIL\n\n" + "\n".join(f"- {e}" for e in errors) + "\n")
-        + "\nChecked: decisions, merges, fork/join visualization nodes, typed boolean branch conditions.\n",
+        + "\nChecked: decisions, merges, fork/join visualization nodes, typed Boolean guarded successions.\n",
         encoding="utf-8",
     )
     print("Conditional behavior views: " + ("PASS" if not errors else "FAIL"))

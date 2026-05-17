@@ -42,3 +42,26 @@ This is intentionally not an ISO 26262 FMEA table and does not introduce S/O/D/R
 ## README organization
 
 All project README files are grouped in the `readme/` folder. The source package root intentionally contains only model, requirements, contracts, tools, reports and docs folders/files.
+
+## Failure propagation traceability update
+
+`15_FailurePropagation.sysml` now uses the SysML v2 `CauseAndEffect` library without duplicating the architecture as shallow local safety-analysis parts.
+
+The failure propagation context contains typed `ref` usages to the real architecture/actor elements, for example `AcpdCdd_Input`, `AcpdCdd_Process`, `AcpdCdd_Monitoring`, `AcpdCdd_Output`, and `RTE`.
+
+Each failure/effect `event occurrence` has an `fp-subject` anchor comment pointing to an existing behavior/action element. Anchors now resolve to action definitions or nested action usages, for example `AcpdCdd_CollectInputData::ValidateCollectedInputData`, rather than only to component parts or ports. The checker `tools/check_failure_propagation_model.py` validates that:
+
+- `CauseAndEffect::*` is imported.
+- failure/effect event occurrences exist.
+- `#causation` and `#multicausation` links refer to declared events.
+- every event has an `fp-subject` anchor.
+- every `fp-subject` target exists in the current SysML model.
+- every `fp-subject` target is behavior/action-level, not merely a shallow part or port anchor.
+- old FMEA/FMEA-entry/failureMode artifacts are absent.
+
+This keeps the CauseAndEffect layer traceable to actual AcpdCdd behavior steps while staying source-only.
+
+
+## JSON behavior alignment update
+
+The behavior files were rechecked against the uploaded JSON references. Conditional behavior is kept as explicit Boolean `if { ... } else { ... }` blocks. Artificial branches that were not supported by the JSON reference, such as a safe-output branch inside the normal `AcpdCdd_Main10ms` pipeline or a separate process start/stop branch in `AcpdCdd_Process`, were removed or simplified. CauseAndEffect failure propagation remains in `15_FailurePropagation.sysml`.

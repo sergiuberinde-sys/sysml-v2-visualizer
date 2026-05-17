@@ -22,6 +22,9 @@ checks = [
     ("Input action entry/data continuity", PROJECT_ROOT / "tools" / "check_input_action_entry_and_continuity.py"),
     ("File-by-file action refactor", PROJECT_ROOT / "tools" / "check_file_by_file_action_refactor.py"),
     ("Component interaction sequences", PROJECT_ROOT / "tools" / "check_component_interaction_sequences.py"),
+    ("Explicit Boolean if/else blocks", PROJECT_ROOT / "tools" / "check_explicit_boolean_if_else.py"),
+    ("Boolean guards", PROJECT_ROOT / "tools" / "check_boolean_guards.py"),
+    ("No synthetic entry actions", PROJECT_ROOT / "tools" / "check_no_entry_actions.py"),
 ]
 
 failed = False
@@ -44,3 +47,7 @@ if failed:
 
 print("All checks passed.")
 sys.exit(0)
+
+# Boolean guard regression check
+import subprocess, sys, pathlib
+subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name('check_boolean_guards.py'))], check=True)
