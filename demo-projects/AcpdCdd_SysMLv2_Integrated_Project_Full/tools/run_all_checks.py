@@ -10,7 +10,7 @@ checks = [
     ("TRLC trace block hygiene", PROJECT_ROOT / "tools" / "check_trace_block_hygiene.py"),
     ("Safety goal coverage", PROJECT_ROOT / "tools" / "check_safety_goal_coverage.py"),
     ("Safety evidence matrix", PROJECT_ROOT / "tools" / "check_safety_evidence_matrix.py"),
-    ("Safety analysis traceability", PROJECT_ROOT / "tools" / "check_safety_analysis_traceability.py"),
+    ("Failure propagation model", PROJECT_ROOT / "tools" / "check_failure_propagation_model.py"),
     ("Runtime interaction contracts", PROJECT_ROOT / "tools" / "check_runtime_interaction_contracts.py"),
     ("Component dataflows", PROJECT_ROOT / "tools" / "check_component_dataflows.py"),
     ("Typed ports", PROJECT_ROOT / "tools" / "check_typed_ports.py"),
@@ -21,7 +21,6 @@ checks = [
     ("AcpdCdd AdcGroup0 conditional behavior", PROJECT_ROOT / "tools" / "check_adc_group0_conditional_behavior.py"),
     ("Input action entry/data continuity", PROJECT_ROOT / "tools" / "check_input_action_entry_and_continuity.py"),
     ("File-by-file action refactor", PROJECT_ROOT / "tools" / "check_file_by_file_action_refactor.py"),
-    ("SysML safety analysis experiment", PROJECT_ROOT / "tools" / "check_sysml_safety_analysis_experiment.py"),
     ("Component interaction sequences", PROJECT_ROOT / "tools" / "check_component_interaction_sequences.py"),
 ]
 

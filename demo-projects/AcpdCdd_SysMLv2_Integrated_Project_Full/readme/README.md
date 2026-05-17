@@ -21,22 +21,24 @@ Classic UML-style lifeline sequence rendering is not guaranteed by the Eclipse S
 ## Generated outputs
 
 The source package intentionally does not include generated reports under `reports/`.
-Recreate validation reports and the architecture-driven SW FMEA locally with:
+Recreate validation reports locally with:
 
 ```bash
 python tools/run_all_checks.py
 ```
 
+## Cause-and-effect safety-analysis layer
+
+This baseline uses the official SysML v2 `CauseAndEffect` domain-library direction rather than a custom FMEA metamodel or behavior-owned `failureMode_*` attributes.
+
+Open `15_FailurePropagation.sysml` to review the source-only propagation model:
+
+- `event occurrence` elements represent relevant failure/effect occurrences.
+- `#causation connect` relationships represent direct cause/effect propagation.
+- `#multicausation connection` relationships represent combined-cause propagation.
+
+This is intentionally not an ISO 26262 FMEA table and does not introduce S/O/D/RPN fields in the SysML model.
+
 ## README organization
 
 All project README files are grouped in the `readme/` folder. The source package root intentionally contains only model, requirements, contracts, tools, reports and docs folders/files.
-
-## safety-analysis traceability verification
-
-Use:
-
-```bash
-```
-
-This generates `reports/fmea_support_model.json` and `reports/fmea_support_matrix.md` from current SysML v2, TRLC and contract evidence. See `readme/FMEA_SUPPORT_PROCESS.md`.
-- `README_SAFETY_ANALYSIS_TRACEABILITY.md` — TRLC FailureMode + SysML propagation + TRLC ControlMeasure placeholder workflow.
