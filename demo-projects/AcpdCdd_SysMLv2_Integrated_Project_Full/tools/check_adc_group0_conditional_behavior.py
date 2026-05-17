@@ -14,12 +14,12 @@ REQUIRED_DECISION_ATTRIBUTES = [
 ]
 
 REQUIRED_GUARDS = [
-    "ValidateSampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid",
-    "not ValidateSampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid",
-    "CheckOldGroup0Cache.decision.oldGroup0CacheFilled",
-    "not CheckOldGroup0Cache.decision.oldGroup0CacheFilled",
-    "CheckBothGroup0AndGroup1Filled.decision.bothGroup0AndGroup1Filled",
-    "not CheckBothGroup0AndGroup1Filled.decision.bothGroup0AndGroup1Filled",
+    "ValidateSampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid",
+    "not ValidateSampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid",
+    "CheckOldGroup0Cache.cacheState.oldGroup0CacheFilled",
+    "not CheckOldGroup0Cache.cacheState.oldGroup0CacheFilled",
+    "CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled",
+    "not CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled",
 ]
 
 REQUIRED_ACTIONS = [

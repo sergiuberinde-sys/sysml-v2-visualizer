@@ -17,22 +17,22 @@ REQUIRED_BOOLEAN_FEATURES = [
 ]
 
 REQUIRED_GUARDED_EDGES = [
-    "ReceiveAdcNotification.decision.notificationArrived",
-    "not ReceiveAdcNotification.decision.notificationArrived",
-    "DecodeAdcGroups.decision.timestampFresh",
-    "not DecodeAdcGroups.decision.timestampFresh",
-    "not ValidateGroup0Sample.decision.group0SampleValid",
-    "not ValidateGroup1Sample.decision.group1SampleValid",
-    "not ValidateSupplySample.decision.supplySampleValid",
-    "ValidateSensorPairPlausibility.decision.sensorPairPlausible",
-    "not ValidateSensorPairPlausibility.decision.sensorPairPlausible",
+    "ReceiveAdcNotification.notification.notificationArrived",
+    "not ReceiveAdcNotification.notification.notificationArrived",
+    "DecodeAdcGroups.decodedInputData.timestampFresh",
+    "not DecodeAdcGroups.decodedInputData.timestampFresh",
+    "not ValidateGroup0Sample.group0CheckedInputData.group0SampleValid",
+    "not ValidateGroup1Sample.group1CheckedInputData.group1SampleValid",
+    "not ValidateSupplySample.supplyCheckedInputData.supplySampleValid",
+    "ValidateSensorPairPlausibility.plausibilityCheckedInputData.sensorPairPlausible",
+    "not ValidateSensorPairPlausibility.plausibilityCheckedInputData.sensorPairPlausible",
 ]
 
 REQUIRED_INPUT_EDGES = [
-    "receiveAdcNotification.decision.notificationArrived",
-    "not receiveAdcNotification.decision.notificationArrived",
-    "decodeAdcGroups.decision.timestampFresh",
-    "not decodeAdcGroups.decision.timestampFresh",
+    "receiveAdcNotification.notification.notificationArrived",
+    "not receiveAdcNotification.notification.notificationArrived",
+    "decodeAdcGroups.decodedInputData.timestampFresh",
+    "not decodeAdcGroups.decodedInputData.timestampFresh",
 ]
 
 

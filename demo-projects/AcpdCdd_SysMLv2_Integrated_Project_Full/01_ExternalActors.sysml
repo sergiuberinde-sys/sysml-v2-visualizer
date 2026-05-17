@@ -1,35 +1,39 @@
-package ExternalActors {
+package AcpdCdd_SysMLv2 {
 
-    private import Types::*;
+    package ExternalActors {
 
-    port def AdcNotificationOutPort {
-        out item adcSample : AdcNotificationPayloadType;
-    }
+        private import AcpdCdd_SysMLv2::Types::*;
 
-    port def VARefErrorStatusOutPort {
-        out attribute errorPresent;
-    }
+        port def AdcNotificationOutPort {
+            out item adcSample : AdcNotificationPayloadType;
+        }
 
-    port def ActivationOutPort {
-        out attribute activation;
-    }
+        port def VARefErrorStatusOutPort {
+            out attribute errorPresent;
+        }
 
-    port def RteAcceleratorDataInPort {
-        in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
-    }
+        port def ActivationOutPort {
+            out attribute activation;
+        }
 
-    part def ADC {
+        port def RteAcceleratorDataInPort {
+            in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
+        }
 
+        part def ADC {
+            port group0Notification;
+            port group1Notification;
+            port supplyNotification;
+        }
 
-    }
+        part def AdcBist {
+            port varef1ErrorStatusOut;
+            port varef2ErrorStatusOut;
+        }
 
-    part def AdcBist {
-
-
-    }
-
-    part def RTE {
-
-
+        part def RTE {
+            port activationOut;
+            port acceleratorDataIn;
+        }
     }
 }

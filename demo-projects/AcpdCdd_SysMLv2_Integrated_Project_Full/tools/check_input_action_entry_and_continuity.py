@@ -22,14 +22,14 @@ REQUIRED_PATTERNS = [
 ]
 
 REQUIRED_GUARDS = [
-    "if ValidateGroup1SampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid",
-    "if not ValidateGroup1SampleCountPointerAndRange.decision.sampleCountPointerAndRangeValid",
-    "if CheckOldGroup1Cache.decision.oldGroup1CacheFilled",
-    "if not CheckOldGroup1Cache.decision.oldGroup1CacheFilled",
-    "if ValidateSupplySample.decision.supplySampleValid",
-    "if not ValidateSupplySample.decision.supplySampleValid",
-    "if ValidateCollectedInputData.decision.collectedInputDataValid",
-    "if not ValidateCollectedInputData.decision.collectedInputDataValid",
+    "if ValidateGroup1SampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid",
+    "if not ValidateGroup1SampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid",
+    "if CheckOldGroup1Cache.cacheState.oldGroup1CacheFilled",
+    "if not CheckOldGroup1Cache.cacheState.oldGroup1CacheFilled",
+    "if ValidateSupplySample.validationResult.supplySampleValid",
+    "if not ValidateSupplySample.validationResult.supplySampleValid",
+    "if ValidateCollectedInputData.validationResult.collectedInputDataValid",
+    "if not ValidateCollectedInputData.validationResult.collectedInputDataValid",
 ]
 
 

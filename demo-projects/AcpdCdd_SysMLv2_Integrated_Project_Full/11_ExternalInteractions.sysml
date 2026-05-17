@@ -1,21 +1,24 @@
-package ExternalInteractions {
+package AcpdCdd_SysMLv2 {
 
-    private import ComponentDesign::*;
+    package ExternalInteractions {
 
-    part def AdcService;
-    part def AdcBistService;
-    part def DioService;
-    part def DemService;
-    part def RteService;
+        private import AcpdCdd_SysMLv2::ComponentDesign::*;
 
-    part def AcpdCddExternalInteractionContext {
-        part acpdCdd : AcpdCdd;
-        part adc : AdcService;
-        part adcBist : AdcBistService;
-        part dio : DioService;
-        part dem : DemService;
-        part rte : RteService;
+        part def AdcService;
+        part def AdcBistService;
+        part def DioService;
+        part def DemService;
+        part def RteService;
+
+        part def AcpdCddExternalInteractionContext {
+            part acpdCdd : AcpdCdd;
+            part adc : AdcService;
+            part adcBist : AdcBistService;
+            part dio : DioService;
+            part dem : DemService;
+            part rte : RteService;
+        }
+
+        part acpdCddExternalInteractionContext : AcpdCddExternalInteractionContext;
     }
-
-    part acpdCddExternalInteractionContext : AcpdCddExternalInteractionContext;
 }
