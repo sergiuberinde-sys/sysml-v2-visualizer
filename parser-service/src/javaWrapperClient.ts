@@ -4,6 +4,10 @@ import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
 
+// When compiled, this file lives at parser-service/dist/javaWrapperClient.js.
+// One level up is parser-service/; the bundled SysML standard library lives there.
+const BUNDLED_STDLIB_PATH = join(__dirname, '..', 'sysml-stdlib');
+
 import type { OfficialBackendClient } from './officialBackendClient';
 import type { SysMLV2ParseResult } from './types';
 
@@ -15,7 +19,16 @@ const DEFAULT_JAR = join(
   __dirname, '..', '..', 'java-parser-wrapper', 'target', 'sysml-parse-cli.jar'
 );
 
-const PARSE_TIMEOUT_MS = 60_000; // generous — JVM cold start can take a few seconds
+// Generous timeout: JVM cold start + loading 94 stdlib files + user files can take ~30-60 s
+const PARSE_TIMEOUT_MS = 120_000;
+
+// Resolve the SysML standard library directory.
+// Priority: SYSML_STDLIB_PATH env var → bundled sysml-stdlib/ next to this package.
+function resolveStdlibPath(): string | null {
+  if (process.env['SYSML_STDLIB_PATH']) return process.env['SYSML_STDLIB_PATH'];
+  if (existsSync(BUNDLED_STDLIB_PATH)) return BUNDLED_STDLIB_PATH;
+  return null;
+}
 
 // The JAR requires Java 21+. Probe for a suitable executable in order:
 //   1. $SYSML_JAVA_HOME/bin/java  (explicit Java override, separate from $JAVA_HOME)
@@ -83,10 +96,16 @@ export class JavaWrapperClient implements OfficialBackendClient {
         contextPaths.push(ctxPath);
       }
 
+      const stdlibPath = resolveStdlibPath();
+      const javaEnv = stdlibPath
+        ? { ...process.env, SYSML_STDLIB_PATH: stdlibPath }
+        : process.env;
+
       const { stdout, stderr, code } = await runProcess(
         this.javaExe,
         ['-jar', this.jarPath, tmpFile, ...contextPaths],
-        PARSE_TIMEOUT_MS
+        PARSE_TIMEOUT_MS,
+        javaEnv as NodeJS.ProcessEnv,
       );
 
       // exit 0 = success (no errors), exit 1 = parse errors — both emit valid JSON on stdout
@@ -125,10 +144,11 @@ export class JavaWrapperClient implements OfficialBackendClient {
 function runProcess(
   exe: string,
   args: string[],
-  timeoutMs: number
+  timeoutMs: number,
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ stdout: string; stderr: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(exe, args);
+    const proc = spawn(exe, args, env ? { env } : undefined);
     let stdout = '';
     let stderr = '';
 
