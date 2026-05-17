@@ -12,6 +12,7 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.xtext.resource.XtextResourceSet;
 import org.omg.kerml.xtext.KerMLStandaloneSetup;
 import org.omg.kerml.xtext.xmi.KerMLxStandaloneSetup;
+import org.omg.sysml.interactive.SysMLInteractive;
 import org.omg.sysml.lang.sysml.SysMLPackage;
 import org.omg.sysml.xtext.SysMLStandaloneSetup;
 import org.omg.sysml.xtext.xmi.SysMLxStandaloneSetup;
@@ -20,6 +21,7 @@ import org.eclipse.xtext.nodemodel.ICompositeNode;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 
 import java.io.File;
+import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -75,48 +77,76 @@ public class SysmlParseCli {
             System.exit(2);
         }
 
+        // SysMLInteractive.createInstance() does the same Xtext/EMF setup as our
+        // old initSysML() but also installs a ResourceDescriptionsData adapter on its
+        // ResourceSet.  That adapter acts as an in-memory Xtext index so the global
+        // scope provider can find elements across all loaded resources — without it,
+        // qualified-name cross-references like "ScalarValues::Boolean" fail even when
+        // the referent file is in the ResourceSet.
+        //
+        // The Pilot Implementation prints progress lines to System.out while loading
+        // resources.  We redirect stdout to stderr for the duration so our JSON-only
+        // stdout contract is not broken.
+        PrintStream realOut = System.out;
+        SysMLInteractive sysml;
+        boolean hasStdlib = false;
         try {
-            Injector injector = initSysML();
+            System.setOut(System.err);
+            sysml = SysMLInteractive.createInstance();
 
-            XtextResourceSet resourceSet = injector.getInstance(XtextResourceSet.class);
-            // context files — load them into the resource set first for cross-ref resolution
+            // Load standard library if SYSML_STDLIB_PATH is set.
+            // loadLibrary() loads Kernel Libraries (.kerml), then Systems Library
+            // and Domain Libraries (.sysml) into the resource set so that stdlib
+            // imports like "ScalarValues::Boolean" resolve.
+            String stdlibPath = System.getenv("SYSML_STDLIB_PATH");
+            if (stdlibPath != null && !stdlibPath.isBlank()) {
+                sysml.loadLibrary(stdlibPath);
+                hasStdlib = true;
+            }
+
+            // Load workspace context files so project-specific qualified-name imports
+            // (e.g. "private import AcpdCdd_SysMLv2::Types::*") resolve.
             for (int i = 1; i < args.length; i++) {
                 File ctx = new File(args[i]);
                 if (ctx.exists()) {
-                    Resource ctxRes = resourceSet.getResource(URI.createFileURI(ctx.getAbsolutePath()), true);
-                    // Force content loading so the global scope is populated before the primary is parsed.
-                    ctxRes.getContents();
+                    sysml.getResourceSet()
+                         .getResource(URI.createFileURI(ctx.getAbsolutePath()), true)
+                         .getContents();
                 }
             }
-            // Resolve all cross-references across context resources so that qualified-name
-            // imports (e.g. "private import AcpdCdd_SysMLv2::Types::*") can be resolved
-            // when the primary resource is loaded.
-            EcoreUtil.resolveAll(resourceSet);
-            // then load primary
-            Resource resource = resourceSet.getResource(
+            // Trigger cross-reference resolution for all loaded resources so the
+            // ResourceDescriptionsData index is fully populated before the primary
+            // file's lazy links fire.
+            EcoreUtil.resolveAll(sysml.getResourceSet());
+        } finally {
+            System.setOut(realOut);
+        }
+
+        try {
+            // Load primary file into the same resource set (already has stdlib + context).
+            Resource resource = sysml.getResourceSet().getResource(
                     URI.createFileURI(primaryFile.getAbsolutePath()), true);
 
-            // Build the model first: Xtext's lazy linking fires during traversal,
-            // so cross-reference errors only appear in resource.getErrors() after this.
+            // Resolve primary file's cross-refs using the fully-populated index.
+            EcoreUtil.resolveAll(sysml.getResourceSet());
+
+            // Build the model tree (all proxies resolved; traversal just reads values).
             Set<EObject> visited = Collections.newSetFromMap(new IdentityHashMap<>());
             List<Node> model = new ArrayList<>();
             for (EObject root : resource.getContents()) {
                 model.add(buildNode(root, visited));
             }
 
-            // In standalone mode (no Xtext index), cross-file qualified-name imports
-            // (e.g. "private import AcpdCdd_SysMLv2::Types::*") can't be resolved
-            // because Xtext finds the local file's own package first and never sees
-            // the sub-packages from context files.  Our NodeModelUtils text-extraction
-            // fallback handles every affected type name, so these diagnostics are
-            // suppressed entirely when context files are present.
-            boolean hasContextFiles = args.length > 1;
+            // Filter diagnostics: suppress residual "Couldn't resolve reference" errors
+            // when stdlib or workspace context files were provided — remaining unresolved
+            // refs are for external packages not available in this parse session.
+            boolean hasContext = hasStdlib || (args.length > 1);
             List<Diag> diags = new ArrayList<>();
             List<Resource.Diagnostic> trueErrors = new ArrayList<>();
             for (Resource.Diagnostic d : resource.getErrors()) {
                 String msg = d.getMessage();
-                if (hasContextFiles && msg != null && msg.startsWith("Couldn't resolve reference to")) {
-                    // suppress — covered by NodeModelUtils text-extraction fallback
+                if (hasContext && msg != null && msg.startsWith("Couldn't resolve reference to")) {
+                    // suppress
                 } else {
                     diags.add(new Diag("error", msg, d.getLine(), d.getColumn()));
                     trueErrors.add(d);
@@ -372,11 +402,7 @@ public class SysmlParseCli {
 
     // ── SysML initialisation ──────────────────────────────────────────────────
 
-    /**
-     * Full initialization sequence required by the Pilot Implementation.
-     * Mirrors SysMLInteractive.createInstance() exactly; omitting any step
-     * causes EMF proxy resolution to fail at parse time.
-     */
+    /** Minimal Xtext setup used by debug mode (no library loading needed). */
     private static Injector initSysML() {
         EPackage.Registry.INSTANCE.put(SysMLPackage.eNS_URI, SysMLPackage.eINSTANCE);
         KerMLStandaloneSetup.doSetup();

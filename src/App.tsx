@@ -554,6 +554,8 @@ export default function App() {
         parserServiceUrl?: string;
         graph?: SysMLV2ParseResult['graph'];
         behavior?: BehaviorData;
+        success?: boolean;
+        diagnostics?: SysMLV2ParseResult['diagnostics'];
       };
       if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
@@ -572,11 +574,19 @@ export default function App() {
         setServiceEndpoint(msg.parserServiceUrl);
       } else if (msg.type === 'updateGraph' && msg.graph) {
         console.log('[App] received updateGraph, behavior:', msg.behavior);
-        setOfficialParseResult(prev =>
-          prev
-            ? { ...prev, graph: msg.graph, behavior: msg.behavior ?? prev.behavior }
-            : { success: true, diagnostics: [], graph: msg.graph, behavior: msg.behavior },
-        );
+        setOfficialParseResult(prev => {
+          const base = prev ?? { success: true, diagnostics: [] };
+          return {
+            ...base,
+            graph: msg.graph,
+            behavior: msg.behavior ?? base.behavior,
+            // Extension parsed with full workspace context → its success/diagnostics
+            // are more accurate than the webview's own standalone parse result.
+            ...(msg.success !== undefined
+              ? { success: msg.success, diagnostics: msg.diagnostics ?? [] }
+              : {}),
+          };
+        });
       } else if (msg.type === 'revealElementAtSource' && msg.sourceLocation) {
         const { line } = msg.sourceLocation;
         if (!syncCursorRef.current) return;

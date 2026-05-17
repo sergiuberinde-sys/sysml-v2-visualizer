@@ -131,7 +131,13 @@ export function activate(context: vscode.ExtensionContext): void {
       if (graph != null) {
         console.log('[sysml-visualizer] behavior from parser-service:',
           JSON.stringify(behavior)?.slice(0, 300));
-        void activePanel.webview.postMessage({ type: 'updateGraph', graph, behavior });
+        void activePanel.webview.postMessage({
+          type: 'updateGraph',
+          graph,
+          behavior,
+          success: result.success ?? true,
+          diagnostics: result.diagnostics ?? [],
+        });
 
         // Rebuild semantic-ID → source range index for reverse (visualizer → editor) sync
         type GNode = { id: string; startLine?: number; endLine?: number };
