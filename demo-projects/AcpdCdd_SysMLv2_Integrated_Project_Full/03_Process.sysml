@@ -3,6 +3,7 @@ package AcpdCdd_SysMLv2 {
 
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
+	private import ScalarValues::Boolean;
 
         port def InputDataInPort {
             in item InputData : InputDataType;
@@ -13,9 +14,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_StartProcessing {
-            action entryAction;
-            first entryAction then InitializeProcessWithDefault;
-            action InitializeProcessWithDefault;
+action InitializeProcessWithDefault;
             action SetProcessingReady;
             first InitializeProcessWithDefault then SetProcessingReady;
         }
@@ -24,13 +23,7 @@ package AcpdCdd_SysMLv2 {
         action def AcpdCdd_Process {
             in item InputData : InputDataType;
             out item ProcessedData : ChannelMeansType;
-
-            action entryAction {
-                out item InputData : InputDataType;
-            }
-            first entryAction then CheckInputDataPointer;
-
-            action CheckInputDataPointer {
+action CheckInputDataPointer {
                 in item InputData : InputDataType;
                 out item checkedInputData : InputDataType;
                 out item invalidInputData : InputDataType;
@@ -71,14 +64,10 @@ package AcpdCdd_SysMLv2 {
                 in item mergedProcessedData : ChannelMeansType;
                 out item ProcessedData : ChannelMeansType;
             }
-
-            flow from InputData to entry.InputData;
-            flow from entryAction.InputData to CheckInputDataPointer.InputData;
-
-            first CheckInputDataPointer then FetchSensorBuffers;
-            first CheckInputDataPointer then UseDefaultProcessedData;
-
-            flow from CheckInputDataPointer.checkedInputData to FetchSensorBuffers.InputData;
+flow from InputData to CheckInputDataPointer.InputData;
+                first CheckInputDataPointer if CheckInputDataPointer_allows_FetchSensorBuffers then FetchSensorBuffers;
+                first CheckInputDataPointer if not CheckInputDataPointer_allows_FetchSensorBuffers then UseDefaultProcessedData;
+flow from CheckInputDataPointer.checkedInputData to FetchSensorBuffers.InputData;
             flow from CheckInputDataPointer.invalidInputData to UseDefaultProcessedData.invalidInputData;
 
             first FetchSensorBuffers then ConvertSensorSamples;
@@ -101,19 +90,10 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Process_Behavior {
-            action entryAction;
-            first entryAction then AcpdCdd_StartProcessing;
-            attribute StartProcessing_allows_ProcessCycle : Boolean;
-            attribute StartProcessing_allows_StopProcessing : Boolean;
-            action AcpdCdd_StartProcessing;
-            action AcpdCdd_Process;
-            action StopProcessing;
-            action Return;
+action AcpdCdd_Process;
+            action ReturnProcessedData;
 
-            first AcpdCdd_StartProcessing then AcpdCdd_Process;
-            first AcpdCdd_StartProcessing then StopProcessing;
-            first AcpdCdd_Process then Return;
-            first StopProcessing then Return;
+            first AcpdCdd_Process then ReturnProcessedData;
         }
 
         part def AcpdCdd_Process {
@@ -126,23 +106,20 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Process_Sequence_AsActionFlow {
+action ProcessReceivesInputData;
+            action FetchSensorBuffers;
+            action ConvertSensorSamples;
+            action SumSensorValues;
+            action ComputeChannelMeans;
+            action ReturnProcessedData;
 
-            action entryAction;
-            first entryAction then ProcessReceivesInputData;
-            attribute ProcessReceivesInputData_allows_ProcessCalculatesAcceleratorPosition : Boolean;
-            attribute ProcessReceivesInputData_allows_ProcessPublishesDefaultProcessedData : Boolean;
-            action ProcessReceivesInputData;
-            action ProcessCalculatesAcceleratorPosition;
-            action ProcessGeneratesProcessedData;
-            action ProcessPublishesDefaultProcessedData;
-            action ProcessPublishesProcessedData;
-
-            first ProcessReceivesInputData then ProcessCalculatesAcceleratorPosition;
-            first ProcessReceivesInputData then ProcessPublishesDefaultProcessedData;
-            first ProcessCalculatesAcceleratorPosition then ProcessGeneratesProcessedData;
-            first ProcessGeneratesProcessedData then ProcessPublishesProcessedData;
-            first ProcessPublishesDefaultProcessedData then ProcessPublishesProcessedData;
+            first ProcessReceivesInputData then FetchSensorBuffers;
+            first FetchSensorBuffers then ConvertSensorSamples;
+            first ConvertSensorSamples then SumSensorValues;
+            first SumSensorValues then ComputeChannelMeans;
+            first ComputeChannelMeans then ReturnProcessedData;
         }
+
 
 
     }

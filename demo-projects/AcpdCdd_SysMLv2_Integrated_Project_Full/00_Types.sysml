@@ -3,6 +3,7 @@ package AcpdCdd_SysMLv2 {
     package Types {
 
         private import ScalarValues::*;
+	private import ScalarValues::Boolean;
 
         attribute def float32 :> Real;
         attribute def uint8 :> Integer;
@@ -92,20 +93,20 @@ package AcpdCdd_SysMLv2 {
         item def AdcGroupDataEntryPairType {
             item group0 : AdcSensorDataEntryType;
             item group1 : AdcSensorDataEntryType;
-            attribute isGroup0Filled : boolean;
-            attribute isGroup1Filled : boolean;
+            attribute isGroup0Filled : Boolean;
+            attribute isGroup1Filled : Boolean;
         }
 
         item def InputDataType {
             item Sensor0Data : AdcSensorDataBufferType;
             item Sensor1Data : AdcSensorDataBufferType;
             item Timestamps : AdcTimestampBufferType;
-            attribute timestampFresh : boolean;
-            attribute group0SampleValid : boolean;
-            attribute group1SampleValid : boolean;
-            attribute supplySampleValid : boolean;
-            attribute sensorPairPlausible : boolean;
-            attribute inputDataValid : boolean;
+            attribute timestampFresh : Boolean;
+            attribute group0SampleValid : Boolean;
+            attribute group1SampleValid : Boolean;
+            attribute supplySampleValid : Boolean;
+            attribute sensorPairPlausible : Boolean;
+            attribute inputDataValid : Boolean;
         }
 
         item def ChannelMeansType {
@@ -163,10 +164,10 @@ package AcpdCdd_SysMLv2 {
         item def NoPayloadType;
 
         item def AdcNotificationPayloadType {
-            attribute notificationArrived : boolean;
-            attribute Group0NotificationArrived : boolean;
-            attribute Group1NotificationArrived : boolean;
-            attribute SupplyNotificationArrived : boolean;
+            attribute notificationArrived : Boolean;
+            attribute Group0NotificationArrived : Boolean;
+            attribute Group1NotificationArrived : Boolean;
+            attribute SupplyNotificationArrived : Boolean;
             item Timestamps : AdcTimestampBufferType;
         }
 
@@ -175,34 +176,34 @@ package AcpdCdd_SysMLv2 {
         // These Boolean attributes are used directly by guarded successions so visualizers can
         // render dotted conditional arrows with explicit guard labels.
         item def AdcGroup0NewDataDecisionType {
-            attribute sampleCountPointerAndRangeValid : boolean;
-            attribute group0SampleRangeValid : boolean;
-            attribute oldGroup0CacheFilled : boolean;
-            attribute bothGroup0AndGroup1Filled : boolean;
-            attribute group0SampleAccepted : boolean;
+            attribute sampleCountPointerAndRangeValid : Boolean;
+            attribute group0SampleRangeValid : Boolean;
+            attribute oldGroup0CacheFilled : Boolean;
+            attribute bothGroup0AndGroup1Filled : Boolean;
+            attribute group0SampleAccepted : Boolean;
         }
 
 
         item def AdcGroupDataReadDecisionType {
-            attribute missingEntriesDetected : boolean;
+            attribute missingEntriesDetected : Boolean;
         }
 
         item def AdcGroup1NewDataDecisionType {
-            attribute sampleCountPointerAndRangeValid : boolean;
-            attribute group1SampleRangeValid : boolean;
-            attribute oldGroup1CacheFilled : boolean;
-            attribute bothGroup0AndGroup1Filled : boolean;
-            attribute group1SampleAccepted : boolean;
+            attribute sampleCountPointerAndRangeValid : Boolean;
+            attribute group1SampleRangeValid : Boolean;
+            attribute oldGroup1CacheFilled : Boolean;
+            attribute bothGroup0AndGroup1Filled : Boolean;
+            attribute group1SampleAccepted : Boolean;
         }
 
         item def AdcSupplyNewDataDecisionType {
-            attribute supplySampleValid : boolean;
-            attribute supplySampleRangeValid : boolean;
+            attribute supplySampleValid : Boolean;
+            attribute supplySampleRangeValid : Boolean;
         }
 
         item def CollectInputDataDecisionType {
-            attribute collectedInputDataValid : boolean;
-            attribute collectedInputDataDegraded : boolean;
+            attribute collectedInputDataValid : Boolean;
+            attribute collectedInputDataDegraded : Boolean;
         }
 
         item def ActivationRequestPayloadType {
@@ -226,7 +227,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         item def AdcBistStatusPayloadType {
-            attribute ReferenceVoltageErrorDetected : boolean;
+            attribute ReferenceVoltageErrorDetected : Boolean;
         }
     }
 }

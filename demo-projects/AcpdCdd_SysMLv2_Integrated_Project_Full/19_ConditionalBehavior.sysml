@@ -4,6 +4,16 @@ package AcpdCdd_SysMLv2 {
 
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
+	private import ScalarValues::Boolean;
+        // Boolean guards used by explicit conditional branching.
+        attribute AdcNotification_hasArrived : Boolean;
+        attribute DecodedAdcTimestamp_isFresh : Boolean;
+        attribute Group0Sample_isInvalid : Boolean;
+        attribute Group1Sample_isInvalid : Boolean;
+        attribute SupplySample_isInvalid : Boolean;
+        attribute SensorPair_isPlausible : Boolean;
+
+
 
         // Conditional behavior views.
         // Official SysML v2 action/control semantics are modeled textually.
@@ -87,30 +97,18 @@ package AcpdCdd_SysMLv2 {
             }
 
             // Decision: ADC notification available?
-            first ReceiveAdcNotification
-                if ReceiveAdcNotification.notification.notificationArrived
-                then DecodeAdcGroups;
-
-            first ReceiveAdcNotification
-                if not ReceiveAdcNotification.notification.notificationArrived
-                then IncrementMissingNotificationCounter;
-
-            first IncrementMissingNotificationCounter then KeepPreviousInputBuffer;
+                first ReceiveAdcNotification if AdcNotification_hasArrived then DecodeAdcGroups;
+                first ReceiveAdcNotification if not AdcNotification_hasArrived then IncrementMissingNotificationCounter;
+first IncrementMissingNotificationCounter then KeepPreviousInputBuffer;
             first KeepPreviousInputBuffer then SetMissingNotificationQualifier;
 
             flow from ReceiveAdcNotification.notification to DecodeAdcGroups.notification;
             flow from KeepPreviousInputBuffer.fallbackInputData to SetMissingNotificationQualifier.fallbackInputData;
 
             // Decision: timestamp fresh?
-            first DecodeAdcGroups
-                if DecodeAdcGroups.decodedInputData.timestampFresh
-                then ValidateTimestamp;
-
-            first DecodeAdcGroups
-                if not DecodeAdcGroups.decodedInputData.timestampFresh
-                then MarkNotificationStale;
-
-            flow from DecodeAdcGroups.decodedInputData to ValidateTimestamp.decodedInputData;
+                first DecodeAdcGroups if DecodedAdcTimestamp_isFresh then ValidateTimestamp;
+                first DecodeAdcGroups if not DecodedAdcTimestamp_isFresh then MarkNotificationStale;
+flow from DecodeAdcGroups.decodedInputData to ValidateTimestamp.decodedInputData;
             flow from DecodeAdcGroups.decodedInputData to MarkNotificationStale.decodedInputData;
 
             // Fork/fan-out of independent checks.
@@ -124,19 +122,10 @@ package AcpdCdd_SysMLv2 {
             flow from ValidateTimestamp.timestampCheckedInputData to ValidateSupplySample.inputData;
 
             // Guarded outputs from each check. A visualizer may render the false branch as a dotted guarded edge.
-            first ValidateGroup0Sample
-                if not ValidateGroup0Sample.group0CheckedInputData.group0SampleValid
-                then SetGroup0InvalidQualifier;
-
-            first ValidateGroup1Sample
-                if not ValidateGroup1Sample.group1CheckedInputData.group1SampleValid
-                then SetGroup1InvalidQualifier;
-
-            first ValidateSupplySample
-                if not ValidateSupplySample.supplyCheckedInputData.supplySampleValid
-                then SetSupplyInvalidQualifier;
-
-            // Join/convergence before plausibility evaluation.
+                first ValidateGroup0Sample if Group0Sample_isInvalid then SetGroup0InvalidQualifier;
+                first ValidateGroup1Sample if Group1Sample_isInvalid then SetGroup1InvalidQualifier;
+first ValidateSupplySample if SupplySample_isInvalid then SetSupplyInvalidQualifier;
+// Join/convergence before plausibility evaluation.
             first ValidateGroup0Sample then Join_IndependentInputChecks;
             first ValidateGroup1Sample then Join_IndependentInputChecks;
             first ValidateSupplySample then Join_IndependentInputChecks;
@@ -147,13 +136,8 @@ package AcpdCdd_SysMLv2 {
             flow from ValidateSupplySample.supplyCheckedInputData to ValidateSensorPairPlausibility.inputData;
 
             // Decision: sensor pair plausible?
-            first ValidateSensorPairPlausibility
-                if ValidateSensorPairPlausibility.plausibilityCheckedInputData.sensorPairPlausible
-                then ComposeValidInputData;
-
-            first ValidateSensorPairPlausibility
-                if not ValidateSensorPairPlausibility.plausibilityCheckedInputData.sensorPairPlausible
-                then SetSensorPairImplausibleQualifier;
+                first ValidateSensorPairPlausibility if SensorPair_isPlausible then ComposeValidInputData;
+                first ValidateSensorPairPlausibility if not SensorPair_isPlausible then SetSensorPairImplausibleQualifier;
 
             first SetSensorPairImplausibleQualifier then ComposeFallbackInputData;
             first MarkNotificationStale then ComposeFallbackInputData;
@@ -171,7 +155,7 @@ package AcpdCdd_SysMLv2 {
             in item notificationPayload : AdcNotificationPayloadType;
             out item inputData : InputDataType;
 
-            attribute notificationArrived : boolean;
+            attribute notificationArrived : Boolean;
 
             action receiveAdcNotification;
             action Decision_NotificationAvailable;
@@ -185,22 +169,17 @@ package AcpdCdd_SysMLv2 {
 
             first receiveAdcNotification then Decision_NotificationAvailable;
 
-            if notificationArrived {
                 action updateAdcInputBufferPath;
                 action updateNotificationTimestampPath;
                 action clearMissingNotificationCounterPath;
 
-                first updateAdcInputBufferPath then updateNotificationTimestampPath;
-                first updateNotificationTimestampPath then clearMissingNotificationCounterPath;
-            }
-            else {
+                first updateAdcInputBufferPath if notificationArrived then updateNotificationTimestampPath;
+                first updateNotificationTimestampPath if notificationArrived then clearMissingNotificationCounterPath;
                 action incrementMissingNotificationCounterPath;
                 action keepPreviousInputBufferPath;
 
-                first incrementMissingNotificationCounterPath then keepPreviousInputBufferPath;
-            }
-
-            first Decision_NotificationAvailable then Merge_NotificationHandling;
+                first incrementMissingNotificationCounterPath if not notificationArrived then keepPreviousInputBufferPath;
+first Decision_NotificationAvailable then Merge_NotificationHandling;
             first Merge_NotificationHandling then publishInputData;
         }
 
@@ -209,7 +188,7 @@ package AcpdCdd_SysMLv2 {
             in item inputData : InputDataType;
             out item monitoringStatus : MonitoringStatusPayloadType;
 
-            attribute timestampWithinTolerance : boolean;
+            attribute timestampWithinTolerance : Boolean;
 
             action readNotificationTimestamps;
             action Decision_TimestampWithinTolerance;
@@ -222,22 +201,17 @@ package AcpdCdd_SysMLv2 {
 
             first readNotificationTimestamps then Decision_TimestampWithinTolerance;
 
-            if timestampWithinTolerance {
                 action markNotificationFreshPath;
                 action keepQualifierCandidateOkPath;
 
-                first markNotificationFreshPath then keepQualifierCandidateOkPath;
-            }
-            else {
+                first markNotificationFreshPath if timestampWithinTolerance then keepQualifierCandidateOkPath;
                 // trlc-satisfies: 28711565
                 // trlc-satisfies: 28711591
                 action markNotificationStalePath;
                 action requestQualifierErrorReactionPath;
 
-                first markNotificationStalePath then requestQualifierErrorReactionPath;
-            }
-
-            first Decision_TimestampWithinTolerance then Merge_TimestampSupervision;
+                first markNotificationStalePath if not timestampWithinTolerance then requestQualifierErrorReactionPath;
+first Decision_TimestampWithinTolerance then Merge_TimestampSupervision;
             first Merge_TimestampSupervision then publishMonitoringStatus;
         }
 
@@ -246,7 +220,7 @@ package AcpdCdd_SysMLv2 {
             in item processedData : ChannelMeansType;
             out item monitoringStatus : MonitoringStatusPayloadType;
 
-            attribute sensorDeviationWithinLimit : boolean;
+            attribute sensorDeviationWithinLimit : Boolean;
 
             action readSensorPairMeans;
             action Decision_SensorDeviationWithinLimit;
@@ -259,21 +233,16 @@ package AcpdCdd_SysMLv2 {
 
             first readSensorPairMeans then Decision_SensorDeviationWithinLimit;
 
-            if sensorDeviationWithinLimit {
                 action acceptSensorPairPlausiblePath;
                 action keepSensorQualifierOkPath;
 
-                first acceptSensorPairPlausiblePath then keepSensorQualifierOkPath;
-            }
-            else {
+                first acceptSensorPairPlausiblePath if sensorDeviationWithinLimit then keepSensorQualifierOkPath;
                 // trlc-satisfies: 25090543
                 action detectSensorPairImplausiblePath;
                 action requestSensorQualifierErrorPath;
 
-                first detectSensorPairImplausiblePath then requestSensorQualifierErrorPath;
-            }
-
-            first Decision_SensorDeviationWithinLimit then Merge_DeviationCheck;
+                first detectSensorPairImplausiblePath if not sensorDeviationWithinLimit then requestSensorQualifierErrorPath;
+first Decision_SensorDeviationWithinLimit then Merge_DeviationCheck;
             first Merge_DeviationCheck then publishDeviationCheckResult;
         }
 
@@ -283,7 +252,7 @@ package AcpdCdd_SysMLv2 {
             in item monitoringStatus : MonitoringStatusPayloadType;
             out item rteOutput : ProcessedSensorOutputPayloadType;
 
-            attribute monitoringStatusOk : boolean;
+            attribute monitoringStatusOk : Boolean;
 
             action readProcessedDataAndMonitoringStatus;
             action Decision_MonitoringStatusOk;
@@ -295,18 +264,13 @@ package AcpdCdd_SysMLv2 {
 
             first readProcessedDataAndMonitoringStatus then Decision_MonitoringStatusOk;
 
-            if monitoringStatusOk {
                 action writeQualifiedSensorValuesToRtePath;
-            }
-            else {
                 // trlc-satisfies: 28711397
                 action forceErrorQualifierPath;
                 action writeErrorQualifiedValuesToRtePath;
 
-                first forceErrorQualifierPath then writeErrorQualifiedValuesToRtePath;
-            }
-
-            first Decision_MonitoringStatusOk then Merge_OutputQualifier;
+                first forceErrorQualifierPath if not monitoringStatusOk then writeErrorQualifiedValuesToRtePath;
+first Decision_MonitoringStatusOk then Merge_OutputQualifier;
             first Merge_OutputQualifier then publishRteOutput;
         }
 
@@ -315,7 +279,7 @@ package AcpdCdd_SysMLv2 {
             in item activationStatus : ActivationStatusPayloadType;
             out item dioCommand : DioCommandPayloadType;
 
-            attribute activationRequested : boolean;
+            attribute activationRequested : Boolean;
 
             action readActivationStatus;
             action Decision_ActivationRequested;
@@ -326,21 +290,16 @@ package AcpdCdd_SysMLv2 {
 
             first readActivationStatus then Decision_ActivationRequested;
 
-            if activationRequested {
                 action commandPowerOnPath;
-            }
-            else {
                 action commandPowerOffPath;
-            }
-
-            first Decision_ActivationRequested then Merge_PowermanagementCommand;
+first Decision_ActivationRequested then Merge_PowermanagementCommand;
             first Merge_PowermanagementCommand then publishDioCommand;
         }
 
         action def AcpdCdd_Main10ms_ConditionalOverview {
 
-            attribute inputDataFresh : boolean;
-            attribute sensorPairPlausible : boolean;
+            attribute inputDataFresh : Boolean;
+            attribute sensorPairPlausible : Boolean;
 
             action collectInputData;
             action Decision_InputDataFresh;
@@ -359,26 +318,16 @@ package AcpdCdd_SysMLv2 {
             first collectInputData then checkInputFreshness;
             first checkInputFreshness then Decision_InputDataFresh;
 
-            if inputDataFresh {
                 action continueWithProcessing;
-                first continueWithProcessing then computeProcessedSensorValues;
-            }
-            else {
+                first continueWithProcessing if inputDataFresh then computeProcessedSensorValues;
                 action requestErrorQualifierDueToStaleInputPath;
-            }
-
-            first Decision_InputDataFresh then Merge_InputFreshness;
+first Decision_InputDataFresh then Merge_InputFreshness;
             first Merge_InputFreshness then checkSensorPlausibility;
             first checkSensorPlausibility then Decision_SensorPairPlausible;
 
-            if sensorPairPlausible {
                 action keepQualifierOkPath;
-            }
-            else {
                 action requestErrorQualifierDueToImplausibilityPath;
-            }
-
-            first Decision_SensorPairPlausible then Merge_SensorPlausibility;
+first Decision_SensorPairPlausible then Merge_SensorPlausibility;
             first Merge_SensorPlausibility then updateOutputQualifier;
             first updateOutputQualifier then writeRteOutput;
         }

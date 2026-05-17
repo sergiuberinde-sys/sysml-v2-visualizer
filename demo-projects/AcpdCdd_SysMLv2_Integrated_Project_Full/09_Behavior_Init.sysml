@@ -3,16 +3,14 @@ package AcpdCdd_SysMLv2 {
     package Behavior_Init {
 
         private import ScalarValues::*;
+	private import ScalarValues::Boolean;
 
         action def AcpdCdd_Initialization {
 
-            attribute AcpdCdd_active;
+            attribute AcpdCdd_active : Boolean;
             attribute setup_trial_counter;
-
-            action entryAction;
-            first entryAction then CheckAcpdCddActive;
-            attribute CheckSetupTrialCounterAgainstMaxAttempts_allows_AcpdCdd_StartInputCollector : Boolean;
-            attribute CheckSetupTrialCounterAgainstMaxAttempts_allows_StopProcessing : Boolean;
+attribute AcpdCddActive_isTrue : Boolean;
+            attribute SetupTrialCounterBelowMaxAttempts : Boolean;
             action CheckAcpdCddActive;
             action ExecuteCyclicTasksIfActive;
             action CheckSetupTrialCounterAgainstMaxAttempts;
@@ -24,22 +22,19 @@ package AcpdCdd_SysMLv2 {
             action StopProcessing;
             action UpdateRteOutputWithSafeDefaultValues;
 
-            first CheckAcpdCddActive then ExecuteCyclicTasksIfActive;
-            first CheckAcpdCddActive then CheckSetupTrialCounterAgainstMaxAttempts;
-            first CheckSetupTrialCounterAgainstMaxAttempts then AcpdCdd_StartInputCollector;
-            first AcpdCdd_StartInputCollector then AcpdCdd_StartProcessing;
-            first AcpdCdd_StartProcessing then EnableAdcNotificationsAndHardwareTriggers;
-            first EnableAdcNotificationsAndHardwareTriggers then SetAcpdCddActiveTrue;
-            first SetAcpdCddActiveTrue then IncrementSetupTrialCounter;
-            first CheckSetupTrialCounterAgainstMaxAttempts then StopProcessing;
-            first StopProcessing then UpdateRteOutputWithSafeDefaultValues;
-        }
+                first CheckAcpdCddActive if AcpdCddActive_isTrue then ExecuteCyclicTasksIfActive;
+                first CheckAcpdCddActive if not AcpdCddActive_isTrue then CheckSetupTrialCounterAgainstMaxAttempts;
+                first CheckSetupTrialCounterAgainstMaxAttempts if SetupTrialCounterBelowMaxAttempts then AcpdCdd_StartInputCollector;
+                first AcpdCdd_StartInputCollector if SetupTrialCounterBelowMaxAttempts then AcpdCdd_StartProcessing;
+                first AcpdCdd_StartProcessing if SetupTrialCounterBelowMaxAttempts then EnableAdcNotificationsAndHardwareTriggers;
+                first EnableAdcNotificationsAndHardwareTriggers if SetupTrialCounterBelowMaxAttempts then SetAcpdCddActiveTrue;
+                first SetAcpdCddActiveTrue if SetupTrialCounterBelowMaxAttempts then IncrementSetupTrialCounter;
+                first CheckSetupTrialCounterAgainstMaxAttempts if not SetupTrialCounterBelowMaxAttempts then StopProcessing;
+                first StopProcessing if not SetupTrialCounterBelowMaxAttempts then UpdateRteOutputWithSafeDefaultValues;
+}
 
         action def AcpdCdd_Init_Sequence_AsActionFlow {
-
-            action entryAction;
-            first entryAction then RuntimeInitializesInputModule;
-            attribute RuntimeInitializesInputModule_allows_RuntimeInitializesPowermanagementModule : Boolean;
+attribute RuntimeInitializesInputModule_allows_RuntimeInitializesPowermanagementModule : Boolean;
             attribute RuntimeInitializesInputModule_allows_RuntimeStopsInitialization : Boolean;
             action RuntimeInitializesInputModule;
             action RuntimeInitializesPowermanagementModule;
@@ -48,9 +43,9 @@ package AcpdCdd_SysMLv2 {
             action RuntimeStopsInitialization;
             action RuntimeWritesSafeDefaultOutput;
 
-            first RuntimeInitializesInputModule then RuntimeInitializesPowermanagementModule;
-            first RuntimeInitializesInputModule then RuntimeStopsInitialization;
-            first RuntimeInitializesPowermanagementModule then RuntimeInitializesMonitoringModule;
+                first RuntimeInitializesInputModule if RuntimeInitializesInputModule_allows_RuntimeInitializesPowermanagementModule then RuntimeInitializesPowermanagementModule;
+                first RuntimeInitializesInputModule if not RuntimeInitializesInputModule_allows_RuntimeInitializesPowermanagementModule then RuntimeStopsInitialization;
+first RuntimeInitializesPowermanagementModule then RuntimeInitializesMonitoringModule;
             first RuntimeInitializesMonitoringModule then RuntimeInitializesOutputModule;
             first RuntimeStopsInitialization then RuntimeWritesSafeDefaultOutput;
         }

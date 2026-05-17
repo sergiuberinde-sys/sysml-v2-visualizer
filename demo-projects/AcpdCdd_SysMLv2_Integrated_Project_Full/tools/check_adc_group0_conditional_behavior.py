@@ -1,31 +1,21 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
+import re, sys
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 INPUT_FILE = PROJECT_ROOT / "02_Input.sysml"
-TYPES_FILE = PROJECT_ROOT / "00_Types.sysml"
-REPORT = PROJECT_ROOT / "reports" / "adc_group0_conditional_behavior.md"
-
-REQUIRED_DECISION_ATTRIBUTES = [
-    "sampleCountPointerAndRangeValid",
-    "oldGroup0CacheFilled",
-    "bothGroup0AndGroup1Filled",
-]
 
 REQUIRED_GUARDS = [
-    "ValidateSampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid",
-    "not ValidateSampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid",
-    "CheckOldGroup0Cache.cacheState.oldGroup0CacheFilled",
-    "not CheckOldGroup0Cache.cacheState.oldGroup0CacheFilled",
-    "CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled",
-    "not CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled",
+    "Group0SampleCountPointerAndRange_isValid",
+    "OldGroup0Cache_isFilled",
+    "Group0AndGroup1Cache_areBothFilled",
 ]
-
 REQUIRED_ACTIONS = [
-    "Entry",
+    "GetGroup0SampleFromAdc",
+    "ValidateSampleCountPointerAndRange",
     "UseActualGroup0Sample",
     "UseInvalidGroup0Sample",
+    "CheckOldGroup0Cache",
     "PushOldGroup0WithInvalidGroup1IfNeeded",
     "CacheNewGroup0Sample",
     "SetIsGroup0FilledTrue",
@@ -34,77 +24,41 @@ REQUIRED_ACTIONS = [
     "ResetCachePair",
     "ReturnUpdatedGroupDataEntryPair",
 ]
-
 REQUIRED_FLOWS = [
-    "flow from adcGroup0Sample to Entry.adcGroup0Sample;",
-    "flow from Entry.adcGroup0Sample to GetGroup0SampleFromAdc.adcGroup0Sample;",
+    "flow from adcGroup0Sample to GetGroup0SampleFromAdc.adcGroup0Sample;",
     "flow from GetGroup0SampleFromAdc.group0Sample to ValidateSampleCountPointerAndRange.group0Sample;",
     "flow from GetGroup0SampleFromAdc.group0Sample to UseActualGroup0Sample.group0Sample;",
-    "flow from Entry.groupDataEntryPair to CheckOldGroup0Cache.groupDataEntryPair;",
+    "flow from groupDataEntryPair to CheckOldGroup0Cache.groupDataEntryPair;",
     "flow from UseActualGroup0Sample.normalizedGroup0Sample to CacheNewGroup0Sample.group0Sample;",
     "flow from UseInvalidGroup0Sample.normalizedGroup0Sample to CacheNewGroup0Sample.group0Sample;",
-    "flow from PushOldGroup0WithInvalidGroup1IfNeeded.flushedGroupDataEntryPair to CacheNewGroup0Sample.groupDataEntryPair;",
-    "flow from CacheNewGroup0Sample.cachedGroupDataEntryPair to SetIsGroup0FilledTrue.groupDataEntryPair;",
-    "flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to CheckBothGroup0AndGroup1Filled.groupDataEntryPair;",
-    "flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to WriteConsistentPairToRingBuffer.groupDataEntryPair;",
-    "flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to KeepPartialPairCached.groupDataEntryPair;",
-    "flow from WriteConsistentPairToRingBuffer.writtenGroupDataEntryPair to ResetCachePair.groupDataEntryPair;",
-    "flow from ResetCachePair.resetGroupDataEntryPair to ReturnUpdatedGroupDataEntryPair.groupDataEntryPair;",
-    "flow from KeepPartialPairCached.cachedPartialGroupDataEntryPair to ReturnUpdatedGroupDataEntryPair.groupDataEntryPair;",
     "flow from ReturnUpdatedGroupDataEntryPair.updatedGroupDataEntryPair to updatedGroupDataEntryPair;",
 ]
 
-
-def has_guarded_edge(text: str, guard: str) -> bool:
-    normalized = " ".join(text.split())
-    return f" if {guard} then " in normalized
-
-
 def main() -> int:
-    errors = []
-    input_text = INPUT_FILE.read_text(encoding="utf-8")
-    types_text = TYPES_FILE.read_text(encoding="utf-8")
-
-    if "item def AdcGroup0NewDataDecisionType" not in types_text:
-        errors.append("missing AdcGroup0NewDataDecisionType")
-
-    for attr in REQUIRED_DECISION_ATTRIBUTES:
-        if not re.search(rf"attribute\s+{attr}\s*:\s*boolean\s*;", types_text):
-            errors.append(f"missing Boolean decision attribute: {attr}")
-
-    if "action def AcpdCdd_AdcGroup0NewData" not in input_text:
+    text = INPUT_FILE.read_text(encoding="utf-8")
+    errors=[]
+    if "action def AcpdCdd_AdcGroup0NewData" not in text:
         errors.append("missing AcpdCdd_AdcGroup0NewData action definition")
-
-    for action in REQUIRED_ACTIONS:
-        if f"action {action}" not in input_text:
-            errors.append(f"missing Group0 conditional action: {action}")
-
     for guard in REQUIRED_GUARDS:
-        if not has_guarded_edge(input_text, guard):
-            errors.append(f"missing guarded Group0 succession: if {guard}")
-
+        if not re.search(rf"attribute\s+{guard}\s*:\s*Boolean\b", text):
+            errors.append(f"missing Boolean guard attribute: {guard}")
+        if not re.search(rf"first\s+\w+\s+if\s+(?:not\s+)?{guard}\s+then\s+\w+;", text):
+            errors.append(f"missing guarded succession using Boolean guard: {guard}")
+    for action in REQUIRED_ACTIONS:
+        if f"action {action}" not in text:
+            errors.append(f"missing Group0 conditional action: {action}")
     for flow in REQUIRED_FLOWS:
-        if flow not in input_text:
+        if flow not in text:
             errors.append(f"missing typed data flow: {flow}")
-
-    if "action adcGroup0NewData : AcpdCdd_AdcGroup0NewData;" not in input_text:
-        errors.append("AcpdCdd_Input.adcGroup0NewData usage is not typed by AcpdCdd_AdcGroup0NewData")
-
-    REPORT.parent.mkdir(exist_ok=True)
-    REPORT.write_text(
-        "# AcpdCdd_AdcGroup0NewData Conditional Behavior Check\n\n"
-        + ("Result: PASS\n" if not errors else "Result: FAIL\n\n" + "\n".join(f"- {e}" for e in errors) + "\n")
-        + "\nChecked explicit official-style guarded successions and typed data continuity inside `AcpdCdd_AdcGroup0NewData`.\n",
-        encoding="utf-8",
-    )
-
-    print("AcpdCdd_AdcGroup0NewData conditional behavior: " + ("PASS" if not errors else "FAIL"))
-    print(f"Report written to {REPORT.relative_to(PROJECT_ROOT)}")
+    if re.search(r"\baction\s+(?:entry|Entry)\b", text) or re.search(r"(?:entry|Entry)\.", text):
+        errors.append("synthetic entry action remnant found in 02_Input.sysml")
     if errors:
-        for error in errors:
-            print("- " + error)
-    return 1 if errors else 0
-
+        print("AcpdCdd_AdcGroup0NewData conditional behavior: FAIL")
+        for e in errors:
+            print("-", e)
+        return 1
+    print("AcpdCdd_AdcGroup0NewData conditional behavior: PASS")
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())

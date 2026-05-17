@@ -3,6 +3,7 @@ package AcpdCdd_SysMLv2 {
 
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
+	private import ScalarValues::Boolean;
 
         port def InputDataInPort {
             in item InputData : InputDataType;
@@ -34,10 +35,7 @@ package AcpdCdd_SysMLv2 {
             in attribute timestamp1;
             in attribute timestampOffset;
             out attribute result;
-
-            action entryAction;
-            first entryAction then ComputeInitialOffset;
-            attribute CompareWithCrosscheckBound_allows_ReturnTrueIfInRange : Boolean;
+attribute CompareWithCrosscheckBound_allows_ReturnTrueIfInRange : Boolean;
             attribute CompareWithCrosscheckBound_allows_ReturnFalseIfOutOfRange : Boolean;
             action ComputeInitialOffset;
             action ComputeCurrentOffset;
@@ -49,9 +47,9 @@ package AcpdCdd_SysMLv2 {
             first ComputeInitialOffset then ComputeCurrentOffset;
             first ComputeCurrentOffset then ComputeOffsetDifference;
             first ComputeOffsetDifference then CompareWithCrosscheckBound;
-            first CompareWithCrosscheckBound then ReturnTrueIfInRange;
-            first CompareWithCrosscheckBound then ReturnFalseIfOutOfRange;
-        }
+                first CompareWithCrosscheckBound if CompareWithCrosscheckBound_allows_ReturnTrueIfInRange then ReturnTrueIfInRange;
+                first CompareWithCrosscheckBound if not CompareWithCrosscheckBound_allows_ReturnTrueIfInRange then ReturnFalseIfOutOfRange;
+}
 
         // trlc-satisfies: 28710924
         // trlc-satisfies: 28711397
@@ -62,10 +60,7 @@ package AcpdCdd_SysMLv2 {
         action def AcpdCdd_CheckTimestamps {
             in item InputData : InputDataType;
             out item ErrorCounters : AcpdCddCheckErrorCountersType;
-
-            action entryAction;
-            first entryAction then InitializeErrorCounters;
-            action InitializeErrorCounters;
+action InitializeErrorCounters;
             action IterateAdcUpdateCycleCount;
             action ComputeGroup0TimestampDelta;
             action ComputeGroup1TimestampDelta;
@@ -97,10 +92,7 @@ package AcpdCdd_SysMLv2 {
         action def AcpdCdd_MissingDataCheck {
             in item InputData : InputDataType;
             out item ErrorCounters : AcpdCddCheckErrorCountersType;
-
-            action entryAction;
-            first entryAction then InitializeMissingDataCounters;
-            action InitializeMissingDataCounters;
+action InitializeMissingDataCounters;
             action IterateSensor0Data;
             action IterateSensor1Data;
             action CheckInvalidInputVoltage;
@@ -125,105 +117,151 @@ package AcpdCdd_SysMLv2 {
         // trlc-satisfies: 44879786
         // trlc-satisfies: 25128720
         // trlc-satisfies: 25128907
+        // trlc-satisfies: 25128928
+        // trlc-satisfies: 44879718
+        // trlc-satisfies: 44879786
+        // trlc-satisfies: 25128720
+        // trlc-satisfies: 25128907
         action def AcpdCdd_DeviationCheck {
             in item ProcessedData : ChannelMeansType;
-
-            action entryAction;
-            first entryAction then SelectSensor0MissionAndMonitoringMeans;
+attribute Sensor0MonitoringMeanWithinAcceptableInterval : Boolean;
+            attribute Sensor1MonitoringMeanWithinAcceptableInterval : Boolean;
             action SelectSensor0MissionAndMonitoringMeans;
             action ComputeSensor0AcceptableInterval;
             action CheckSensor0MonitoringWithinInterval;
-            action SetSensor0QualifierDegradedIfOutside;
-            action SetSensor0ValueToMinimumIfOutside;
+            action KeepSensor0QualifierUnchanged;
+            action SetSensor0QualifierDegraded;
+            action SetSensor0ValueToMinimum;
             action SelectSensor1MissionAndMonitoringMeans;
             action ComputeSensor1AcceptableInterval;
             action CheckSensor1MonitoringWithinInterval;
-            action SetSensor1QualifierDegradedIfOutside;
-            action SetSensor1ValueToMinimumIfOutside;
+            action KeepSensor1QualifierUnchanged;
+            action SetSensor1QualifierDegraded;
+            action SetSensor1ValueToMinimum;
+            action ReturnDeviationResult;
 
             first SelectSensor0MissionAndMonitoringMeans then ComputeSensor0AcceptableInterval;
             first ComputeSensor0AcceptableInterval then CheckSensor0MonitoringWithinInterval;
-            first CheckSensor0MonitoringWithinInterval then SetSensor0QualifierDegradedIfOutside;
-            first SetSensor0QualifierDegradedIfOutside then SetSensor0ValueToMinimumIfOutside;
-            first SetSensor0ValueToMinimumIfOutside then SelectSensor1MissionAndMonitoringMeans;
-            first SelectSensor1MissionAndMonitoringMeans then ComputeSensor1AcceptableInterval;
+                first CheckSensor0MonitoringWithinInterval if Sensor0MonitoringMeanWithinAcceptableInterval then KeepSensor0QualifierUnchanged;
+                first KeepSensor0QualifierUnchanged if Sensor0MonitoringMeanWithinAcceptableInterval then SelectSensor1MissionAndMonitoringMeans;
+                first CheckSensor0MonitoringWithinInterval if not Sensor0MonitoringMeanWithinAcceptableInterval then SetSensor0QualifierDegraded;
+                first SetSensor0QualifierDegraded if not Sensor0MonitoringMeanWithinAcceptableInterval then SetSensor0ValueToMinimum;
+                first SetSensor0ValueToMinimum if not Sensor0MonitoringMeanWithinAcceptableInterval then SelectSensor1MissionAndMonitoringMeans;
+first SelectSensor1MissionAndMonitoringMeans then ComputeSensor1AcceptableInterval;
             first ComputeSensor1AcceptableInterval then CheckSensor1MonitoringWithinInterval;
-            first CheckSensor1MonitoringWithinInterval then SetSensor1QualifierDegradedIfOutside;
-            first SetSensor1QualifierDegradedIfOutside then SetSensor1ValueToMinimumIfOutside;
-        }
+                first CheckSensor1MonitoringWithinInterval if Sensor1MonitoringMeanWithinAcceptableInterval then KeepSensor1QualifierUnchanged;
+                first KeepSensor1QualifierUnchanged if Sensor1MonitoringMeanWithinAcceptableInterval then ReturnDeviationResult;
+                first CheckSensor1MonitoringWithinInterval if not Sensor1MonitoringMeanWithinAcceptableInterval then SetSensor1QualifierDegraded;
+                first SetSensor1QualifierDegraded if not Sensor1MonitoringMeanWithinAcceptableInterval then SetSensor1ValueToMinimum;
+                first SetSensor1ValueToMinimum if not Sensor1MonitoringMeanWithinAcceptableInterval then ReturnDeviationResult;
+}
 
         action def ResultPlausibilityCheck {
-
-            action entryAction;
-            first entryAction then CheckSensor0VoltageLowerBound;
+attribute Sensor0VoltageBelowLowerBound : Boolean;
+            attribute Sensor0VoltageAboveUpperBound : Boolean;
+            attribute Sensor1VoltageBelowLowerBound : Boolean;
+            attribute Sensor1VoltageAboveUpperBound : Boolean;
             action CheckSensor0VoltageLowerBound;
-            action ClampSensor0ToZeroAndSetErrorIfBelow;
+            action ClampSensor0ToZeroAndSetError;
             action CheckSensor0VoltageUpperBound;
-            action ClampSensor0ToSixteenAndSetErrorIfAbove;
+            action ClampSensor0ToSixteenAndSetError;
             action CheckSensor1VoltageLowerBound;
-            action ClampSensor1ToZeroAndSetErrorIfBelow;
+            action ClampSensor1ToZeroAndSetError;
             action CheckSensor1VoltageUpperBound;
-            action ClampSensor1ToSixteenAndSetErrorIfAbove;
+            action ClampSensor1ToSixteenAndSetError;
+            action ReturnPlausibilityResult;
 
-            first CheckSensor0VoltageLowerBound then ClampSensor0ToZeroAndSetErrorIfBelow;
-            first ClampSensor0ToZeroAndSetErrorIfBelow then CheckSensor0VoltageUpperBound;
-            first CheckSensor0VoltageUpperBound then ClampSensor0ToSixteenAndSetErrorIfAbove;
-            first ClampSensor0ToSixteenAndSetErrorIfAbove then CheckSensor1VoltageLowerBound;
-            first CheckSensor1VoltageLowerBound then ClampSensor1ToZeroAndSetErrorIfBelow;
-            first ClampSensor1ToZeroAndSetErrorIfBelow then CheckSensor1VoltageUpperBound;
-            first CheckSensor1VoltageUpperBound then ClampSensor1ToSixteenAndSetErrorIfAbove;
+                first CheckSensor0VoltageLowerBound if Sensor0VoltageBelowLowerBound then ClampSensor0ToZeroAndSetError;
+                first ClampSensor0ToZeroAndSetError if Sensor0VoltageBelowLowerBound then CheckSensor1VoltageLowerBound;
+                first CheckSensor0VoltageLowerBound if not Sensor0VoltageBelowLowerBound then CheckSensor0VoltageUpperBound;
+                first CheckSensor0VoltageUpperBound if Sensor0VoltageAboveUpperBound then ClampSensor0ToSixteenAndSetError;
+                first ClampSensor0ToSixteenAndSetError if Sensor0VoltageAboveUpperBound then CheckSensor1VoltageLowerBound;
+                first CheckSensor0VoltageUpperBound if not Sensor0VoltageAboveUpperBound then CheckSensor1VoltageLowerBound;
+                first CheckSensor1VoltageLowerBound if Sensor1VoltageBelowLowerBound then ClampSensor1ToZeroAndSetError;
+                first ClampSensor1ToZeroAndSetError if Sensor1VoltageBelowLowerBound then ReturnPlausibilityResult;
+                first CheckSensor1VoltageLowerBound if not Sensor1VoltageBelowLowerBound then CheckSensor1VoltageUpperBound;
+                first CheckSensor1VoltageUpperBound if Sensor1VoltageAboveUpperBound then ClampSensor1ToSixteenAndSetError;
+                first ClampSensor1ToSixteenAndSetError if Sensor1VoltageAboveUpperBound then ReturnPlausibilityResult;
+                first CheckSensor1VoltageUpperBound if not Sensor1VoltageAboveUpperBound then ReturnPlausibilityResult;
         }
 
         // trlc-satisfies: 28883887
         // trlc-satisfies: 28883920
         action def SupplyVoltageCheck {
-
-            action entryAction;
-            first entryAction then CheckSupply1LowOrHighBound;
+attribute Supply1OutOfValidRange : Boolean;
+            attribute Supply2OutOfValidRange : Boolean;
             action CheckSupply1LowOrHighBound;
-            action SetSensor1AndSupply1QualifierErrorIfOutOfRange;
+            action SetSensor1AndSupply1QualifierError;
+            action LeaveSensor1AndSupply1QualifiersUnchanged;
             action CheckSupply2LowOrHighBound;
-            action SetSensor2AndSupply2QualifierErrorIfOutOfRange;
+            action SetSensor2AndSupply2QualifierError;
+            action LeaveSensor2AndSupply2QualifiersUnchanged;
+            action ReturnSupplyVoltageResult;
 
-            first CheckSupply1LowOrHighBound then SetSensor1AndSupply1QualifierErrorIfOutOfRange;
-            first SetSensor1AndSupply1QualifierErrorIfOutOfRange then CheckSupply2LowOrHighBound;
-            first CheckSupply2LowOrHighBound then SetSensor2AndSupply2QualifierErrorIfOutOfRange;
-        }
+                first CheckSupply1LowOrHighBound if Supply1OutOfValidRange then SetSensor1AndSupply1QualifierError;
+                first SetSensor1AndSupply1QualifierError if Supply1OutOfValidRange then CheckSupply2LowOrHighBound;
+                first CheckSupply1LowOrHighBound if not Supply1OutOfValidRange then LeaveSensor1AndSupply1QualifiersUnchanged;
+                first LeaveSensor1AndSupply1QualifiersUnchanged if not Supply1OutOfValidRange then CheckSupply2LowOrHighBound;
+                first CheckSupply2LowOrHighBound if Supply2OutOfValidRange then SetSensor2AndSupply2QualifierError;
+                first SetSensor2AndSupply2QualifierError if Supply2OutOfValidRange then ReturnSupplyVoltageResult;
+                first CheckSupply2LowOrHighBound if not Supply2OutOfValidRange then LeaveSensor2AndSupply2QualifiersUnchanged;
+                first LeaveSensor2AndSupply2QualifiersUnchanged if not Supply2OutOfValidRange then ReturnSupplyVoltageResult;
+}
 
         // trlc-satisfies: 25188589
         action def PowerStateVsQualifiers {
-
-            action entryAction;
-            first entryAction then CheckPowerStateOff;
-            attribute CheckPowerStateOff_allows_CheckSwitchToOn : Boolean;
-            attribute CheckPowerStateOff_allows_CheckSwitchToOff : Boolean;
-            attribute CheckPowerStateOn_allows_CheckSwitchToOn : Boolean;
-            attribute CheckPowerStateOn_allows_CheckSwitchToOff : Boolean;
-            attribute CheckPowerStateOn_allows_ApplyStableOnChecks : Boolean;
+attribute PowerStateIsOff : Boolean;
+            attribute TransitionIsSwitchToOn : Boolean;
+            attribute TransitionIsSwitchToOff : Boolean;
             action CheckPowerStateOff;
             action CheckPowerStateOn;
-            action CheckSwitchToOn;
             action SetAllQualifiersInit;
-            action CheckSwitchToOff;
             action SetAllQualifiersNotAvailable;
             action ApplyStableOnChecks;
+            action ReturnPowerQualifierResult;
 
-            first CheckPowerStateOff then CheckSwitchToOn;
-            first CheckSwitchToOn then SetAllQualifiersInit;
-            first CheckPowerStateOff then CheckSwitchToOff;
-            first CheckSwitchToOff then SetAllQualifiersNotAvailable;
-            first CheckPowerStateOn then CheckSwitchToOn;
-            first CheckPowerStateOn then CheckSwitchToOff;
-            first CheckPowerStateOn then ApplyStableOnChecks;
+                first CheckPowerStateOff if PowerStateIsOff and TransitionIsSwitchToOn then SetAllQualifiersInit;
+                first SetAllQualifiersInit if PowerStateIsOff and TransitionIsSwitchToOn then ReturnPowerQualifierResult;
+                first CheckPowerStateOff if PowerStateIsOff and not TransitionIsSwitchToOn then SetAllQualifiersNotAvailable;
+                first SetAllQualifiersNotAvailable if PowerStateIsOff and not TransitionIsSwitchToOn then ReturnPowerQualifierResult;
+                first CheckPowerStateOff if not PowerStateIsOff then CheckPowerStateOn;
+                first CheckPowerStateOn if not PowerStateIsOff and TransitionIsSwitchToOn then SetAllQualifiersInit;
+                first SetAllQualifiersInit if not PowerStateIsOff and TransitionIsSwitchToOn then ReturnPowerQualifierResult;
+                first CheckPowerStateOn if not PowerStateIsOff and not TransitionIsSwitchToOn and TransitionIsSwitchToOff then SetAllQualifiersNotAvailable;
+                first SetAllQualifiersNotAvailable if not PowerStateIsOff and TransitionIsSwitchToOff then ReturnPowerQualifierResult;
+                first CheckPowerStateOn if not PowerStateIsOff and not TransitionIsSwitchToOn and not TransitionIsSwitchToOff then ApplyStableOnChecks;
+                first ApplyStableOnChecks if not PowerStateIsOff and not TransitionIsSwitchToOn and not TransitionIsSwitchToOff then ReturnPowerQualifierResult;
+        }
+
+        action def VARef_Error_Reaction {
+            in attribute VARef1ErrorPresent;
+            in attribute VARef2ErrorPresent;
+attribute VARef1ErrorPresent_isTrue : Boolean;
+            attribute VARef2ErrorPresent_isTrue : Boolean;
+            action CheckVARef1ErrorPresent;
+            action CheckVARef2ErrorPresent;
+            action SetSensorAndSupplyQualifiersDegraded;
+            action SetSensorQualifiersDegradedOnly;
+            action SetAllQualifiersError;
+            action LeaveQualifiersUnchanged;
+            action ReturnVARefReaction;
+
+                first CheckVARef1ErrorPresent if VARef1ErrorPresent_isTrue then CheckVARef2ErrorPresent;
+                first CheckVARef2ErrorPresent if VARef1ErrorPresent_isTrue and VARef2ErrorPresent_isTrue then SetAllQualifiersError;
+                first SetAllQualifiersError if VARef1ErrorPresent_isTrue and VARef2ErrorPresent_isTrue then ReturnVARefReaction;
+                first CheckVARef2ErrorPresent if VARef1ErrorPresent_isTrue and not VARef2ErrorPresent_isTrue then SetSensorAndSupplyQualifiersDegraded;
+                first SetSensorAndSupplyQualifiersDegraded if VARef1ErrorPresent_isTrue and not VARef2ErrorPresent_isTrue then ReturnVARefReaction;
+                first CheckVARef1ErrorPresent if not VARef1ErrorPresent_isTrue then CheckVARef2ErrorPresent;
+                first CheckVARef2ErrorPresent if not VARef1ErrorPresent_isTrue and VARef2ErrorPresent_isTrue then SetSensorQualifiersDegradedOnly;
+                first SetSensorQualifiersDegradedOnly if not VARef1ErrorPresent_isTrue and VARef2ErrorPresent_isTrue then ReturnVARefReaction;
+                first CheckVARef2ErrorPresent if not VARef1ErrorPresent_isTrue and not VARef2ErrorPresent_isTrue then LeaveQualifiersUnchanged;
+                first LeaveQualifiersUnchanged if not VARef1ErrorPresent_isTrue and not VARef2ErrorPresent_isTrue then ReturnVARefReaction;
         }
 
         // trlc-satisfies: 30477411
         // trlc-satisfies: 30477478
         action def ADC_Error_Callbacks {
-
-            action entryAction;
-            first entryAction then AcpdCdd_IncrementAdcConvErrGroup0;
-            action AcpdCdd_IncrementAdcConvErrGroup0;
+action AcpdCdd_IncrementAdcConvErrGroup0;
             action AcpdCdd_IncrementAdcConvErrGroup1;
             action AcpdCdd_IncrementAdcConvErrSupply;
             action EnterExclusiveArea;
@@ -254,9 +292,7 @@ package AcpdCdd_SysMLv2 {
             out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
 
             // trlc-satisfies: 25094047
-            action entryAction;
-            first entryAction then InitializeQualifiersFromProcessedData;
-            action InitializeQualifiersFromProcessedData;
+action InitializeQualifiersFromProcessedData;
             action AcpdCdd_MissingDataCheck;
             action AcpdCdd_CheckTimestamps;
             action CombineWithAdcErrorCallbackCounters;
@@ -264,8 +300,7 @@ package AcpdCdd_SysMLv2 {
             action AcpdCdd_DeviationCheck;
             action ResultPlausibilityCheck;
             action SupplyVoltageCheck;
-            action ApplyVARef1ErrorFlag;
-            action ApplyVARef2ErrorFlag;
+            action VARef_Error_Reaction;
             action ReturnAcceleratorData;
 
             first InitializeQualifiersFromProcessedData then AcpdCdd_MissingDataCheck;
@@ -275,15 +310,12 @@ package AcpdCdd_SysMLv2 {
             first PowerStateVsQualifiers then AcpdCdd_DeviationCheck;
             first AcpdCdd_DeviationCheck then ResultPlausibilityCheck;
             first ResultPlausibilityCheck then SupplyVoltageCheck;
-            first SupplyVoltageCheck then ApplyVARef1ErrorFlag;
-            first ApplyVARef1ErrorFlag then ApplyVARef2ErrorFlag;
-            first ApplyVARef2ErrorFlag then ReturnAcceleratorData;
+            first SupplyVoltageCheck then VARef_Error_Reaction;
+            first VARef_Error_Reaction then ReturnAcceleratorData;
         }
 
         action def AcpdCdd_Monitoring_Behavior {
-            action entryAction;
-            first entryAction then AcpdCdd_Monitoring;
-            action AcpdCdd_Monitoring;
+action AcpdCdd_Monitoring;
             action AcpdCdd_MissingDataCheck;
             action AcpdCdd_CheckTimestamps;
             action AcpdCdd_CrossCheckTimestamps;
@@ -291,6 +323,7 @@ package AcpdCdd_SysMLv2 {
             action ResultPlausibilityCheck;
             action SupplyVoltageCheck;
             action PowerStateVsQualifiers;
+            action VARef_Error_Reaction;
             action ADC_Error_Callbacks;
 
             first AcpdCdd_Monitoring then AcpdCdd_MissingDataCheck;
@@ -300,7 +333,8 @@ package AcpdCdd_SysMLv2 {
             first AcpdCdd_DeviationCheck then ResultPlausibilityCheck;
             first ResultPlausibilityCheck then SupplyVoltageCheck;
             first SupplyVoltageCheck then PowerStateVsQualifiers;
-            first PowerStateVsQualifiers then ADC_Error_Callbacks;
+            first PowerStateVsQualifiers then VARef_Error_Reaction;
+            first VARef_Error_Reaction then ADC_Error_Callbacks;
         }
 
         part def AcpdCdd_Monitoring {
@@ -324,10 +358,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Monitoring_Sequence_AsActionFlow {
-
-            action entryAction;
-            first entryAction then MonitoringReceivesProcessedData;
-            action MonitoringReceivesProcessedData;
+action MonitoringReceivesProcessedData;
             action MonitoringReceivesPowerStatus;
 
             action MonitoringChecksInputPlausibility;

@@ -3,6 +3,7 @@ package AcpdCdd_SysMLv2 {
 
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
+	private import ScalarValues::Boolean;
 
         // trlc-satisfies: 25188489
         port def ActivationInPort {
@@ -19,9 +20,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_InitPowerDio {
-            action entryAction;
-            first entryAction then SetDioChannelCto5vapp1Low;
-            action SetDioChannelCto5vapp1Low;
+action SetDioChannelCto5vapp1Low;
             action SetDioChannelCto5vapp2Low;
             action Return;
 
@@ -31,10 +30,7 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_SetPowerDio {
             in attribute Status;
-
-            action entryAction;
-            first entryAction then WriteDioChannelCto5vapp1;
-            action WriteDioChannelCto5vapp1;
+action WriteDioChannelCto5vapp1;
             action WriteDioChannelCto5vapp2;
             action OptionalReadbackVerification;
             action Return;
@@ -45,10 +41,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_PowermanagementInit {
-
-            action entryAction;
-            first entryAction then AcpdCdd_InitPowerDio;
-            action AcpdCdd_InitPowerDio;
+action AcpdCdd_InitPowerDio;
             // trlc-satisfies: 41716503
             action SetCurrentPowerStatePowerOff;
             action SetCurrentPowerTransitionNone;
@@ -62,10 +55,7 @@ package AcpdCdd_SysMLv2 {
         // trlc-satisfies: 25188589
         action def AcpdCdd_PowermanagementCalcStatus {
             out item Status : PowerStatusType;
-
-            action entryAction;
-            first entryAction then CopyCurrentPowerStateToStatus;
-            action CopyCurrentPowerStateToStatus;
+action CopyCurrentPowerStateToStatus;
             action CopyCurrentPowerTransitionToStatus;
             action ResetCurrentPowerTransitionToNone;
             action ReturnStatus;
@@ -77,13 +67,12 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_PowermanagementExecute {
             in attribute PowerState;
-
-            action entryAction;
-            first entryAction then RangeCheckPowerState;
-            attribute StoreNewPowerState_allows_SetPowerDioOn : Boolean;
-            attribute StoreNewPowerState_allows_SetPowerDioOff : Boolean;
-            attribute StoreNewPowerState_allows_LatchPreviousSwitchOnEvent : Boolean;
+attribute PowerState_isValid : Boolean;
+            attribute RequestedTransition_isPowerOffToPowerOn : Boolean;
+            attribute RequestedTransition_isPowerOnToPowerOff : Boolean;
+            attribute SwitchOnEvent_isLatched : Boolean;
             action RangeCheckPowerState;
+            action DoNothingForOutOfRangePowerState;
             // trlc-satisfies: 28826666
             action DeterminePowerOffToPowerOnTransition;
             // trlc-satisfies: 28826692
@@ -98,25 +87,25 @@ package AcpdCdd_SysMLv2 {
             action ResetSwitchOnEventFalse;
             action Return;
 
-            first RangeCheckPowerState then DeterminePowerOffToPowerOnTransition;
-            first DeterminePowerOffToPowerOnTransition then DeterminePowerOnToPowerOffTransition;
-            first DeterminePowerOnToPowerOffTransition then DetermineNoTransition;
-            first DetermineNoTransition then StoreNewPowerState;
-            first StoreNewPowerState then SetPowerDioOn;
-            first SetPowerDioOn then SetSwitchOnEventTrue;
-            first SetSwitchOnEventTrue then Return;
-            first StoreNewPowerState then SetPowerDioOff;
-            first SetPowerDioOff then Return;
-            first StoreNewPowerState then LatchPreviousSwitchOnEvent;
-            first LatchPreviousSwitchOnEvent then ResetSwitchOnEventFalse;
-            first ResetSwitchOnEventFalse then Return;
+                first RangeCheckPowerState if PowerState_isValid then StoreNewPowerState;
+                first RangeCheckPowerState if not PowerState_isValid then DoNothingForOutOfRangePowerState;
+                first DoNothingForOutOfRangePowerState if not PowerState_isValid then Return;
+                first StoreNewPowerState if RequestedTransition_isPowerOffToPowerOn then DeterminePowerOffToPowerOnTransition;
+                first DeterminePowerOffToPowerOnTransition if RequestedTransition_isPowerOffToPowerOn then SetPowerDioOn;
+                first SetPowerDioOn if RequestedTransition_isPowerOffToPowerOn then SetSwitchOnEventTrue;
+                first SetSwitchOnEventTrue if RequestedTransition_isPowerOffToPowerOn then Return;
+                first StoreNewPowerState if not RequestedTransition_isPowerOffToPowerOn and RequestedTransition_isPowerOnToPowerOff then DeterminePowerOnToPowerOffTransition;
+                first DeterminePowerOnToPowerOffTransition if RequestedTransition_isPowerOnToPowerOff then SetPowerDioOff;
+                first SetPowerDioOff if RequestedTransition_isPowerOnToPowerOff then Return;
+                first StoreNewPowerState if not RequestedTransition_isPowerOffToPowerOn and not RequestedTransition_isPowerOnToPowerOff then DetermineNoTransition;
+                first DetermineNoTransition if SwitchOnEvent_isLatched then LatchPreviousSwitchOnEvent;
+                first LatchPreviousSwitchOnEvent if SwitchOnEvent_isLatched then ResetSwitchOnEventFalse;
+                first ResetSwitchOnEventFalse if SwitchOnEvent_isLatched then Return;
+                first DetermineNoTransition if not SwitchOnEvent_isLatched then Return;
         }
 
         action def AcpdCdd_Activation {
-
-            action entryAction;
-            first entryAction then ReadActivationSignalFromRte;
-            attribute CompareActivationWithActivate_allows_ExecutePowerOn : Boolean;
+attribute CompareActivationWithActivate_allows_ExecutePowerOn : Boolean;
             attribute CompareActivationWithActivate_allows_ExecutePowerOff : Boolean;
             action ReadActivationSignalFromRte;
             action CompareActivationWithActivate;
@@ -125,16 +114,14 @@ package AcpdCdd_SysMLv2 {
             action Return;
 
             first ReadActivationSignalFromRte then CompareActivationWithActivate;
-            first CompareActivationWithActivate then ExecutePowerOn;
-            first CompareActivationWithActivate then ExecutePowerOff;
-            first ExecutePowerOn then Return;
+                first CompareActivationWithActivate if CompareActivationWithActivate_allows_ExecutePowerOn then ExecutePowerOn;
+                first CompareActivationWithActivate if not CompareActivationWithActivate_allows_ExecutePowerOn then ExecutePowerOff;
+first ExecutePowerOn then Return;
             first ExecutePowerOff then Return;
         }
 
         action def AcpdCdd_Powermanagement_Behavior {
-            action entryAction;
-            first entryAction then AcpdCdd_PowermanagementInit;
-            action AcpdCdd_PowermanagementInit;
+action AcpdCdd_PowermanagementInit;
             action AcpdCdd_Activation;
             action AcpdCdd_PowermanagementExecute;
             action AcpdCdd_SetPowerDio;
@@ -165,10 +152,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Powermanagement_Sequence_AsActionFlow {
-
-            action entryAction;
-            first entryAction then PowermanagementInitializesModule;
-            action PowermanagementInitializesModule;
+action PowermanagementInitializesModule;
             action PowermanagementCalculatesPowerStatus;
 
             action PowermanagementRequestsDioInitialization;
