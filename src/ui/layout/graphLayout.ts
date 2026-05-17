@@ -44,6 +44,117 @@ const FIXED_ROUTING_OPTIONS: Record<string, string> = {
   'elk.spacing.edgeEdge': '20',   // gap between parallel edge segments
 };
 
+// ── Port assignment ───────────────────────────────────────────────────────────
+
+type NodeInfo = { id: string; x: number; y: number; width: number; height: number };
+type EdgeInfo = { id: string; source: string; target: string };
+
+/** Returns the face of `src` that an edge toward `tgt` would exit from. */
+function faceOf(src: NodeInfo, tgt: NodeInfo): 'left' | 'right' | 'top' | 'bottom' {
+  const dx = (tgt.x + tgt.width / 2)  - (src.x + src.width / 2);
+  const dy = (tgt.y + tgt.height / 2) - (src.y + src.height / 2);
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
+  return dy >= 0 ? 'bottom' : 'top';
+}
+
+/**
+ * Assign explicit ELK FIXED_POS ports to nodes that have ≥2 edges on the same face.
+ *
+ * Without explicit ports ELK routes all edges to the face centre, producing a
+ * single-line appearance.  With ports distributed evenly along the face, ELK
+ * routes each edge from its unique attachment point, giving naturally diverging
+ * full paths throughout the entire route (not just at the endpoint).
+ */
+function assignPorts(
+  nodesList: NodeInfo[],
+  edgesList: EdgeInfo[],
+): { children: ElkNode[]; edges: ElkExtendedEdge[] } {
+  const nodeMap = new Map(nodesList.map(n => [n.id, n]));
+
+  type FaceEdge = { eid: string; role: 'src' | 'tgt' };
+  const faceEdges = new Map<string, FaceEdge[]>();
+
+  for (const e of edgesList) {
+    const src = nodeMap.get(e.source);
+    const tgt = nodeMap.get(e.target);
+    if (!src || !tgt) continue;
+    const srcFace = faceOf(src, tgt);
+    const tgtFace = faceOf(tgt, src);
+    for (const [key, role] of [
+      [`${e.source}:${srcFace}`, 'src' as const],
+      [`${e.target}:${tgtFace}`, 'tgt' as const],
+    ] as const) {
+      if (!faceEdges.has(key)) faceEdges.set(key, []);
+      faceEdges.get(key)!.push({ eid: e.id, role });
+    }
+  }
+
+  // portMap: nodeId → [{id, x, y}]    edgePortMap: "eid:role" → portId
+  const portMap     = new Map<string, { id: string; x: number; y: number }[]>();
+  const edgePortMap = new Map<string, string>();
+
+  for (const [faceKey, fedges] of faceEdges) {
+    if (fedges.length < 2) continue;
+    const colonIdx = faceKey.lastIndexOf(':');
+    const nodeId   = faceKey.slice(0, colonIdx);
+    const face     = faceKey.slice(colonIdx + 1) as 'left' | 'right' | 'top' | 'bottom';
+    const nd       = nodeMap.get(nodeId);
+    if (!nd) continue;
+
+    const isLR = face === 'left' || face === 'right';
+
+    // Sort by the OTHER endpoint's position along the face axis → fewer crossings.
+    const sorted = [...fedges].sort((a, b) => {
+      const eA = edgesList.find(e => e.id === a.eid)!;
+      const eB = edgesList.find(e => e.id === b.eid)!;
+      const oA = nodeMap.get(a.role === 'src' ? eA.target : eA.source);
+      const oB = nodeMap.get(b.role === 'src' ? eB.target : eB.source);
+      if (!oA || !oB) return 0;
+      const pA = isLR ? (oA.y + oA.height / 2) : (oA.x + oA.width / 2);
+      const pB = isLR ? (oB.y + oB.height / 2) : (oB.x + oB.width / 2);
+      return pA - pB;
+    });
+
+    const faceLen = isLR ? nd.height : nd.width;
+    const step    = faceLen / (sorted.length + 1);
+    if (!portMap.has(nodeId)) portMap.set(nodeId, []);
+
+    sorted.forEach((fe, i) => {
+      const portId = `port-${nodeId}-${face}-${i}`;
+      const offset = step * (i + 1);
+      let px: number, py: number;
+      switch (face) {
+        case 'left':   px = 0;         py = offset; break;
+        case 'right':  px = nd.width;  py = offset; break;
+        case 'top':    px = offset;    py = 0;       break;
+        default:       px = offset;    py = nd.height; break;
+      }
+      portMap.get(nodeId)!.push({ id: portId, x: px, y: py });
+      edgePortMap.set(`${fe.eid}:${fe.role}`, portId);
+    });
+  }
+
+  const children: ElkNode[] = nodesList.map(n => {
+    const ports = portMap.get(n.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const node: ElkNode = { id: n.id, x: n.x, y: n.y, width: n.width, height: n.height } as any;
+    if (ports?.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (node as any).ports = ports.map(p => ({ id: p.id, x: p.x, y: p.y, width: 0, height: 0 }));
+      node.layoutOptions  = { 'elk.portConstraints': 'FIXED_POS' };
+    }
+    return node;
+  });
+
+  const edges: ElkExtendedEdge[] = edgesList.map(e => ({
+    id:      e.id,
+    sources: [edgePortMap.get(`${e.id}:src`) ?? e.source],
+    targets: [edgePortMap.get(`${e.id}:tgt`) ?? e.target],
+  }));
+
+  return { children, edges };
+}
+
 // ── Endpoint spreading ────────────────────────────────────────────────────────
 
 /**
@@ -165,11 +276,9 @@ export async function applyElkLayout(
 
   const topNodes = nodes.filter(n => !n.parentId);
   const topIds   = new Set(topNodes.map(n => n.id));
+  const style    = (n: Node) => n.style as Record<string, unknown> | undefined;
 
-  const style = (n: Node) => n.style as Record<string, unknown> | undefined;
-
-  // Pass current positions so the `fixed` algorithm keeps them.
-  const elkChildren: ElkNode[] = topNodes.map(n => ({
+  const nodesList: NodeInfo[] = topNodes.map(n => ({
     id:     n.id,
     width:  Number(style(n)?.['width']  ?? 172),
     height: Number(style(n)?.['height'] ?? 48),
@@ -177,10 +286,13 @@ export async function applyElkLayout(
     y:      n.position.y,
   }));
 
-  // Only include edges whose both endpoints are top-level nodes.
-  const elkEdges: ElkExtendedEdge[] = edges
+  const edgesList: EdgeInfo[] = edges
     .filter(e => topIds.has(e.source) && topIds.has(e.target))
-    .map(e => ({ id: e.id, sources: [e.source], targets: [e.target] }));
+    .map(e => ({ id: e.id, source: e.source, target: e.target }));
+
+  // assignPorts distributes edges with shared face into explicit FIXED_POS
+  // ports so ELK routes full diverging paths — not just the endpoint pixel.
+  const { children: elkChildren, edges: elkEdges } = assignPorts(nodesList, edgesList);
 
   const graph: ElkNode = {
     id:            'root',
@@ -192,10 +304,6 @@ export async function applyElkLayout(
   try {
     const laid = await elk.layout(graph);
 
-    // Extract ELK-computed routes per edge.
-    // Store [startPoint, ...bendPoints, endPoint] — the full attachment-to-attachment
-    // route.  ElkEdge prepends the React Flow source handle and appends the target
-    // handle so the complete rendered path is always axis-aligned.
     const edgeRoutes: ElkRouteMap = new Map();
     for (const e of (laid.edges ?? [])) {
       const section = e.sections?.[0];
@@ -207,8 +315,8 @@ export async function applyElkLayout(
       ]);
     }
 
-    spreadFaceEndpoints(edgeRoutes, elkChildren);
-    return { nodes, edgeRoutes };   // node positions unchanged
+    spreadFaceEndpoints(edgeRoutes, nodesList);
+    return { nodes, edgeRoutes };
   } catch (err) {
     console.error('[sysml-viz] ELK routing error:', err);
     return { nodes, edgeRoutes: empty };
@@ -441,14 +549,16 @@ export async function applyHierarchicalLayout(
 
   // ── Pass 2: ELK fixed — route all original edges ───────────────────────────
 
-  const elkRouteEdges: ElkExtendedEdge[] = edges
-    .filter(e => topIds.has(e.source) && topIds.has(e.target) && e.source !== e.target)
-    .map(e => ({ id: e.id, sources: [e.source], targets: [e.target] }));
-
-  const routeChildren: ElkNode[] = topNodes.map(n => {
+  const routeNodesList: NodeInfo[] = topNodes.map(n => {
     const pos = positionMap.get(n.id) ?? n.position;
     return { id: n.id, ...nodeSize(n), x: pos.x, y: pos.y };
   });
+
+  const routeEdgesList: EdgeInfo[] = edges
+    .filter(e => topIds.has(e.source) && topIds.has(e.target) && e.source !== e.target)
+    .map(e => ({ id: e.id, source: e.source, target: e.target }));
+
+  const { children: routeChildren, edges: elkRouteEdges } = assignPorts(routeNodesList, routeEdgesList);
 
   const edgeRoutes: ElkRouteMap = new Map();
 
@@ -474,6 +584,6 @@ export async function applyHierarchicalLayout(
     // Fall through — return positioned nodes with no waypoints.
   }
 
-  spreadFaceEndpoints(edgeRoutes, routeChildren);
+  spreadFaceEndpoints(edgeRoutes, routeNodesList);
   return { nodes: positioned, edgeRoutes };
 }
