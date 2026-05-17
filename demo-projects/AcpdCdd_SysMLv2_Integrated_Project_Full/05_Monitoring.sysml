@@ -35,8 +35,8 @@ package AcpdCdd_SysMLv2 {
             in attribute timestampOffset;
             out attribute result;
 
-            action entry;
-            first entry then ComputeInitialOffset;
+            action entryAction;
+            first entryAction then ComputeInitialOffset;
             attribute CompareWithCrosscheckBound_allows_ReturnTrueIfInRange : Boolean;
             attribute CompareWithCrosscheckBound_allows_ReturnFalseIfOutOfRange : Boolean;
             action ComputeInitialOffset;
@@ -49,8 +49,8 @@ package AcpdCdd_SysMLv2 {
             first ComputeInitialOffset then ComputeCurrentOffset;
             first ComputeCurrentOffset then ComputeOffsetDifference;
             first ComputeOffsetDifference then CompareWithCrosscheckBound;
-            first CompareWithCrosscheckBound if CompareWithCrosscheckBound_allows_ReturnTrueIfInRange then ReturnTrueIfInRange;
-            first CompareWithCrosscheckBound if CompareWithCrosscheckBound_allows_ReturnFalseIfOutOfRange then ReturnFalseIfOutOfRange;
+            first CompareWithCrosscheckBound then ReturnTrueIfInRange;
+            first CompareWithCrosscheckBound then ReturnFalseIfOutOfRange;
         }
 
         // trlc-satisfies: 28710924
@@ -63,8 +63,8 @@ package AcpdCdd_SysMLv2 {
             in item InputData : InputDataType;
             out item ErrorCounters : AcpdCddCheckErrorCountersType;
 
-            action entry;
-            first entry then InitializeErrorCounters;
+            action entryAction;
+            first entryAction then InitializeErrorCounters;
             action InitializeErrorCounters;
             action IterateAdcUpdateCycleCount;
             action ComputeGroup0TimestampDelta;
@@ -98,8 +98,8 @@ package AcpdCdd_SysMLv2 {
             in item InputData : InputDataType;
             out item ErrorCounters : AcpdCddCheckErrorCountersType;
 
-            action entry;
-            first entry then InitializeMissingDataCounters;
+            action entryAction;
+            first entryAction then InitializeMissingDataCounters;
             action InitializeMissingDataCounters;
             action IterateSensor0Data;
             action IterateSensor1Data;
@@ -128,8 +128,8 @@ package AcpdCdd_SysMLv2 {
         action def AcpdCdd_DeviationCheck {
             in item ProcessedData : ChannelMeansType;
 
-            action entry;
-            first entry then SelectSensor0MissionAndMonitoringMeans;
+            action entryAction;
+            first entryAction then SelectSensor0MissionAndMonitoringMeans;
             action SelectSensor0MissionAndMonitoringMeans;
             action ComputeSensor0AcceptableInterval;
             action CheckSensor0MonitoringWithinInterval;
@@ -154,8 +154,8 @@ package AcpdCdd_SysMLv2 {
 
         action def ResultPlausibilityCheck {
 
-            action entry;
-            first entry then CheckSensor0VoltageLowerBound;
+            action entryAction;
+            first entryAction then CheckSensor0VoltageLowerBound;
             action CheckSensor0VoltageLowerBound;
             action ClampSensor0ToZeroAndSetErrorIfBelow;
             action CheckSensor0VoltageUpperBound;
@@ -178,8 +178,8 @@ package AcpdCdd_SysMLv2 {
         // trlc-satisfies: 28883920
         action def SupplyVoltageCheck {
 
-            action entry;
-            first entry then CheckSupply1LowOrHighBound;
+            action entryAction;
+            first entryAction then CheckSupply1LowOrHighBound;
             action CheckSupply1LowOrHighBound;
             action SetSensor1AndSupply1QualifierErrorIfOutOfRange;
             action CheckSupply2LowOrHighBound;
@@ -193,8 +193,8 @@ package AcpdCdd_SysMLv2 {
         // trlc-satisfies: 25188589
         action def PowerStateVsQualifiers {
 
-            action entry;
-            first entry then CheckPowerStateOff;
+            action entryAction;
+            first entryAction then CheckPowerStateOff;
             attribute CheckPowerStateOff_allows_CheckSwitchToOn : Boolean;
             attribute CheckPowerStateOff_allows_CheckSwitchToOff : Boolean;
             attribute CheckPowerStateOn_allows_CheckSwitchToOn : Boolean;
@@ -208,21 +208,21 @@ package AcpdCdd_SysMLv2 {
             action SetAllQualifiersNotAvailable;
             action ApplyStableOnChecks;
 
-            first CheckPowerStateOff if CheckPowerStateOff_allows_CheckSwitchToOn then CheckSwitchToOn;
+            first CheckPowerStateOff then CheckSwitchToOn;
             first CheckSwitchToOn then SetAllQualifiersInit;
-            first CheckPowerStateOff if CheckPowerStateOff_allows_CheckSwitchToOff then CheckSwitchToOff;
+            first CheckPowerStateOff then CheckSwitchToOff;
             first CheckSwitchToOff then SetAllQualifiersNotAvailable;
-            first CheckPowerStateOn if CheckPowerStateOn_allows_CheckSwitchToOn then CheckSwitchToOn;
-            first CheckPowerStateOn if CheckPowerStateOn_allows_CheckSwitchToOff then CheckSwitchToOff;
-            first CheckPowerStateOn if CheckPowerStateOn_allows_ApplyStableOnChecks then ApplyStableOnChecks;
+            first CheckPowerStateOn then CheckSwitchToOn;
+            first CheckPowerStateOn then CheckSwitchToOff;
+            first CheckPowerStateOn then ApplyStableOnChecks;
         }
 
         // trlc-satisfies: 30477411
         // trlc-satisfies: 30477478
         action def ADC_Error_Callbacks {
 
-            action entry;
-            first entry then AcpdCdd_IncrementAdcConvErrGroup0;
+            action entryAction;
+            first entryAction then AcpdCdd_IncrementAdcConvErrGroup0;
             action AcpdCdd_IncrementAdcConvErrGroup0;
             action AcpdCdd_IncrementAdcConvErrGroup1;
             action AcpdCdd_IncrementAdcConvErrSupply;
@@ -254,8 +254,8 @@ package AcpdCdd_SysMLv2 {
             out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
 
             // trlc-satisfies: 25094047
-            action entry;
-            first entry then InitializeQualifiersFromProcessedData;
+            action entryAction;
+            first entryAction then InitializeQualifiersFromProcessedData;
             action InitializeQualifiersFromProcessedData;
             action AcpdCdd_MissingDataCheck;
             action AcpdCdd_CheckTimestamps;
@@ -281,8 +281,8 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Monitoring_Behavior {
-            action entry;
-            first entry then AcpdCdd_Monitoring;
+            action entryAction;
+            first entryAction then AcpdCdd_Monitoring;
             action AcpdCdd_Monitoring;
             action AcpdCdd_MissingDataCheck;
             action AcpdCdd_CheckTimestamps;
@@ -325,8 +325,8 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_Monitoring_Sequence_AsActionFlow {
 
-            action entry;
-            first entry then MonitoringReceivesProcessedData;
+            action entryAction;
+            first entryAction then MonitoringReceivesProcessedData;
             action MonitoringReceivesProcessedData;
             action MonitoringReceivesPowerStatus;
 

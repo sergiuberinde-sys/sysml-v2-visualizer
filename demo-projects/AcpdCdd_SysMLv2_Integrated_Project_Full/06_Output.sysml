@@ -20,10 +20,10 @@ package AcpdCdd_SysMLv2 {
             in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
             out item RteData : tAcpdCdd_rc_AccrSnsr;
 
-            action entry {
+            action entryAction {
                 out item acceleratorData : tAcpdCdd_rc_AccrSnsr;
             }
-            first entry then CheckAcceleratorDataPointer;
+            first entryAction then CheckAcceleratorDataPointer;
             action CheckAcceleratorDataPointer {
                 in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
                 out item validAcceleratorData : tAcpdCdd_rc_AccrSnsr;
@@ -56,9 +56,9 @@ package AcpdCdd_SysMLv2 {
             action Return;
 
             flow from acceleratorData to entry.acceleratorData;
-            flow from entry.acceleratorData to CheckAcceleratorDataPointer.acceleratorData;
-            first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer_allows_ConvertAcpdCddDataTypeToRteType then ConvertAcpdCddDataTypeToRteType;
-            first CheckAcceleratorDataPointer if CheckAcceleratorDataPointer_allows_UseDefaultErrorValuesIfNull then UseDefaultErrorValuesIfNull;
+            flow from entryAction.acceleratorData to CheckAcceleratorDataPointer.acceleratorData;
+            first CheckAcceleratorDataPointer then ConvertAcpdCddDataTypeToRteType;
+            first CheckAcceleratorDataPointer then UseDefaultErrorValuesIfNull;
             flow from CheckAcceleratorDataPointer.validAcceleratorData to ConvertAcpdCddDataTypeToRteType.validAcceleratorData;
             flow from CheckAcceleratorDataPointer.invalidAcceleratorData to UseDefaultErrorValuesIfNull.invalidAcceleratorData;
             first ConvertAcpdCddDataTypeToRteType then CopySensor1Data;
@@ -76,8 +76,8 @@ package AcpdCdd_SysMLv2 {
         }
         action def AcpdCdd_Output_Behavior {
 
-            action entry;
-            first entry then ReceiveAcceleratorData;
+            action entryAction;
+            first entryAction then ReceiveAcceleratorData;
             attribute ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput : Boolean;
             attribute ReceiveAcceleratorData_allows_WriteSafeDefaultOutput : Boolean;
             action ReceiveAcceleratorData;
@@ -85,8 +85,8 @@ package AcpdCdd_SysMLv2 {
             action WriteSafeDefaultOutput;
             action WriteRteOutput;
 
-            first ReceiveAcceleratorData if ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput then AcpdCdd_UpdateOutput;
-            first ReceiveAcceleratorData if ReceiveAcceleratorData_allows_WriteSafeDefaultOutput then WriteSafeDefaultOutput;
+            first ReceiveAcceleratorData then AcpdCdd_UpdateOutput;
+            first ReceiveAcceleratorData then WriteSafeDefaultOutput;
             first AcpdCdd_UpdateOutput then WriteRteOutput;
             first WriteSafeDefaultOutput then WriteRteOutput;
         }
@@ -101,8 +101,8 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_Output_Sequence_AsActionFlow {
 
-            action entry;
-            first entry then OutputReceivesAcceleratorData;
+            action entryAction;
+            first entryAction then OutputReceivesAcceleratorData;
             attribute OutputReceivesAcceleratorData_allows_OutputPreparesRteData : Boolean;
             attribute OutputReceivesAcceleratorData_allows_OutputRequestsSafeDefaultTransmission : Boolean;
             action OutputReceivesAcceleratorData;
@@ -113,8 +113,8 @@ package AcpdCdd_SysMLv2 {
             action RtePublishesOutputData;
 
             first OutputReceivesAcceleratorData then OutputReceivesMonitoringStatus;
-            first OutputReceivesMonitoringStatus if OutputReceivesAcceleratorData_allows_OutputPreparesRteData then OutputPreparesRteData;
-            first OutputReceivesMonitoringStatus if OutputReceivesAcceleratorData_allows_OutputRequestsSafeDefaultTransmission then OutputRequestsSafeDefaultTransmission;
+            first OutputReceivesMonitoringStatus then OutputPreparesRteData;
+            first OutputReceivesMonitoringStatus then OutputRequestsSafeDefaultTransmission;
             first OutputPreparesRteData then OutputRequestsRteTransmission;
             first OutputRequestsSafeDefaultTransmission then OutputRequestsRteTransmission;
             first OutputRequestsRteTransmission then RtePublishesOutputData;

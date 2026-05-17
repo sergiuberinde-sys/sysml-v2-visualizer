@@ -152,13 +152,9 @@ package AcpdCdd_SysMLv2 {
             first CopyRingBufferOldestToNewest then EvaluateUpdateCounter;
 
             // Decision: if the ring buffer does not contain enough updates, pad with invalid entries.
-            first EvaluateUpdateCounter
-                if EvaluateUpdateCounter.counterState.missingEntriesDetected
-                then SetMissingEntriesToInvalidInputVoltage;
+            first EvaluateUpdateCounter then SetMissingEntriesToInvalidInputVoltage;
 
-            first EvaluateUpdateCounter
-                if not EvaluateUpdateCounter.counterState.missingEntriesDetected
-                then ReturnBuffer;
+            first EvaluateUpdateCounter then ReturnBuffer;
 
             first SetMissingEntriesToInvalidInputVoltage then ReturnBuffer;
             first ReturnBuffer then DecrementUpdateCounter;
@@ -331,13 +327,9 @@ package AcpdCdd_SysMLv2 {
             flow from GetGroup0SampleFromAdc.group0Sample to ValidateSampleCountPointerAndRange.group0Sample;
 
             // Decision: received Group0 sample is usable?
-            first ValidateSampleCountPointerAndRange
-                if ValidateSampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid
-                then UseActualGroup0Sample;
+            first ValidateSampleCountPointerAndRange then UseActualGroup0Sample;
 
-            first ValidateSampleCountPointerAndRange
-                if not ValidateSampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid
-                then UseInvalidGroup0Sample;
+            first ValidateSampleCountPointerAndRange then UseInvalidGroup0Sample;
 
             flow from GetGroup0SampleFromAdc.group0Sample to UseActualGroup0Sample.group0Sample;
 
@@ -347,13 +339,9 @@ package AcpdCdd_SysMLv2 {
             flow from Entry.groupDataEntryPair to CheckOldGroup0Cache.groupDataEntryPair;
 
             // Decision: a previous unpaired Group0 sample already exists?
-            first CheckOldGroup0Cache
-                if CheckOldGroup0Cache.cacheState.oldGroup0CacheFilled
-                then PushOldGroup0WithInvalidGroup1IfNeeded;
+            first CheckOldGroup0Cache then PushOldGroup0WithInvalidGroup1IfNeeded;
 
-            first CheckOldGroup0Cache
-                if not CheckOldGroup0Cache.cacheState.oldGroup0CacheFilled
-                then CacheNewGroup0Sample;
+            first CheckOldGroup0Cache then CacheNewGroup0Sample;
 
             flow from Entry.groupDataEntryPair to PushOldGroup0WithInvalidGroup1IfNeeded.groupDataEntryPair;
             flow from Entry.groupDataEntryPair to CacheNewGroup0Sample.groupDataEntryPair;
@@ -371,13 +359,9 @@ package AcpdCdd_SysMLv2 {
             flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to CheckBothGroup0AndGroup1Filled.groupDataEntryPair;
 
             // Decision: Group0 and Group1 now form a complete pair?
-            first CheckBothGroup0AndGroup1Filled
-                if CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled
-                then WriteConsistentPairToRingBuffer;
+            first CheckBothGroup0AndGroup1Filled then WriteConsistentPairToRingBuffer;
 
-            first CheckBothGroup0AndGroup1Filled
-                if not CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled
-                then KeepPartialPairCached;
+            first CheckBothGroup0AndGroup1Filled then KeepPartialPairCached;
 
             flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to WriteConsistentPairToRingBuffer.groupDataEntryPair;
             flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to KeepPartialPairCached.groupDataEntryPair;
@@ -469,13 +453,9 @@ package AcpdCdd_SysMLv2 {
             flow from groupDataEntryPair to Entry.groupDataEntryPair;
             flow from Entry.adcGroup1Sample to ValidateGroup1SampleCountPointerAndRange.group1Sample;
 
-            first ValidateGroup1SampleCountPointerAndRange
-                if ValidateGroup1SampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid
-                then UseActualGroup1Sample;
+            first ValidateGroup1SampleCountPointerAndRange then UseActualGroup1Sample;
 
-            first ValidateGroup1SampleCountPointerAndRange
-                if not ValidateGroup1SampleCountPointerAndRange.validationResult.sampleCountPointerAndRangeValid
-                then UseInvalidGroup1Sample;
+            first ValidateGroup1SampleCountPointerAndRange then UseInvalidGroup1Sample;
 
             flow from Entry.adcGroup1Sample to UseActualGroup1Sample.group1Sample;
 
@@ -483,13 +463,9 @@ package AcpdCdd_SysMLv2 {
             first UseInvalidGroup1Sample then CheckOldGroup1Cache;
             flow from Entry.groupDataEntryPair to CheckOldGroup1Cache.groupDataEntryPair;
 
-            first CheckOldGroup1Cache
-                if CheckOldGroup1Cache.cacheState.oldGroup1CacheFilled
-                then PushOldGroup1WithInvalidGroup0IfNeeded;
+            first CheckOldGroup1Cache then PushOldGroup1WithInvalidGroup0IfNeeded;
 
-            first CheckOldGroup1Cache
-                if not CheckOldGroup1Cache.cacheState.oldGroup1CacheFilled
-                then CacheNewGroup1Sample;
+            first CheckOldGroup1Cache then CacheNewGroup1Sample;
 
             flow from Entry.groupDataEntryPair to PushOldGroup1WithInvalidGroup0IfNeeded.groupDataEntryPair;
             flow from Entry.groupDataEntryPair to CacheNewGroup1Sample.groupDataEntryPair;
@@ -505,13 +481,9 @@ package AcpdCdd_SysMLv2 {
             first SetIsGroup1FilledTrue then CheckBothGroup0AndGroup1Filled;
             flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to CheckBothGroup0AndGroup1Filled.groupDataEntryPair;
 
-            first CheckBothGroup0AndGroup1Filled
-                if CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled
-                then WriteConsistentPairToRingBuffer;
+            first CheckBothGroup0AndGroup1Filled then WriteConsistentPairToRingBuffer;
 
-            first CheckBothGroup0AndGroup1Filled
-                if not CheckBothGroup0AndGroup1Filled.pairState.bothGroup0AndGroup1Filled
-                then KeepPartialPairCached;
+            first CheckBothGroup0AndGroup1Filled then KeepPartialPairCached;
 
             flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to WriteConsistentPairToRingBuffer.groupDataEntryPair;
             flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to KeepPartialPairCached.groupDataEntryPair;
@@ -568,13 +540,9 @@ package AcpdCdd_SysMLv2 {
             flow from supplyData to Entry.supplyData;
             flow from Entry.adcSupplySample to ValidateSupplySample.supplySample;
 
-            first ValidateSupplySample
-                if ValidateSupplySample.validationResult.supplySampleValid
-                then UseActualSupplySample;
+            first ValidateSupplySample then UseActualSupplySample;
 
-            first ValidateSupplySample
-                if not ValidateSupplySample.validationResult.supplySampleValid
-                then UseInvalidSupplySample;
+            first ValidateSupplySample then UseInvalidSupplySample;
 
             flow from Entry.adcSupplySample to UseActualSupplySample.supplySample;
 
@@ -667,13 +635,9 @@ package AcpdCdd_SysMLv2 {
             first MapGroup0Group1SupplyToSensor1Data then MapTimestamps;
             first MapTimestamps then ValidateCollectedInputData;
 
-            first ValidateCollectedInputData
-                if ValidateCollectedInputData.validationResult.collectedInputDataValid
-                then ReturnValidInputData;
+            first ValidateCollectedInputData then ReturnValidInputData;
 
-            first ValidateCollectedInputData
-                if not ValidateCollectedInputData.validationResult.collectedInputDataValid
-                then ReturnDegradedInputData;
+            first ValidateCollectedInputData then ReturnDegradedInputData;
 
             first ReturnValidInputData then ReturnInputData;
             first ReturnDegradedInputData then ReturnInputData;
@@ -702,8 +666,8 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_Input_Behavior {
 
-            action entry;
-            first entry then AcpdCdd_StartInputCollector;
+            action entryAction;
+            first entryAction then AcpdCdd_StartInputCollector;
             action AcpdCdd_StartInputCollector;
             action AcpdCdd_AdcGroup0NewData;
             action AcpdCdd_AdcGroup1NewData;
@@ -726,8 +690,8 @@ package AcpdCdd_SysMLv2 {
             in item adcNotification : AdcNotificationPayloadType;
             out item inputData : InputDataType;
 
-            action entry;
-            first entry then receiveAdcNotification;
+            action entryAction;
+            first entryAction then receiveAdcNotification;
             action receiveAdcNotification {
                 out item notification : AdcNotificationPayloadType;
             }
@@ -789,13 +753,9 @@ package AcpdCdd_SysMLv2 {
             }
 
             // Decision: notification available?
-            first receiveAdcNotification
-                if receiveAdcNotification.notification.notificationArrived
-                then decodeAdcGroups;
+            first receiveAdcNotification then decodeAdcGroups;
 
-            first receiveAdcNotification
-                if not receiveAdcNotification.notification.notificationArrived
-                then incrementMissingNotificationCounter;
+            first receiveAdcNotification then incrementMissingNotificationCounter;
 
             first incrementMissingNotificationCounter then keepPreviousInputBuffer;
             first keepPreviousInputBuffer then setMissingNotificationQualifier;
@@ -804,13 +764,9 @@ package AcpdCdd_SysMLv2 {
             flow from keepPreviousInputBuffer.fallbackInputData to setMissingNotificationQualifier.fallbackInputData;
 
             // Decision: timestamp fresh?
-            first decodeAdcGroups
-                if decodeAdcGroups.decodedInputData.timestampFresh
-                then validateTimestamp;
+            first decodeAdcGroups then validateTimestamp;
 
-            first decodeAdcGroups
-                if not decodeAdcGroups.decodedInputData.timestampFresh
-                then markNotificationStale;
+            first decodeAdcGroups then markNotificationStale;
 
             flow from decodeAdcGroups.decodedInputData to validateTimestamp.decodedInputData;
             flow from decodeAdcGroups.decodedInputData to markNotificationStale.decodedInputData;
@@ -825,30 +781,20 @@ package AcpdCdd_SysMLv2 {
             flow from validateTimestamp.timestampCheckedInputData to validateSupplySample.inputData;
 
             // Decisions after independent checks.
-            first validateGroup0Sample
-                if not validateGroup0Sample.group0CheckedInputData.group0SampleValid
-                then setGroup0InvalidQualifier;
+            first validateGroup0Sample then setGroup0InvalidQualifier;
 
-            first validateGroup1Sample
-                if not validateGroup1Sample.group1CheckedInputData.group1SampleValid
-                then setGroup1InvalidQualifier;
+            first validateGroup1Sample then setGroup1InvalidQualifier;
 
-            first validateSupplySample
-                if not validateSupplySample.supplyCheckedInputData.supplySampleValid
-                then setSupplyInvalidQualifier;
+            first validateSupplySample then setSupplyInvalidQualifier;
 
             // Join-style convergence before plausibility check.
             first validateGroup0Sample then validateSensorPairPlausibility;
             first validateGroup1Sample then validateSensorPairPlausibility;
             first validateSupplySample then validateSensorPairPlausibility;
 
-            first validateSensorPairPlausibility
-                if validateSensorPairPlausibility.plausibilityCheckedInputData.sensorPairPlausible
-                then composeValidInputData;
+            first validateSensorPairPlausibility then composeValidInputData;
 
-            first validateSensorPairPlausibility
-                if not validateSensorPairPlausibility.plausibilityCheckedInputData.sensorPairPlausible
-                then setSensorPairImplausibleQualifier;
+            first validateSensorPairPlausibility then setSensorPairImplausibleQualifier;
 
             first setSensorPairImplausibleQualifier then composeFallbackInputData;
             first markNotificationStale then composeFallbackInputData;
@@ -886,8 +832,8 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_Input_Sequence_AsActionFlow {
 
-            action entry;
-            first entry then InputInitializesAdcGroupData;
+            action entryAction;
+            first entryAction then InputInitializesAdcGroupData;
             action InputInitializesAdcGroupData;
             action InputAddsAdcGroupDataEntry;
             action InputRequestsStoredAdcGroupData;

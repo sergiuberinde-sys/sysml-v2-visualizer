@@ -13,8 +13,8 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_StartProcessing {
-            action entry;
-            first entry then InitializeProcessWithDefault;
+            action entryAction;
+            first entryAction then InitializeProcessWithDefault;
             action InitializeProcessWithDefault;
             action SetProcessingReady;
             first InitializeProcessWithDefault then SetProcessingReady;
@@ -25,10 +25,10 @@ package AcpdCdd_SysMLv2 {
             in item InputData : InputDataType;
             out item ProcessedData : ChannelMeansType;
 
-            action entry {
+            action entryAction {
                 out item InputData : InputDataType;
             }
-            first entry then CheckInputDataPointer;
+            first entryAction then CheckInputDataPointer;
 
             action CheckInputDataPointer {
                 in item InputData : InputDataType;
@@ -73,10 +73,10 @@ package AcpdCdd_SysMLv2 {
             }
 
             flow from InputData to entry.InputData;
-            flow from entry.InputData to CheckInputDataPointer.InputData;
+            flow from entryAction.InputData to CheckInputDataPointer.InputData;
 
-            first CheckInputDataPointer if CheckInputDataPointer_allows_FetchSensorBuffers then FetchSensorBuffers;
-            first CheckInputDataPointer if CheckInputDataPointer_allows_UseDefaultProcessedData then UseDefaultProcessedData;
+            first CheckInputDataPointer then FetchSensorBuffers;
+            first CheckInputDataPointer then UseDefaultProcessedData;
 
             flow from CheckInputDataPointer.checkedInputData to FetchSensorBuffers.InputData;
             flow from CheckInputDataPointer.invalidInputData to UseDefaultProcessedData.invalidInputData;
@@ -101,8 +101,8 @@ package AcpdCdd_SysMLv2 {
         }
 
         action def AcpdCdd_Process_Behavior {
-            action entry;
-            first entry then AcpdCdd_StartProcessing;
+            action entryAction;
+            first entryAction then AcpdCdd_StartProcessing;
             attribute StartProcessing_allows_ProcessCycle : Boolean;
             attribute StartProcessing_allows_StopProcessing : Boolean;
             action AcpdCdd_StartProcessing;
@@ -110,8 +110,8 @@ package AcpdCdd_SysMLv2 {
             action StopProcessing;
             action Return;
 
-            first AcpdCdd_StartProcessing if StartProcessing_allows_ProcessCycle then AcpdCdd_Process;
-            first AcpdCdd_StartProcessing if StartProcessing_allows_StopProcessing then StopProcessing;
+            first AcpdCdd_StartProcessing then AcpdCdd_Process;
+            first AcpdCdd_StartProcessing then StopProcessing;
             first AcpdCdd_Process then Return;
             first StopProcessing then Return;
         }
@@ -127,8 +127,8 @@ package AcpdCdd_SysMLv2 {
 
         action def AcpdCdd_Process_Sequence_AsActionFlow {
 
-            action entry;
-            first entry then ProcessReceivesInputData;
+            action entryAction;
+            first entryAction then ProcessReceivesInputData;
             attribute ProcessReceivesInputData_allows_ProcessCalculatesAcceleratorPosition : Boolean;
             attribute ProcessReceivesInputData_allows_ProcessPublishesDefaultProcessedData : Boolean;
             action ProcessReceivesInputData;
@@ -137,8 +137,8 @@ package AcpdCdd_SysMLv2 {
             action ProcessPublishesDefaultProcessedData;
             action ProcessPublishesProcessedData;
 
-            first ProcessReceivesInputData if ProcessReceivesInputData_allows_ProcessCalculatesAcceleratorPosition then ProcessCalculatesAcceleratorPosition;
-            first ProcessReceivesInputData if ProcessReceivesInputData_allows_ProcessPublishesDefaultProcessedData then ProcessPublishesDefaultProcessedData;
+            first ProcessReceivesInputData then ProcessCalculatesAcceleratorPosition;
+            first ProcessReceivesInputData then ProcessPublishesDefaultProcessedData;
             first ProcessCalculatesAcceleratorPosition then ProcessGeneratesProcessedData;
             first ProcessGeneratesProcessedData then ProcessPublishesProcessedData;
             first ProcessPublishesDefaultProcessedData then ProcessPublishesProcessedData;
