@@ -295,13 +295,13 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
 
   // Drag support
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
-  const [fitMode, setFitMode] = useState(false);
+  const [resetVersion, setResetVersion] = useState(0);
 
   useEffect(() => {
-    // When the model changes, reset to computed positions (preserving nothing).
+    // When the model or resetVersion changes, reset to computed positions.
     setDisplayNodes(rfNodes);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseNodes]);
+  }, [baseNodes, resetVersion]);
 
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     setDisplayNodes(prev => applyNodeChanges(changes, prev));
@@ -336,15 +336,10 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
         onNodesChange={handleNodesChange}
         fitView
         fitViewOptions={{ padding: 0.25 }}
-        nodesDraggable={!fitMode}
-        panOnDrag={!fitMode}
-        zoomOnScroll={!fitMode}
-        zoomOnPinch={!fitMode}
-        zoomOnDoubleClick={!fitMode}
       >
         <Background color="#0a0a1e" gap={24} />
         <Controls showFitView={false} />
-        <FitPanel padding={0.25} active={fitMode} onToggle={() => setFitMode(v => !v)} />
+        <FitPanel padding={0.25} onReset={() => setResetVersion(v => v + 1)} />
       </ReactFlow>
     </div>
   );

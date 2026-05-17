@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
   type Node, type Edge,
@@ -203,7 +203,6 @@ interface Props {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function StateView({ result, stateMachineName, selection, onSelect }: Props) {
-  const [fitMode, setFitMode] = useState(false);
 
   const sm = useMemo(
     () => result.nodes.find(
@@ -286,15 +285,10 @@ export default function StateView({ result, stateMachineName, selection, onSelec
         onEdgeClick={handleEdgeClick}
         fitView
         fitViewOptions={{ padding: 0.2 }}
-        nodesDraggable={!fitMode}
-        panOnDrag={!fitMode}
-        zoomOnScroll={!fitMode}
-        zoomOnPinch={!fitMode}
-        zoomOnDoubleClick={!fitMode}
       >
         <Background color="#0a1e1e" gap={24} />
         <Controls showFitView={false} />
-        <FitPanel padding={0.2} active={fitMode} onToggle={() => setFitMode(v => !v)} />
+        <FitPanel padding={0.2} />
       </ReactFlow>
     </div>
   );

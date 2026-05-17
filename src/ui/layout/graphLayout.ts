@@ -587,3 +587,45 @@ export async function applyHierarchicalLayout(
   spreadFaceEndpoints(edgeRoutes, routeNodesList);
   return { nodes: positioned, edgeRoutes };
 }
+
+// ── Actions view layout ───────────────────────────────────────────────────────
+
+/**
+ * ELK `layered` layout for the Actions view.
+ *
+ * Flat graph — no hierarchy, no edge routing waypoints.  Only node
+ * (x, y) positions are returned; React Flow renders edges natively.
+ *
+ * LAYER_SWEEP crossing minimisation + BRANDES_KOEPF node placement give a
+ * clean top-to-bottom activity-diagram style with minimal edge crossings.
+ */
+export async function applyBehaviorLayout(
+  nodes: Array<{ id: string; width: number; height: number }>,
+  edges: Array<{ id: string; source: string; target: string }>,
+): Promise<Map<string, { x: number; y: number }>> {
+  if (!nodes.length) return new Map();
+  const nodeSet = new Set(nodes.map(n => n.id));
+  const graph: ElkNode = {
+    id: 'behavior-root',
+    layoutOptions: {
+      'elk.algorithm':                             'layered',
+      'elk.direction':                             'DOWN',
+      'elk.edgeRouting':                           'ORTHOGONAL',
+      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+      'elk.layered.nodePlacement.strategy':        'BRANDES_KOEPF',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '80',
+      'elk.spacing.nodeNode':                      '48',
+      'elk.padding':                               '[top=40,left=40,bottom=40,right=40]',
+    },
+    children: nodes.map(n => ({ id: n.id, x: 0, y: 0, width: n.width, height: n.height })),
+    edges: edges
+      .filter(e => nodeSet.has(e.source) && nodeSet.has(e.target))
+      .map(e => ({ id: e.id, sources: [e.source], targets: [e.target] })),
+  };
+  const result = await elk.layout(graph);
+  const positions = new Map<string, { x: number; y: number }>();
+  for (const child of result.children ?? []) {
+    positions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
+  }
+  return positions;
+}

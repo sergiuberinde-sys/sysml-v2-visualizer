@@ -272,7 +272,7 @@ const TAB_LABELS: Record<ViewTab, string> = {
   structure:    'Structure',
   flow:         'Flow',
   sequence:     'Sequence',
-  behavior:     'Behavior',
+  behavior:     'Actions',
   state:        'State',
   requirements: 'Reqts',
   traceability: 'Trace',
@@ -1262,14 +1262,28 @@ export default function App() {
                   Parser service not available. Check endpoint: {serviceEndpoint}
                 </span>
               )}
-              {!officialParseLoading && officialParseResult && officialParseResult.error !== 'SERVICE_UNAVAILABLE' && (
-                <span style={{ color: officialParseResult.success ? '#4ade80' : '#fb923c' }}>
-                  {officialParseResult.success
-                    ? 'Parsed successfully.'
-                    : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported.`}
-                  {officialParseResult.error && ` (${officialParseResult.error})`}
-                </span>
-              )}
+              {!officialParseLoading && officialParseResult && officialParseResult.error !== 'SERVICE_UNAVAILABLE' && (() => {
+                const hasData = !!(officialParseResult.graph?.nodes?.length || officialParseResult.behavior?.actions?.length);
+                const unresolvedCount = officialParseResult.diagnostics.filter(
+                  d => d.severity === 'error' && d.message.includes("Couldn't resolve reference"),
+                ).length;
+                const realErrorCount = officialParseResult.diagnostics.filter(
+                  d => d.severity === 'error' && !d.message.includes("Couldn't resolve reference"),
+                ).length;
+                const onlyUnresolvedRefs = !officialParseResult.success && hasData && realErrorCount === 0;
+                const color = officialParseResult.success ? '#4ade80' : onlyUnresolvedRefs ? '#facc15' : '#fb923c';
+                const message = officialParseResult.success
+                  ? 'Parsed successfully.'
+                  : onlyUnresolvedRefs
+                    ? `Parsed — ${unresolvedCount} unresolved import(s) (cross-file references not available in standalone mode).`
+                    : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported.`;
+                return (
+                  <span style={{ color }}>
+                    {message}
+                    {officialParseResult.error && ` (${officialParseResult.error})`}
+                  </span>
+                );
+              })()}
             </div>
             <ErrorBoundary label="Structure view error">
               {tab === 'structure' && (
