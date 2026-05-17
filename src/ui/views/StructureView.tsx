@@ -409,6 +409,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   const [displayEdges,   setDisplayEdges]   = useState<Edge[]>([]);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
   const [focusedNodeId,  setFocusedNodeId]  = useState<string | null>(null);
+  const [resetVersion,   setResetVersion]   = useState(0);
 
   // nodeTypes / edgeTypes are stable references
   const nodeTypes = useMemo(() => ({ sysmlPart: SysmlPartNode }), []);
@@ -1159,7 +1160,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredNodes, filteredEdges]);
+  }, [filteredNodes, filteredEdges, resetVersion]);
 
   // ── Drag handler ──────────────────────────────────────────────────────────────
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
@@ -1263,7 +1264,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         >
           <Background color="#2a2a3a" gap={24} />
           <Controls />
-          <FitPanel autoFitVersion={autoFitVersion} />
+          <FitPanel autoFitVersion={autoFitVersion} onReset={() => setResetVersion(v => v + 1)} />
           <Panel position="top-left">
             <select
               value={focusedNodeId ?? ''}

@@ -50,19 +50,38 @@ interface OwnerCtx { name: string; type: string; }
 
 // ── Guard extraction (TransitionUsage) ────────────────────────────────────────
 
+// EMF node types that represent boolean negation (if not <expr>).
+const NEGATION_TYPES = new Set(['InvertingExpression', 'OperatorExpression', 'UnaryExpression']);
+
+/**
+ * Recursively search for a FeatureReferenceExpression under `node`, returning
+ * { name, negated } where negated=true if the FRE is wrapped in a negation node.
+ */
+function findFRE(node: ModelNode, parentIsNegation: boolean): { name: string; negated: boolean } | undefined {
+  if (node.type === 'FeatureReferenceExpression') {
+    const m = node.children.find(c => c.type === 'Membership');
+    if (m?.name) return { name: m.name, negated: parentIsNegation };
+  }
+  const isNeg = NEGATION_TYPES.has(node.type) || (node.type === 'OperatorExpression' && node.name === 'not');
+  for (const child of node.children) {
+    const result = findFRE(child, parentIsNegation || isNeg);
+    if (result) return result;
+  }
+  return undefined;
+}
+
 /**
  * Extract the guard feature name from a TransitionFeatureMembership child.
- * Supports FeatureReferenceExpression and LiteralBoolean guards.
+ * Supports FeatureReferenceExpression, negated expressions (if not guard), and LiteralBoolean.
  */
 function extractGuardName(transitionNode: ModelNode): string | undefined {
   const tfm = transitionNode.children.find(c => c.type === 'TransitionFeatureMembership');
   if (!tfm) return undefined;
 
-  // FeatureReferenceExpression → Membership (cross-ref resolved to feature name)
-  const fre = tfm.children.find(c => c.type === 'FeatureReferenceExpression');
-  if (fre) {
-    const m = fre.children.find(c => c.type === 'Membership');
-    if (m?.name) return m.name;
+  // Search recursively for FeatureReferenceExpression (handles plain and negated guards).
+  for (const child of tfm.children) {
+    const result = findFRE(child, false);
+    if (result) return result.negated ? `not ${result.name}` : result.name;
   }
 
   // LiteralBoolean (e.g. if true then …)
