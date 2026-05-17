@@ -486,19 +486,35 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(cmd);
 
   // ── Go-to-definition (F12) ────────────────────────────────────────────────────
+  //
+  // Text-based search across all workspace .sysml files.
+  // Looks for `<kw> def Word` or `package Word` patterns; no parser needed.
+  // Current file is searched first so same-file defs are instant.
 
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider({ language: 'sysml' }, {
-      provideDefinition(document, position) {
+      async provideDefinition(document, position) {
         if (!document.fileName.endsWith('.sysml')) return;
-        const analysis = analyzeSysML(document.getText());
-        const element  = getSymbolAtPosition(analysis, position.line + 1, position.character + 1);
-        if (!element) return;
-        const def = getDefinitionForSymbol(analysis, element);
-        if (!def) return;
-        const line = def.sourceLocation.line - 1;
-        const col  = 0;
-        return new vscode.Location(document.uri, new vscode.Position(line, col));
+
+        const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
+        if (!wordRange) return;
+        const word = document.getText(wordRange);
+        if (!word || SYSML_KEYWORDS.has(word)) return;
+
+        // Current file first.
+        const local = findSysMLDefinition(document.getText(), word, document.uri);
+        if (local) return local;
+
+        // Remaining workspace files.
+        const all = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+        for (const uri of all) {
+          if (uri.toString() === document.uri.toString()) continue;
+          try {
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            const hit   = findSysMLDefinition(Buffer.from(bytes).toString('utf8'), word, uri);
+            if (hit) return hit;
+          } catch { /* unreadable file — skip */ }
+        }
       },
     }),
   );
@@ -951,6 +967,38 @@ const SYSML_KEYWORDS = new Set([
   'traces', 'from', 'to', 'port', 'in', 'out', 'connect', 'flow', 'message',
   'transition', 'initial', 'id', 'text', 'priority',
 ]);
+
+// ── Go-to-definition helper ───────────────────────────────────────────────────
+
+/**
+ * Scan `text` for the canonical declaration of `word`.
+ *
+ * Matches:
+ *   • `<keyword> def Word`  — part/port/interface/behavior/action/occurrence/
+ *                             state/requirement/enum/attribute/item def
+ *   • `package Word`
+ *
+ * Returns the Location of the word token itself, or null if not found.
+ */
+function findSysMLDefinition(
+  text: string,
+  word: string,
+  uri: vscode.Uri,
+): vscode.Location | null {
+  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re  = new RegExp(
+    `\\b(?:part|port|interface|behavior|action|occurrence|state|requirement|enum|attribute|item)\\s+def\\s+${esc}\\b` +
+    `|\\bpackage\\s+${esc}\\b`,
+  );
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = re.exec(lines[i]);
+    if (!m) continue;
+    const col = lines[i].indexOf(word, m.index);
+    return new vscode.Location(uri, new vscode.Position(i, col < 0 ? 0 : col));
+  }
+  return null;
+}
 
 // ── Rename helpers ────────────────────────────────────────────────────────────
 
