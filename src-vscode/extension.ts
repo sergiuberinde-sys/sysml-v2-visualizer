@@ -318,6 +318,7 @@ export function activate(context: vscode.ExtensionContext): void {
       sourceLocation?: { line: number; column: number };
       semanticId?: string;
       startLine?: number;
+      name?: string;
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
@@ -413,6 +414,41 @@ export function activate(context: vscode.ExtensionContext): void {
           vscode.TextEditorRevealType.InCenterIfOutsideViewport,
         );
         console.log(`[sysml-visualizer] revealSource — line ${line}, col ${column}`);
+
+      } else if (msg.type === 'revealElementInSource' && typeof msg.name === 'string') {
+        // Text-search fallback: find the element definition without needing the parser service.
+        // Reuses findSysMLDefinition (same logic as go-to-definition / F12).
+        const name = msg.name;
+        const filesToSearch: vscode.Uri[] = [];
+        if (currentSysmlUri) filesToSearch.push(currentSysmlUri);
+        try {
+          const all = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+          for (const u of all) {
+            if (!filesToSearch.some(f => f.toString() === u.toString())) filesToSearch.push(u);
+          }
+        } catch { /* ignore */ }
+
+        let found: vscode.Location | null = null;
+        for (const uri of filesToSearch) {
+          try {
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            found = findSysMLDefinition(Buffer.from(bytes).toString('utf8'), name, uri);
+          } catch { /* skip */ }
+          if (found) break;
+        }
+        if (!found) {
+          console.warn(`[sysml-visualizer] revealElementInSource: "${name}" not found`);
+        } else {
+          suppressEditorSync();
+          const doc = await vscode.workspace.openTextDocument(found.uri);
+          const editor = await vscode.window.showTextDocument(doc, {
+            viewColumn: getDocColumn(found.uri),
+            preserveFocus: true,
+          });
+          editor.selection = new vscode.Selection(found.range.start, found.range.start);
+          editor.revealRange(found.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+          console.log(`[sysml-visualizer] revealElementInSource "${name}" → ${path.basename(found.uri.fsPath)}:${found.range.start.line + 1}`);
+        }
 
       } else if (msg.type === 'revealSemanticElement') {
         const semanticId = msg.semanticId;
@@ -542,36 +578,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
 
-  // Document links: make // trlc-satisfies: NNNNN numbers Cmd/Ctrl+clickable.
-  context.subscriptions.push(
-    vscode.languages.registerDocumentLinkProvider(
-      { language: 'sysml' },
-      {
-        provideDocumentLinks(document): vscode.DocumentLink[] {
-          const links: vscode.DocumentLink[] = [];
-          for (let i = 0; i < document.lineCount; i++) {
-            const text = document.lineAt(i).text;
-            const m = text.match(/\/\/\s*trlc-satisfies:\s*(\d+)/);
-            if (!m) continue;
-            const numericId = m[1];
-            const idStart = text.indexOf(numericId, text.indexOf('trlc-satisfies:'));
-            const range = new vscode.Range(i, idStart, i, idStart + numericId.length);
-            const target = vscode.Uri.parse(
-              `command:sysmlVisualizer.revealTrlcReq?${encodeURIComponent(JSON.stringify([numericId]))}`,
-            );
-            const link = new vscode.DocumentLink(range, target);
-            link.tooltip = 'View in Trace (⌘+Click / Ctrl+Click)';
-            links.push(link);
-          }
-          return links;
-        },
-      },
-    ),
-  );
-
-  // ── Go-to-definition (F12) ────────────────────────────────────────────────────
+  // ── Go-to-definition (F12) and Cmd/Ctrl+Click ────────────────────────────────
   //
-  // Text-based search across all workspace .sysml files.
+  // Also intercepts Cmd/Ctrl+Click on `// trlc-satisfies: NNNNN` lines to reveal
+  // the requirement in the Trace view. Returns the number's own range so VS Code
+  // doesn't navigate or show "No definition found".
+  //
+  // For regular symbols: text-based search across all workspace .sysml files.
   // Looks for `<kw> def Word` or `package Word` patterns; no parser needed.
   // Current file is searched first so same-file defs are instant.
 
@@ -579,6 +592,19 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.languages.registerDefinitionProvider({ language: 'sysml' }, {
       async provideDefinition(document, position) {
         if (!document.fileName.endsWith('.sysml')) return;
+
+        // Cmd/Ctrl+Click on trlc-satisfies annotation → reveal in Trace view.
+        const lineText = document.lineAt(position.line).text;
+        const trlcMatch = lineText.match(/\/\/\s*trlc-satisfies:\s*(\d+)/);
+        if (trlcMatch) {
+          const numericId = trlcMatch[1];
+          void vscode.commands.executeCommand('sysmlVisualizer.revealTrlcReq', numericId);
+          const numStart = lineText.indexOf(numericId);
+          return [new vscode.Location(
+            document.uri,
+            new vscode.Range(position.line, numStart, position.line, numStart + numericId.length),
+          )];
+        }
 
         const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
         if (!wordRange) return;
@@ -1057,10 +1083,17 @@ const SYSML_KEYWORDS = new Set([
 /**
  * Scan `text` for the canonical declaration of `word`.
  *
- * Matches:
- *   • `<keyword> def Word`  — part/port/interface/behavior/action/occurrence/
- *                             state/requirement/enum/attribute/item def
- *   • `package Word`
+ * Pass 1 — explicit def:
+ *   `<keyword> def Word`  — part/port/interface/behavior/action/occurrence/
+ *                           state/requirement/enum/attribute/item def
+ *   `package Word`
+ *
+ * Pass 2 — usage declaration (no def):
+ *   `<keyword> Word` followed by `{`, `:`, `;`, or end-of-line — covers
+ *   anonymous usage declarations like `action detectSensorPairImplausiblePath;`
+ *
+ * Comment lines and inline comments are stripped before matching to avoid
+ * false positives from commented-out or documented code.
  *
  * Returns the Location of the word token itself, or null if not found.
  */
@@ -1069,19 +1102,42 @@ function findSysMLDefinition(
   word: string,
   uri: vscode.Uri,
 ): vscode.Location | null {
-  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re  = new RegExp(
-    `\\b(?:part|port|interface|behavior|action|occurrence|state|requirement|enum|attribute|item)\\s+def\\s+${esc}\\b` +
+  const esc    = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const defRe  = new RegExp(
+    `\\b(?:part|port|interface|behavior|action|occurrence|state|requirement|enum|attribute|item|calc|constraint|flow)\\s+def\\s+${esc}\\b` +
     `|\\bpackage\\s+${esc}\\b`,
   );
+  // Usage pattern: keyword directly before name, name ends at {, :, ; or EOL.
+  const usageRe = new RegExp(
+    `\\b(?:part|port|interface|behavior|action|occurrence|state|requirement|enum|attribute|item|calc|constraint|flow|connection)\\s+${esc}(?=\\s*(?:[{:;]|$))`,
+  );
+
   const lines = text.split('\n');
+  let usageFallback: vscode.Location | null = null;
+
   for (let i = 0; i < lines.length; i++) {
-    const m = re.exec(lines[i]);
-    if (!m) continue;
-    const col = lines[i].indexOf(word, m.index);
-    return new vscode.Location(uri, new vscode.Position(i, col < 0 ? 0 : col));
+    const lineText = lines[i];
+    // Skip pure comment lines.
+    if (lineText.trimStart().startsWith('//')) continue;
+    // Strip inline comments before matching to avoid false positives.
+    const code = lineText.replace(/\/\/.*$/, '');
+
+    const defM = defRe.exec(code);
+    if (defM) {
+      const col = lineText.indexOf(word, defM.index);
+      return new vscode.Location(uri, new vscode.Position(i, col < 0 ? 0 : col));
+    }
+
+    if (!usageFallback) {
+      const usageM = usageRe.exec(code);
+      if (usageM) {
+        const col = lineText.indexOf(word, usageM.index);
+        usageFallback = new vscode.Location(uri, new vscode.Position(i, col < 0 ? 0 : col));
+      }
+    }
   }
-  return null;
+
+  return usageFallback;
 }
 
 // ── Rename helpers ────────────────────────────────────────────────────────────
