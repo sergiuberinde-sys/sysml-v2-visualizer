@@ -46,6 +46,9 @@ import ContainmentGraphView from './ui/views/ContainmentGraphView';
 import StructuralWiringView from './ui/views/StructuralWiringView';
 import type { TrlcData } from './core/trlc/types';
 import { parseTrlcJson } from './core/trlc/types';
+import { parseTrlcFile } from './core/trlc/parseTrlcFile';
+import { extractTrlcTraces, mapAnnotationsToTraces, buildNumericToReqId } from './core/trlc/extractTraces';
+import type { RawAnnotation } from './core/trlc/extractTraces';
 import './App.css';
 
 // ── Official-mode cursor sync ──────────────────────────────────────────────────
@@ -310,6 +313,10 @@ export default function App() {
   const receivedFirstLoad                 = useRef(false);
   // Prevents echo-loop: set true when selection comes from revealElementAtSource
   const suppressRevealSource              = useRef(false);
+  // Set true for 500ms after revealTrlcReq so that the Cmd+Click cursor movement
+  // (which arrives via revealElementAtSource ~100ms later) doesn't overwrite the
+  // intentionally-set TRLC requirement selection.
+  const suppressRevealFromEditor          = useRef(false);
   // Latest vizModel and selection for use inside stable message-handler closure.
   // Initialized with null; kept current by direct assignment after useMemo below.
   const vizModelRef                       = useRef<VisualizerModel | null>(null);
@@ -366,6 +373,8 @@ export default function App() {
   // TRLC external requirements (imported separately from the SysML model)
   const [trlcData, setTrlcData] = useState<TrlcData | null>(null);
   const [trlcImportError, setTrlcImportError] = useState<string | null>(null);
+  // Raw trlc-satisfies annotations sent by the extension (covers all workspace files)
+  const [trlcAnnotations, setTrlcAnnotations] = useState<RawAnnotation[] | null>(null);
 
   // ── Monaco refs ────────────────────────────────────────────────────────────
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
@@ -434,6 +443,8 @@ export default function App() {
     return trace;
   }, [officialParseResult, selection]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const trlcDataWithTracesRef = useRef<TrlcData | null>(null);
+
   const activeDiagnostics = useMemo(
     () => officialParseResult?.diagnostics.map(d => ({
       message:  d.message,
@@ -443,6 +454,19 @@ export default function App() {
     })) ?? [],
     [officialParseResult],
   );
+
+  // Derive trace links from trlc-satisfies annotations.
+  // Extension path: use annotations sent by the extension (covers all workspace files).
+  // Standalone fallback: scan source + context files directly.
+  const trlcDataWithTraces = useMemo((): TrlcData | null => {
+    if (!trlcData) return null;
+    const numericToReqId = buildNumericToReqId(trlcData.requirements.map(r => r.id));
+    const traces = trlcAnnotations !== null
+      ? mapAnnotationsToTraces(trlcAnnotations, numericToReqId)
+      : extractTrlcTraces([{ text: source }, ...projectFiles], numericToReqId);
+    return { ...trlcData, traces };
+  }, [trlcData, trlcAnnotations, source, projectFiles]);
+  trlcDataWithTracesRef.current = trlcDataWithTraces;
 
   // ── Effects ────────────────────────────────────────────────────────────────
 
@@ -556,6 +580,8 @@ export default function App() {
         behavior?: BehaviorData;
         success?: boolean;
         diagnostics?: SysMLV2ParseResult['diagnostics'];
+        trlcAnnotations?: RawAnnotation[];
+        numericId?: string;
       };
       if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
@@ -572,6 +598,27 @@ export default function App() {
         // VS Code extension sent the configured parser service URL from settings.
         // This overrides the localStorage default so the extension config is authoritative.
         setServiceEndpoint(msg.parserServiceUrl);
+      } else if (msg.type === 'trlcAnnotations' && Array.isArray(msg.trlcAnnotations)) {
+        setTrlcAnnotations(msg.trlcAnnotations);
+      } else if (msg.type === 'revealTrlcReq' && typeof msg.numericId === 'string') {
+        setTab('traceability');
+        const data = trlcDataWithTracesRef.current;
+        if (data) {
+          const req = data.requirements.find(r => r.id.endsWith(msg.numericId!));
+          if (req) {
+            // Suppress revealElementAtSource for 500ms: Cmd/Ctrl+Click also
+            // moves the editor cursor, which triggers a revealElementAtSource
+            // ~100ms later that would otherwise overwrite this selection.
+            suppressRevealFromEditor.current = true;
+            setTimeout(() => { suppressRevealFromEditor.current = false; }, 500);
+            setSelection({
+              id: `trlc-req-${req.id}`,
+              type: 'requirement',
+              name: req.id,
+              extra: { reqId: req.id, text: req.text, title: req.title, ...(req.asil ? { asil: req.asil } : {}) },
+            });
+          }
+        }
       } else if (msg.type === 'updateGraph' && msg.graph) {
         console.log('[App] received updateGraph, behavior:', msg.behavior);
         setOfficialParseResult(prev => {
@@ -588,6 +635,7 @@ export default function App() {
           };
         });
       } else if (msg.type === 'revealElementAtSource' && msg.sourceLocation) {
+        if (suppressRevealFromEditor.current) return;
         const { line } = msg.sourceLocation;
         if (!syncCursorRef.current) return;
         const graph = officialParseResultRef.current?.graph;
@@ -850,7 +898,16 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => handleTrlcImport(ev.target?.result as string);
+    reader.onload = ev => {
+      const text = ev.target?.result as string;
+      if (file.name.toLowerCase().endsWith('.trlc')) {
+        const data = parseTrlcFile(text);
+        setTrlcData(data);
+        setTrlcImportError(null);
+      } else {
+        handleTrlcImport(text);
+      }
+    };
     reader.readAsText(file);
     // Reset input so the same file can be re-selected
     e.target.value = '';
@@ -1138,7 +1195,7 @@ export default function App() {
                     ? `TRLC loaded: ${trlcData.requirements.length} reqts`
                     : trlcImportError
                       ? `Import error: ${trlcImportError}`
-                      : 'Import TRLC requirements JSON'
+                      : 'Import TRLC requirements (.trlc file or JSON)'
                 }
                 onClick={() => trlcFileInputRef.current?.click()}
                 style={{
@@ -1359,7 +1416,7 @@ export default function App() {
                   result={vizModel}
                   selection={selection}
                   onSelect={setSelection}
-                  trlcData={trlcData ?? undefined}
+                  trlcData={trlcDataWithTraces ?? undefined}
                 />
               )}
             </ErrorBoundary>
@@ -1369,7 +1426,8 @@ export default function App() {
                   result={vizModel}
                   selection={selection}
                   onSelect={setSelection}
-                  trlcData={trlcData ?? undefined}
+                  trlcData={trlcDataWithTraces ?? undefined}
+                  graph={officialParseResult?.graph}
                 />
               )}
             </ErrorBoundary>
@@ -1395,7 +1453,7 @@ export default function App() {
             result={vizModel}
             source={source}
             impactTrace={impactTrace ?? undefined}
-            trlcData={trlcData ?? undefined}
+            trlcData={trlcDataWithTraces ?? undefined}
             onSelect={setSelection}
             onSourceChange={
               APP_MODE === 'vscode'
@@ -1428,7 +1486,7 @@ export default function App() {
       <input
         ref={trlcFileInputRef}
         type="file"
-        accept=".json"
+        accept=".trlc,.json"
         style={{ display: 'none' }}
         onChange={handleTrlcFileInput}
       />

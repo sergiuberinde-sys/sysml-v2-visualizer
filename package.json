@@ -50,6 +50,10 @@
       {
         "command": "sysmlVisualizer.debugSemanticTokens",
         "title": "SysML: Debug Semantic Tokens"
+      },
+      {
+        "command": "sysmlVisualizer.revealTrlcReq",
+        "title": "SysML: View Requirement in Trace"
       }
     ],
     "configuration": {

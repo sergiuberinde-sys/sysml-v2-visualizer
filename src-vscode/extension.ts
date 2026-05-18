@@ -14,6 +14,7 @@ import { formatSysML } from '../src/core/language/formatter';
 import type { SysMLNode } from '../src/core/modelTypes';
 import { buildContainmentGraph } from '../src/core/adapters/officialSysMLAdapter';
 import type { ModelNode } from '../src/core/sysmlv2Official/ModelNode';
+import { scanRawAnnotations } from '../src/core/trlc/extractTraces';
 
 export function activate(context: vscode.ExtensionContext): void {
   let currentSysmlUri: vscode.Uri | undefined;
@@ -54,6 +55,28 @@ export function activate(context: vscode.ExtensionContext): void {
   function publishDiagnosticsForDocument(document: vscode.TextDocument): void {
     if (!document.fileName.endsWith('.sysml')) return;
     void publishDiagnosticsOfficial(document);
+  }
+
+  // ── TRLC annotation scanner ───────────────────────────────────────────────────
+  // Sends { type: 'trlcAnnotations' } to the webview independently of the parse
+  // pipeline. Called on ready and on every editor switch so the trace view is
+  // always populated even when the parser service is unavailable.
+
+  async function sendTrlcAnnotations(): Promise<void> {
+    if (!activePanel) return;
+    const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+    const sources: { text: string }[] = [];
+    if (currentSysmlText) sources.push({ text: currentSysmlText });
+    await Promise.all(allSysml.map(async (u) => {
+      if (currentSysmlUri && u.toString() === currentSysmlUri.toString()) return;
+      try {
+        const bytes = await vscode.workspace.fs.readFile(u);
+        sources.push({ text: Buffer.from(bytes).toString('utf8') });
+      } catch { /* skip */ }
+    }));
+    const trlcAnnotations = scanRawAnnotations(sources);
+    console.log(`[sysml-visualizer] sendTrlcAnnotations: ${trlcAnnotations.length} annotations from ${sources.length} files`);
+    void activePanel.webview.postMessage({ type: 'trlcAnnotations', trlcAnnotations });
   }
 
   async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
@@ -314,6 +337,9 @@ export function activate(context: vscode.ExtensionContext): void {
           publishDiagnosticsForDocument(doc);
         }
         sendCurrentModelToWebview();
+        // Send trlc annotations immediately so the Trace view is ready
+        // even before the parser service responds.
+        void sendTrlcAnnotations();
 
       } else if (msg.type === 'applyFullTextEdit') {
         if (!currentSysmlUri) {
@@ -455,15 +481,26 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       if (isSysml(editor.document)) {
+        const newUri = editor.document.uri.toString();
+        const sameFile = currentSysmlUri?.toString() === newUri;
         currentSysmlUri  = editor.document.uri;
         currentSysmlText = editor.document.getText();
-        console.log(`[sysml-visualizer] loading sysml file: ${path.basename(editor.document.fileName)}`);
-        // Diagnostics for this file are already published by the activation-level listener.
-        panel.webview.postMessage({
-          type: 'loadModel',
-          text: currentSysmlText,
-          fileName: path.basename(editor.document.fileName),
-        });
+        // Only reload the model when switching to a DIFFERENT .sysml file.
+        // Same-file activations happen when revealSemanticElement (element chip
+        // click in the trace view) calls showTextDocument — sending loadModel in
+        // that case would reset selection to null in the webview.
+        if (!sameFile) {
+          console.log(`[sysml-visualizer] loading sysml file: ${path.basename(editor.document.fileName)}`);
+          panel.webview.postMessage({
+            type: 'loadModel',
+            text: currentSysmlText,
+            fileName: path.basename(editor.document.fileName),
+          });
+        } else {
+          console.log(`[sysml-visualizer] same sysml file refocused — skipping loadModel`);
+        }
+        // Resend trlc annotations so new file's traces appear immediately.
+        void sendTrlcAnnotations();
       } else {
         console.log('[sysml-visualizer] non-sysml editor active — keeping current model');
       }
@@ -490,6 +527,47 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   context.subscriptions.push(cmd);
+
+  // ── Reveal TRLC requirement in Trace view ─────────────────────────────────────
+  // Invoked by Cmd/Ctrl+Click on a // trlc-satisfies: annotation via DocumentLink.
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('sysmlVisualizer.revealTrlcReq', (numericId: string) => {
+      if (!activePanel) {
+        vscode.window.showWarningMessage('SysML Visualizer: open the visualizer panel first.');
+        return;
+      }
+      activePanel.reveal(vscode.ViewColumn.Beside, true);
+      void activePanel.webview.postMessage({ type: 'revealTrlcReq', numericId });
+    }),
+  );
+
+  // Document links: make // trlc-satisfies: NNNNN numbers Cmd/Ctrl+clickable.
+  context.subscriptions.push(
+    vscode.languages.registerDocumentLinkProvider(
+      { language: 'sysml' },
+      {
+        provideDocumentLinks(document): vscode.DocumentLink[] {
+          const links: vscode.DocumentLink[] = [];
+          for (let i = 0; i < document.lineCount; i++) {
+            const text = document.lineAt(i).text;
+            const m = text.match(/\/\/\s*trlc-satisfies:\s*(\d+)/);
+            if (!m) continue;
+            const numericId = m[1];
+            const idStart = text.indexOf(numericId, text.indexOf('trlc-satisfies:'));
+            const range = new vscode.Range(i, idStart, i, idStart + numericId.length);
+            const target = vscode.Uri.parse(
+              `command:sysmlVisualizer.revealTrlcReq?${encodeURIComponent(JSON.stringify([numericId]))}`,
+            );
+            const link = new vscode.DocumentLink(range, target);
+            link.tooltip = 'View in Trace (⌘+Click / Ctrl+Click)';
+            links.push(link);
+          }
+          return links;
+        },
+      },
+    ),
+  );
 
   // ── Go-to-definition (F12) ────────────────────────────────────────────────────
   //
