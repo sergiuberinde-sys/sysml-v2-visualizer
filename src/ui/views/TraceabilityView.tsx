@@ -8,7 +8,30 @@ import '@xyflow/react/dist/style.css';
 import type { VisualizerModel, VizNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 import type { TrlcData } from '../../core/trlc/types';
+import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
 import { FitPanel } from '../layout/FitPanel';
+
+// Human-readable label for EMF types used in trlc-satisfies annotations
+const EMF_TYPE_LABEL: Record<string, string> = {
+  EnumerationDefinition: 'enum def',
+  AttributeDefinition:   'attr def',
+  AttributeUsage:        'attribute',
+  PortDefinition:        'port def',
+  PortUsage:             'port',
+  ActionDefinition:      'action def',
+  ActionUsage:           'action',
+  PerformActionUsage:    'action',
+  PartDefinition:        'part def',
+  PartUsage:             'part',
+  ItemDefinition:        'item def',
+  ItemUsage:             'item',
+  InterfaceDefinition:   'iface def',
+  ConnectionDefinition:  'conn def',
+  OccurrenceDefinition:  'occ def',
+  StateDefinition:       'state def',
+  RequirementDefinition: 'req def',
+  BehaviorDefinition:    'behavior def',
+};
 
 type RD = Extract<VizNode, { kind: 'requirementDef' }>;
 type TL = Extract<VizNode, { kind: 'traceLink' }>;
@@ -152,14 +175,30 @@ interface Props {
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
   trlcData?: TrlcData;
+  graph?: ContainmentGraph;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TraceabilityView({ result, selection, onSelect, trlcData }: Props) {
+export default function TraceabilityView({ result, selection, onSelect, trlcData, graph }: Props) {
   const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef');
   const links = result.nodes.filter((n): n is TL => n.kind === 'traceLink');
   const isOfficial = result.parserMode === 'sysmlV2OfficialFuture';
+
+  // Index graph nodes by label for O(1) element lookup (name → best node).
+  // "Best" = has a source range so the editor can jump to it.
+  const nodeByName = useMemo((): Map<string, GraphNode> => {
+    const m = new Map<string, GraphNode>();
+    if (!graph) return m;
+    for (const n of graph.nodes) {
+      if (!n.label || n.label === n.type) continue;
+      const existing = m.get(n.label);
+      if (!existing || (n.startLine != null && existing.startLine == null)) {
+        m.set(n.label, n);
+      }
+    }
+    return m;
+  }, [graph]);
 
   // Official mode: render TRLC trace matrix
   if (isOfficial) {
@@ -168,7 +207,7 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
         <div className="behavior-placeholder">
           <div>No TRLC requirements loaded.</div>
           <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>
-            Use the <code>Import TRLC</code> button to load a requirements JSON file.
+            Use the <code>TRLC</code> button in the toolbar to import a <code>.trlc</code> file.
           </div>
         </div>
       );
@@ -215,33 +254,57 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
                 extra: { reqId: req.id, text: req.text, title: req.title, ...(req.asil ? { asil: req.asil } : {}) },
               })}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: req.text ? 4 : 6 }}>
                 <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600 }}>{req.id}</span>
                 <span style={{ fontSize: 12, color: '#e2e8f0' }}>{req.title}</span>
                 {req.asil && (
-                  <span style={{ fontSize: 10, color: ASIL_COLOR[req.asil] ?? '#64748b', marginLeft: 'auto' }}>
+                  <span style={{ fontSize: 10, color: ASIL_COLOR[req.asil] ?? '#64748b', marginLeft: 'auto', flexShrink: 0 }}>
                     ASIL-{req.asil}
                   </span>
                 )}
               </div>
+              {req.text && (
+                <div style={{
+                  fontSize: 11, color: '#94a3b8', lineHeight: 1.5,
+                  marginBottom: 8, fontFamily: 'sans-serif',
+                }}>
+                  {req.text}
+                </div>
+              )}
               {elements.length > 0 ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {elements.map(el => {
+                    const node = nodeByName.get(el);
+                    const typeLabel = node ? (EMF_TYPE_LABEL[node.type] ?? node.type) : null;
                     const elSelId = `trlc-el-${req.id}-${el}`;
                     return (
                       <span
                         key={el}
+                        title={node ? `Jump to ${el} in editor` : el}
                         style={{
                           fontSize: 10, padding: '2px 7px',
-                          background: '#0f172a', border: '1px solid #334155',
-                          borderRadius: 4, color: '#94a3b8',
-                          cursor: 'pointer',
+                          background: '#0f172a',
+                          border: `1px solid ${node ? '#334155' : '#1e293b'}`,
+                          borderRadius: 4,
+                          color: node ? '#94a3b8' : '#475569',
+                          cursor: node ? 'pointer' : 'default',
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
                         }}
                         onClick={e => {
                           e.stopPropagation();
-                          onSelect({ id: elSelId, type: 'part', name: el });
+                          if (!node) return;
+                          onSelect({
+                            id: elSelId,
+                            type: 'part',
+                            name: el,
+                            line: node.startLine,
+                            extra: { graphId: node.id, emfType: node.type },
+                          });
                         }}
                       >
+                        {typeLabel && (
+                          <span style={{ color: '#475569', fontSize: 9 }}>{typeLabel}</span>
+                        )}
                         {el}
                       </span>
                     );
