@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useEffect } from 'react';
+import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
   applyNodeChanges,
@@ -185,6 +185,14 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
   const links = result.nodes.filter((n): n is TL => n.kind === 'traceLink');
   const isOfficial = result.parserMode === 'sysmlV2OfficialFuture';
 
+  // Scroll the selected requirement card into view when selection changes.
+  const cardRefs = useRef(new Map<string, HTMLDivElement>());
+  useEffect(() => {
+    if (!selection?.id) return;
+    const el = cardRefs.current.get(selection.id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [selection?.id]);
+
   // Index graph nodes by label for O(1) element lookup (name → best node).
   // "Best" = has a source range so the editor can jump to it.
   const nodeByName = useMemo((): Map<string, GraphNode> => {
@@ -241,6 +249,7 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
           return (
             <div
               key={req.id}
+              ref={el => { if (el) cardRefs.current.set(selId, el); else cardRefs.current.delete(selId); }}
               style={{
                 marginBottom: 12,
                 padding: '10px 14px',
@@ -280,25 +289,26 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
                     return (
                       <span
                         key={el}
-                        title={node ? `Jump to ${el} in editor` : el}
+                        title={`Jump to ${el} in editor`}
                         style={{
                           fontSize: 10, padding: '2px 7px',
                           background: '#0f172a',
-                          border: `1px solid ${node ? '#334155' : '#1e293b'}`,
+                          border: '1px solid #334155',
                           borderRadius: 4,
-                          color: node ? '#94a3b8' : '#475569',
-                          cursor: node ? 'pointer' : 'default',
+                          color: '#94a3b8',
+                          cursor: 'pointer',
                           display: 'inline-flex', alignItems: 'center', gap: 4,
                         }}
                         onClick={e => {
                           e.stopPropagation();
-                          if (!node) return;
                           onSelect({
                             id: elSelId,
                             type: 'part',
                             name: el,
-                            line: node.startLine,
-                            extra: { graphId: node.id, emfType: node.type },
+                            line: node?.startLine,
+                            extra: node
+                              ? { graphId: node.id, emfType: node.type }
+                              : { lookupByName: 'true' },
                           });
                         }}
                       >
