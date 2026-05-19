@@ -47,17 +47,31 @@ async function isServiceReachable(url: string): Promise<boolean> {
 }
 
 function findNodeBinary(): string {
-  // VS Code launched from the macOS Dock doesn't inherit shell PATH, so 'node'
-  // alone may not resolve. Check the most common absolute locations first.
+  // VS Code launched from the macOS Dock or Windows Start Menu doesn't inherit
+  // the shell PATH, so 'node' alone may not resolve. Check common absolute
+  // locations before falling back to the bare command.
   const candidates = [
-    '/opt/homebrew/bin/node',   // Apple Silicon Homebrew
-    '/usr/local/bin/node',      // Intel Homebrew / nvm default symlink
-    '/usr/bin/node',            // system node (rare on macOS)
+    // macOS — Homebrew (Apple Silicon and Intel) and system
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+    // Windows — official installer defaults and common version managers
+    'C:\\Program Files\\nodejs\\node.exe',
+    'C:\\Program Files (x86)\\nodejs\\node.exe',
+    ...(process.env.APPDATA
+      ? [`${process.env.APPDATA}\\npm\\node.exe`]           // npm global prefix
+      : []),
+    ...(process.env.ProgramFiles
+      ? [`${process.env.ProgramFiles}\\nodejs\\node.exe`]
+      : []),
+    ...(process.env.LOCALAPPDATA
+      ? [`${process.env.LOCALAPPDATA}\\Programs\\nodejs\\node.exe`]   // scoop / user install
+      : []),
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
   }
-  return 'node'; // last resort — works when VS Code is launched from terminal
+  return 'node'; // last resort — works when VS Code is launched from a terminal
 }
 
 async function startManagedParserService(extensionPath: string, configuredUrl: string): Promise<string> {
