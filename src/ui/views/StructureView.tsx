@@ -106,7 +106,8 @@ function FeatureTypingEdge({
   const d           = data as Record<string, unknown>;
   const waypoints   = d?.waypoints as WayPt[] | undefined;
   const highlighted = !!d?.highlighted;
-  const stroke      = highlighted ? SEL_BORDER : FT_STROKE;
+  const baseStroke  = (d?.stroke as string | undefined) ?? FT_STROKE;
+  const stroke      = highlighted ? SEL_BORDER : baseStroke;
   const strokeWidth = highlighted ? 2.5 : 1;
   // Always use pure ELK attachment points — ELK spreads every edge on a node face
   // independently, so the endpoint for this edge never coincides with the endpoint
@@ -143,8 +144,11 @@ function CompositionEdge({
   return (
     <g>
       <defs>
-        {/* SysML v2 §8.2.3.3: filled diamond = composite-feature-membership, owner (source) end. */}
-        <marker id={mid} viewBox="0 0 16 12" refX="16" refY="6"
+        {/* SysML v2 §8.2.3.3: filled diamond = composite-feature-membership, owner (source) end.
+            refX="0" anchors the inner (left) tip at the path start so the diamond sits
+            fully outside the source node.  The filled interior covers the edge line
+            beneath it, so no overlap artefact is visible. */}
+        <marker id={mid} viewBox="0 0 16 12" refX="0" refY="6"
           markerWidth="16" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
           <path d="M 0,6 L 8,1.5 L 16,6 L 8,10.5 Z"
             fill={stroke} stroke={stroke} strokeWidth="0.5" strokeLinejoin="round"/>
@@ -170,9 +174,13 @@ function NonCompositeMembershipEdge({
   return (
     <g>
       <defs>
-        {/* SysML v2 §8.2.3.3: open/hollow diamond = non-composite-feature-membership, owner (source) end. */}
-        <marker id={mid} viewBox="0 0 16 12" refX="16" refY="6"
-          markerWidth="16" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+        {/* SysML v2 §8.2.3.3: open/hollow diamond = non-composite-feature-membership, owner (source) end.
+            refX="0" anchors the inner tip at the path start (outside the node).
+            Two layers: dark background rect masks the edge line that would otherwise
+            show through the hollow interior; then the stroke-only diamond on top. */}
+        <marker id={mid} viewBox="-1 0 18 12" refX="0" refY="6"
+          markerWidth="18" markerHeight="12" orient="auto" markerUnits="userSpaceOnUse">
+          <path d="M 0,6 L 8,1.5 L 16,6 L 8,10.5 Z" fill="#0b1220" stroke="none"/>
           <path d="M 0,6 L 8,1.5 L 16,6 L 8,10.5 Z"
             fill="none" stroke={stroke} strokeWidth="1" strokeLinejoin="round"/>
         </marker>
@@ -507,25 +515,31 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     type PRD  = Extract<VizNode, { kind: 'portDef' }>;
     type ITMD = Extract<VizNode, { kind: 'itemDef' }>;
     type BD   = Extract<VizNode, { kind: 'behaviorDef' }>;
+    type AI   = Extract<VizNode, { kind: 'actionInst' }>;
+    type ACTD = Extract<VizNode, { kind: 'actionDef' }>;
 
-    const ifaceDefs    = result.nodes.filter((n): n is ID   => n.kind === 'interfaceDef');
-    const portDefs     = result.nodes.filter((n): n is PRD  => n.kind === 'portDef');
-    const attrDefs     = result.nodes.filter((n): n is AD   => n.kind === 'attributeDef');
-    const itemDefs     = result.nodes.filter((n): n is ITMD => n.kind === 'itemDef');
-    const behaviorDefs = result.nodes.filter((n): n is BD   => n.kind === 'behaviorDef');
-    const allPartDefs  = result.nodes.filter((n): n is PD   => n.kind === 'partDef');
-    const allPartUsages = result.nodes.filter((n): n is PU  => n.kind === 'partUsage');
-    const partDefMap   = new Map(allPartDefs.map(n => [n.name, n]));
-    const itemDefMap   = new Map(itemDefs.map(n => [n.name, n]));
+    const ifaceDefs       = result.nodes.filter((n): n is ID   => n.kind === 'interfaceDef');
+    const portDefs        = result.nodes.filter((n): n is PRD  => n.kind === 'portDef');
+    const attrDefs        = result.nodes.filter((n): n is AD   => n.kind === 'attributeDef');
+    const itemDefs        = result.nodes.filter((n): n is ITMD => n.kind === 'itemDef');
+    const behaviorDefs    = result.nodes.filter((n): n is BD   => n.kind === 'behaviorDef');
+    const simpleActDefs   = result.nodes.filter((n): n is ACTD => n.kind === 'actionDef');
+    const allPartDefs     = result.nodes.filter((n): n is PD   => n.kind === 'partDef');
+    const allPartUsages   = result.nodes.filter((n): n is PU   => n.kind === 'partUsage');
+    const partDefMap      = new Map(allPartDefs.map(n => [n.name, n]));
+    const itemDefMap      = new Map(itemDefs.map(n => [n.name, n]));
     // A body child triggers composition rendering when it is a partAlias/itemAlias
-    // with a non-empty type. partAlias additionally requires the type to resolve to
-    // a known PartDef; itemAlias is always shown (item types may be external).
+    // with a non-empty type. The type does NOT need to be defined in the same file —
+    // cross-file typed parts are shown as instance nodes without a local type-def box.
     const isCompAlias  = (b: VizNode) =>
-      (b.kind === 'partAlias' && !!b.type && partDefMap.has(b.type)) ||
+      (b.kind === 'partAlias' && !!b.type) ||
       (b.kind === 'itemAlias' && !!b.type);
+    const hasActionInst = (b: VizNode): b is AI => b.kind === 'actionInst';
     // composedDefs: partDefs that own child instances/items → rendered in col2 with
     // composition edges to flat instance/item nodes in col3.
     const composedDefs = allPartDefs.filter(n => n.body.some(isCompAlias));
+    // partDefs with only action-usage children (no part/item aliases) — get action boxes in col3.
+    const actionOnlyDefs = allPartDefs.filter(n => !n.body.some(isCompAlias) && n.body.some(hasActionInst));
 
     // Split partUsages: composed (contain child partAlias/itemAlias) vs standalone.
     const composedUsages   = allPartUsages.filter(n =>  n.body.some(isCompAlias));
@@ -536,12 +550,16 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     const scenarios         = allOccs.filter(o => !o.body.some(b => b.kind === 'partAlias' || b.kind === 'itemAlias'));
 
     // ── Pre-compute column X positions ────────────────────────────────────────
-    // Column 1 (left):   port defs + interface defs
+    // Column 1 (left):   port defs + interface defs + standalone part usages
     // Column 2 (middle): ALL part defs + attr defs + item defs + behavior defs
-    // Column 3 (right):  part usages (standalone + composed) + flat instances + occurrence defs
+    // Column 3 (right):  composed usages + flat instances + occurrence defs
+    // Standalone usages go in col1 so their FeatureTyping edges arrive at the LEFT
+    // face of col2 defs, while composition edges leave from the RIGHT face — opposite
+    // faces ensure clear visual separation.
     const col1MaxW = Math.max(MIN_NODE_W,
       ...ifaceDefs.map(n => nodeWidth('«interface def»', n.name, [])),
       ...portDefs.map(n  => nodeWidth('«port def»',       n.name, [])),
+      ...standaloneUsages.map(n => nodeWidth(n.type ? `«part» : ${n.type}` : '«part»', n.name, [])),
     );
     const col2MaxW = Math.max(MIN_NODE_W,
       ...attrDefs.map(n => {
@@ -553,12 +571,11 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         return nodeWidth('«part def»', n.name, a);
       }),
       ...itemDefs.map(n  => nodeWidth('«item def»',   n.name, [])),
-      ...behaviorDefs.map(n => nodeWidth('«action def»', n.name, [])),
+      ...behaviorDefs.map(n   => nodeWidth('«action def»', n.name, [])),
+      ...simpleActDefs.map(n  => nodeWidth('«action def»', n.name, [])),
     );
-    // col3 contains standalone usages, composed-usage nodes, all flat instance nodes,
-    // and occurrence/scenario nodes — use their direct node widths (no group padding).
+    // col3 contains composed-usage nodes, all flat instance nodes, and occurrence/scenario nodes.
     const col3MaxW = Math.max(MIN_NODE_W,
-      ...standaloneUsages.map(n => nodeWidth(n.type ? `«part» : ${n.type}` : '«part»', n.name, [])),
       ...composedUsages.map(n   => nodeWidth(n.type ? `«part» : ${n.type}` : '«part»', n.name, [])),
       ...[...allPartDefs, ...composedUsages].flatMap(n => [
         ...n.body.filter((b): b is PA => b.kind === 'partAlias').map(alias =>
@@ -576,6 +593,11 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       )),
       ...legacyStructOccs.map(n => nodeWidth('«occurrence def»', n.name, [])),
       ...scenarios.map(n => nodeWidth('«scenario»', n.name, [])),
+      ...[...allPartDefs, ...composedUsages, ...allPartUsages].flatMap(n =>
+        n.body.filter(hasActionInst).map(a =>
+          Math.max(nodeWidth(a.actionType ? `«action» : ${a.actionType}` : '«action»', a.name, []), MIN_NODE_W)
+        )
+      ),
     );
     const COL1_X = COL_START;
     const COL2_X = COL1_X + col1MaxW + COL_H_GAP;
@@ -703,7 +725,28 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       col2Y += PART_BASE_H + V_STACK_GAP;
     }
 
-    // ── Column 3 ─ Standalone part usages ─────────────────────────────────────
+    // ── Column 2 ─ Simple action defs (no body; prototype parser path) ─────────
+    for (const n of simpleActDefs) {
+      const nodeId = `actdef-${n.name}`;
+      if (baseNodes.some(bn => bn.id === nodeId)) continue; // guard against dups with behaviorDef
+      const w2s = nodeWidth('«action def»', n.name, []);
+      baseNodes.push(makePartNode(
+        nodeId, { x: C2CX - w2s / 2, y: col2Y }, '«action def»', n.name, [], PAL.actDef, undefined,
+        { id: nodeId, type: 'behavior' as const, name: n.name, line: n.line },
+        [],
+        w2s,
+      ));
+      defCol2Y.set(n.name, col2Y + Math.round(PART_BASE_H / 2));
+      col2Y += PART_BASE_H + V_STACK_GAP;
+    }
+
+    // Graph ID lookup for ActionUsage / PerformActionUsage nodes.
+    const actInstGid = gid('ActionUsage', 'PerformActionUsage');
+
+    // ── Column 1 ─ Standalone part usages ────────────────────────────────────
+    // Placed in col1 (left of defs) so FeatureTyping edges cross left→right,
+    // arriving at the LEFT face of col2 defs. Composition edges from composedDefs
+    // leave from their RIGHT face → opposite faces, clear visual separation.
     const partUsageGid = gid('PartUsage');
     const itemUsageGid = gid('ItemUsage');
     for (const n of standaloneUsages) {
@@ -711,20 +754,20 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const gidVal    = partUsageGid(n.name);
       const graphPorts = getGraphPorts(gidVal);
       const stereoSU  = n.type ? `«part» : ${n.type}` : '«part»';
-      const w3su      = nodeWidth(stereoSU, n.name, []);
+      const w1su      = nodeWidth(stereoSU, n.name, []);
       baseNodes.push(makePartNode(
-        nodeId, { x: C3CX - w3su / 2, y: col3Y },
+        nodeId, { x: C1CX - w1su / 2, y: col1Y },
         stereoSU, n.name, graphPorts, PAL.inst, undefined,
         { id: nodeId, type: 'instance' as const, name: n.name,
           extra: { ...(n.type ? { type: n.type } : {}), parent: n.namespace, ...(gidVal ? { graphId: gidVal } : {}) } },
         [],
-        w3su,
+        w1su,
         'usage',
       ));
       regGid(gidVal, nodeId);
-      col3Y += PART_BASE_H + V_STACK_GAP;
+      col1Y += PART_BASE_H + V_STACK_GAP;
 
-      // FeatureTyping connector: usage → definition (official SysML v2 notation)
+      // FeatureTyping connector: usage (col1) → definition (col2), left face of def
       if (n.type) {
         const targetId =
           baseNodes.some(bn => bn.id === `def-${n.type}`)      ? `def-${n.type}`      :
@@ -736,7 +779,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           baseEdges.push({
             id: `typing-${n.name}->${targetId}`,
             source: nodeId, target: targetId,
-            sourceHandle: '__source_left', targetHandle: '__target_right',
+            sourceHandle: '__source', targetHandle: '__target',
             type: 'featureTypingEdge',
             zIndex: 5,
           });
@@ -753,6 +796,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       ownerName: string,
       aliases: (PA | IA)[],
       connections: CN[],
+      actions: AI[] = [],
     ) {
       for (let i = 0; i < aliases.length; i++) {
         const alias    = aliases[i];
@@ -781,12 +825,12 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           'usage',
         ));
 
-        // Composition edge: owner → instance (filled diamond at owner end)
+        // Composition or reference edge depending on whether the part is composite.
         baseEdges.push({
           id: `comp-${ownerName}-${alias.name}`,
           source: ownerRfId, target: instRfId,
           sourceHandle: '__source', targetHandle: '__target',
-          type: 'compositionEdge',
+          type: alias.kind === 'partAlias' && alias.isRef ? 'nonCompositeMembershipEdge' : 'compositionEdge',
           zIndex: 4,
         });
 
@@ -828,6 +872,55 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
         }
 
         col3Y += h + (i < aliases.length - 1 ? INST_V_GAP : V_STACK_GAP);
+      }
+
+      // Action usage instances owned by this element.
+      for (let i = 0; i < actions.length; i++) {
+        const action   = actions[i];
+        const stereo   = action.actionType ? `«action» : ${action.actionType}` : '«action»';
+        const actW     = Math.max(nodeWidth(stereo, action.name, []), MIN_NODE_W);
+        const actRfId  = `action-${ownerName}-${action.name}`;
+        const actGid   = actInstGid(action.name);
+        regGid(actGid, actRfId);
+
+        baseNodes.push(makePartNode(
+          actRfId, { x: C3CX - actW / 2, y: col3Y },
+          stereo, action.name, [], PAL.actDef, undefined,
+          { id: actRfId, type: 'behavior' as const, name: action.name, line: action.line,
+            extra: { ...(action.actionType ? { type: action.actionType } : {}),
+                     parent: ownerName, ...(actGid ? { graphId: actGid } : {}) } },
+          [],
+          actW,
+          'usage',
+        ));
+
+        // Composition edge: owner → action instance (filled diamond at owner end)
+        baseEdges.push({
+          id: `comp-action-${ownerName}-${action.name}`,
+          source: ownerRfId, target: actRfId,
+          sourceHandle: '__source', targetHandle: '__target',
+          type: 'compositionEdge',
+          zIndex: 4,
+        });
+
+        // FeatureTyping edge: action instance → action def type in col2
+        if (action.actionType) {
+          const ftActTarget =
+            baseNodes.some(bn => bn.id === `actdef-${action.actionType}`) ? `actdef-${action.actionType}` :
+            null;
+          if (ftActTarget) {
+            baseEdges.push({
+              id: `typing-action-${ownerName}-${action.name}`,
+              source: actRfId, target: ftActTarget,
+              sourceHandle: '__source_left', targetHandle: '__target_right',
+              type: 'featureTypingEdge',
+              zIndex: 5,
+            });
+          }
+        }
+
+        const isLast = i === actions.length - 1 && aliases.length === 0;
+        col3Y += PART_BASE_H + (isLast ? V_STACK_GAP : INST_V_GAP);
       }
 
       for (const conn of connections) {
@@ -900,7 +993,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const aliases: (PA | IA)[] = n.body.filter((b): b is PA | IA =>
         b.kind === 'partAlias' || b.kind === 'itemAlias');
       const conns    = n.body.filter((b): b is CN => b.kind === 'connection');
-      if (aliases.length === 0) continue;
+      const actions  = n.body.filter(hasActionInst);
       // Vertically align the instance cluster with the owning def to shorten
       // composition edges. If prior col3 items already pushed col3Y past the
       // def's vertical position, stay at col3Y (no gap, no backwards jump).
@@ -910,11 +1003,24 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           const td = alias.kind === 'itemAlias' ? itemDefMap.get(alias.type) : partDefMap.get(alias.type);
           const p  = (td && 'body' in td) ? td.body.filter((b): b is PortLike => b.kind === 'port') : [];
           return s + partH(p.length);
-        }, 0) + (aliases.length - 1) * INST_V_GAP;
+        }, 0) + (aliases.length + actions.length - 1) * INST_V_GAP + actions.length * PART_BASE_H;
         const alignedStart = defCenterY - Math.round(clusterH / 2);
         if (alignedStart > col3Y) col3Y = alignedStart;
       }
-      emitInstances(defRfId, n.name, aliases, conns);
+      emitInstances(defRfId, n.name, aliases, conns, actions);
+    }
+
+    // ── Column 3 ─ Action usages from non-composed part defs ─────────────────
+    for (const n of actionOnlyDefs) {
+      const defRfId  = `def-${n.name}`;
+      const actions  = n.body.filter(hasActionInst);
+      const defCenterY = defCol2Y.get(n.name);
+      if (defCenterY !== undefined) {
+        const clusterH = actions.length * PART_BASE_H + (actions.length - 1) * INST_V_GAP;
+        const alignedStart = defCenterY - Math.round(clusterH / 2);
+        if (alignedStart > col3Y) col3Y = alignedStart;
+      }
+      emitInstances(defRfId, n.name, [], [], actions);
     }
 
     // ── Column 3 ─ Composed part usages + their instances ─────────────────────
@@ -957,7 +1063,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       const aliases: (PA | IA)[] = n.body.filter((b): b is PA | IA =>
         b.kind === 'partAlias' || b.kind === 'itemAlias');
       const conns   = n.body.filter((b): b is CN => b.kind === 'connection');
-      if (aliases.length > 0) emitInstances(usageId, n.name, aliases, conns);
+      const actions = n.body.filter(hasActionInst);
+      if (aliases.length > 0 || actions.length > 0) emitInstances(usageId, n.name, aliases, conns, actions);
     }
 
     // ── Column 3 ─ Legacy structural occurrenceDef ────────────────────────────
@@ -1038,6 +1145,46 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
             id: edgeId, source: srcRf, target: tgtRf,
             sourceHandle: '__source_left', targetHandle: '__target_right',
             type: 'featureTypingEdge',
+            zIndex: 5,
+          });
+        }
+
+        // Specialization edges: PartDef :> PartDef (solid + hollow triangle at supertype)
+        // SysML v2 spec §8.2.3.6: same notation as FeatureTyping / Subclassification.
+        if (edge.type === 'specialization') {
+          const srcRf = graphIdToRfId.get(edge.source);
+          const tgtRf = graphIdToRfId.get(edge.target);
+          if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
+          const edgeId  = `spec-graph-${edge.id}`;
+          const pairKey = `${srcRf}→${tgtRf}`;
+          if (addedEdgeIds.has(edgeId) || addedEdgePairs.has(pairKey)) continue;
+          addedEdgeIds.add(edgeId);
+          addedEdgePairs.add(pairKey);
+          baseEdges.push({
+            id: edgeId, source: srcRf, target: tgtRf,
+            sourceHandle: '__source_left', targetHandle: '__target_right',
+            type: 'featureTypingEdge',
+            data: { stroke: '#818cf8' },  // indigo tint — visually distinguishes from typing
+            zIndex: 5,
+          });
+        }
+
+        // Subsetting edges: PartUsage :>> PartUsage (solid + hollow triangle at supersetted usage)
+        // SysML v2 spec §8.2.3.6: same notation as FeatureTyping / Subsetting.
+        if (edge.type === 'subsetting') {
+          const srcRf = graphIdToRfId.get(edge.source);
+          const tgtRf = graphIdToRfId.get(edge.target);
+          if (!srcRf || !tgtRf || srcRf === tgtRf) continue;
+          const edgeId  = `sub-graph-${edge.id}`;
+          const pairKey = `${srcRf}→${tgtRf}`;
+          if (addedEdgeIds.has(edgeId) || addedEdgePairs.has(pairKey)) continue;
+          addedEdgeIds.add(edgeId);
+          addedEdgePairs.add(pairKey);
+          baseEdges.push({
+            id: edgeId, source: srcRf, target: tgtRf,
+            sourceHandle: '__source_left', targetHandle: '__target_right',
+            type: 'featureTypingEdge',
+            data: { stroke: '#a78bfa' },  // violet tint — visually distinguishes from specialization
             zIndex: 5,
           });
         }
