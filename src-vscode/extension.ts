@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
+import { spawn, type ChildProcess } from 'child_process';
 import {
   analyzeSysML,
   getSymbolAtPosition,
@@ -15,6 +17,95 @@ import type { SysMLNode } from '../src/core/modelTypes';
 import { buildContainmentGraph } from '../src/core/adapters/officialSysMLAdapter';
 import type { ModelNode } from '../src/core/sysmlv2Official/ModelNode';
 import { scanRawAnnotations } from '../src/core/trlc/extractTraces';
+
+// ── Parser-service auto-spawn ─────────────────────────────────────────────────
+
+let _managedParserProcess: ChildProcess | undefined;
+
+function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.unref();
+    srv.on('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+async function isServiceReachable(url: string): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 1500);
+    const res = await fetch(`${url}/health`, { signal: ctrl.signal });
+    clearTimeout(t);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+function findNodeBinary(): string {
+  // VS Code launched from the macOS Dock doesn't inherit shell PATH, so 'node'
+  // alone may not resolve. Check the most common absolute locations first.
+  const candidates = [
+    '/opt/homebrew/bin/node',   // Apple Silicon Homebrew
+    '/usr/local/bin/node',      // Intel Homebrew / nvm default symlink
+    '/usr/bin/node',            // system node (rare on macOS)
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return 'node'; // last resort — works when VS Code is launched from terminal
+}
+
+async function startManagedParserService(extensionPath: string, configuredUrl: string): Promise<string> {
+  if (await isServiceReachable(configuredUrl)) {
+    console.log(`[sysml-visualizer] Parser service already running at ${configuredUrl}`);
+    return configuredUrl;
+  }
+
+  const scriptPath = path.join(extensionPath, 'parser-service', 'dist', 'index.js');
+  if (!fs.existsSync(scriptPath)) {
+    console.warn(`[sysml-visualizer] parser-service/dist/index.js not found — cannot auto-start`);
+    return configuredUrl;
+  }
+
+  const port    = await findFreePort();
+  const url     = `http://localhost:${port}`;
+  const nodeBin = findNodeBinary();
+  console.log(`[sysml-visualizer] Spawning parser service: ${nodeBin} ${scriptPath} (port ${port})`);
+
+  const child = spawn(nodeBin, [scriptPath], {
+    env: { ...process.env, PARSER_SERVICE_PORT: String(port) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false,
+  });
+  _managedParserProcess = child;
+
+  child.on('error', err => console.error(`[sysml-visualizer] Failed to spawn parser service: ${err.message}`));
+  child.stdout?.on('data', (d: Buffer) => process.stdout.write(`[parser-service] ${d}`));
+  child.stderr?.on('data', (d: Buffer) => process.stderr.write(`[parser-service] ${d}`));
+  child.on('exit', code => {
+    if (_managedParserProcess === child) _managedParserProcess = undefined;
+    console.log(`[sysml-visualizer] Parser service exited (code ${code ?? 'unknown'})`);
+  });
+
+  // Poll until ready (max ~15 s).
+  for (let i = 0; i < 50; i++) {
+    await new Promise(r => setTimeout(r, 300));
+    if (await isServiceReachable(url)) {
+      console.log(`[sysml-visualizer] Parser service auto-started at ${url}`);
+      return url;
+    }
+  }
+
+  console.warn(`[sysml-visualizer] Parser service did not start in time; using ${configuredUrl}`);
+  child.kill();
+  _managedParserProcess = undefined;
+  return configuredUrl;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
   let currentSysmlUri: vscode.Uri | undefined;
@@ -31,6 +122,17 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
   context.subscriptions.push(diagnosticCollection);
+
+  // Auto-start the parser service if not already running at the configured URL.
+  // Resolves to the effective URL (spawned port or the configured URL if already up).
+  const initialConfigUrl = vscode.workspace
+    .getConfiguration('sysmlVisualizer')
+    .get<string>('parserServiceUrl', 'http://localhost:9001')
+    .replace(/\/$/, '');
+  let parserServiceReady: Promise<string> = startManagedParserService(
+    context.extensionUri.fsPath,
+    initialConfigUrl,
+  );
 
   // ── Diagnostic helpers ────────────────────────────────────────────────────────
 
@@ -81,8 +183,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
     try {
-    const cfg = vscode.workspace.getConfiguration('sysmlVisualizer');
-    const serviceUrl = cfg.get<string>('parserServiceUrl', 'http://localhost:9001').replace(/\/$/, '');
+    const serviceUrl = await parserServiceReady;
     const uri = document.uri;
     console.log(`[sysml-visualizer] START publishDiagnosticsOfficial: ${uri.fsPath}`);
 
@@ -119,7 +220,7 @@ export function activate(context: vscode.ExtensionContext): void {
       console.error('[sysml-visualizer] parser-service unreachable:', err);
       const vd = new vscode.Diagnostic(
         new vscode.Range(0, 0, 0, 0),
-        `SysML parser service unreachable at ${serviceUrl}. Start the parser-service (npm run parser:dev).`,
+        `SysML parser service unreachable at ${serviceUrl}. The service should start automatically — check the Output panel for errors.`,
         vscode.DiagnosticSeverity.Warning,
       );
       vd.source = 'SysML v2 Visualizer';
@@ -323,11 +424,8 @@ export function activate(context: vscode.ExtensionContext): void {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
       if (msg.type === 'ready') {
-        // Send the configured parser service URL so the webview uses VS Code
-        // settings rather than its localStorage default.
-        const parserServiceUrl = vscode.workspace
-          .getConfiguration('sysmlVisualizer')
-          .get<string>('parserServiceUrl', 'http://localhost:9001');
+        // Send the effective parser service URL (auto-spawned port or configured URL).
+        const parserServiceUrl = await parserServiceReady;
         panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl });
         console.log(`[sysml-visualizer] parserServiceUrl sent: ${parserServiceUrl}`);
 
@@ -546,11 +644,18 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('sysmlVisualizer.parserServiceUrl')) {
-        const url = vscode.workspace
+        const newUrl = vscode.workspace
           .getConfiguration('sysmlVisualizer')
-          .get<string>('parserServiceUrl', 'http://localhost:9001');
-        panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl: url });
-        console.log(`[sysml-visualizer] parserServiceUrl updated: ${url}`);
+          .get<string>('parserServiceUrl', 'http://localhost:9001')
+          .replace(/\/$/, '');
+        // Kill any managed process — user is now explicitly directing traffic.
+        _managedParserProcess?.kill();
+        _managedParserProcess = undefined;
+        parserServiceReady = startManagedParserService(context.extensionUri.fsPath, newUrl);
+        void parserServiceReady.then(url => {
+          panel.webview.postMessage({ type: 'parserServiceConfig', parserServiceUrl: url });
+          console.log(`[sysml-visualizer] parserServiceUrl updated: ${url}`);
+        });
       }
     }, undefined, disposables);
 
@@ -1065,7 +1170,10 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  _managedParserProcess?.kill();
+  _managedParserProcess = undefined;
+}
 
 // ── Module-level helpers ──────────────────────────────────────────────────────
 
