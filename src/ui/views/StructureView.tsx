@@ -865,7 +865,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           baseEdges.push({
             id: `typing-inst-${ownerName}-${alias.name}`,
             source: instRfId, target: ftTarget,
-            sourceHandle: '__source_left', targetHandle: '__target_right',
+            sourceHandle: '__source_left', targetHandle: '__target',
             type: 'featureTypingEdge',
             zIndex: 5,
           });
@@ -912,7 +912,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
             baseEdges.push({
               id: `typing-action-${ownerName}-${action.name}`,
               source: actRfId, target: ftActTarget,
-              sourceHandle: '__source_left', targetHandle: '__target_right',
+              sourceHandle: '__source_left', targetHandle: '__target',
               type: 'featureTypingEdge',
               zIndex: 5,
             });
@@ -1053,7 +1053,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           baseEdges.push({
             id: `typing-${n.name}->${targetId}`,
             source: usageId, target: targetId,
-            sourceHandle: '__source_left', targetHandle: '__target_right',
+            sourceHandle: '__source_left', targetHandle: '__target',
             type: 'featureTypingEdge',
             zIndex: 5,
           });
@@ -1143,7 +1143,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           addedEdgePairs.add(pairKey);
           baseEdges.push({
             id: edgeId, source: srcRf, target: tgtRf,
-            sourceHandle: '__source_left', targetHandle: '__target_right',
+            sourceHandle: '__source_left', targetHandle: '__target',
             type: 'featureTypingEdge',
             zIndex: 5,
           });
@@ -1162,7 +1162,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           addedEdgePairs.add(pairKey);
           baseEdges.push({
             id: edgeId, source: srcRf, target: tgtRf,
-            sourceHandle: '__source_left', targetHandle: '__target_right',
+            sourceHandle: '__source_left', targetHandle: '__target',
             type: 'featureTypingEdge',
             data: { stroke: '#818cf8' },  // indigo tint — visually distinguishes from typing
             zIndex: 5,
@@ -1182,7 +1182,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           addedEdgePairs.add(pairKey);
           baseEdges.push({
             id: edgeId, source: srcRf, target: tgtRf,
-            sourceHandle: '__source_left', targetHandle: '__target_right',
+            sourceHandle: '__source_left', targetHandle: '__target',
             type: 'featureTypingEdge',
             data: { stroke: '#a78bfa' },  // violet tint — visually distinguishes from specialization
             zIndex: 5,
