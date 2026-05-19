@@ -3,16 +3,17 @@ package AcpdCdd_SysMLv2 {
     package Behavior_Main10ms {
 
         private import ScalarValues::*;
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
         // trlc-satisfies: 28596119
-        action def AcpdCdd_Main10ms {
-action AcpdCdd_Activation;
-            action AcpdCdd_CollectInputData;
-            action AcpdCdd_Process;
-            action AcpdCdd_PowermanagementCalcStatus;
-            action AdcBist_GetVaref1ErrorStatus;
-            action AdcBist_GetVaref2ErrorStatus;
-            action AcpdCdd_Monitoring;
-            action AcpdCdd_Output;
+        action def AcpdCdd_Main10ms :> RunnableFunction {
+action AcpdCdd_Activation : ModuleApiFunction;
+            action AcpdCdd_CollectInputData : ModuleApiFunction;
+            action AcpdCdd_Process : ModuleApiFunction;
+            action AcpdCdd_PowermanagementCalcStatus : ModuleApiFunction;
+            action AdcBist_GetVaref1ErrorStatus : ExternalBswFunction;
+            action AdcBist_GetVaref2ErrorStatus : ExternalBswFunction;
+            action AcpdCdd_Monitoring : ModuleApiFunction;
+            action AcpdCdd_Output : ModuleApiFunction;
 
             first AcpdCdd_Activation then AcpdCdd_CollectInputData;
             first AcpdCdd_CollectInputData then AcpdCdd_Process;
@@ -23,7 +24,7 @@ action AcpdCdd_Activation;
             first AcpdCdd_Monitoring then AcpdCdd_Output;
         }
 
-        action def AcpdCdd_Runtime_Sequence_AsActionFlow {
+        action AcpdCdd_Runtime_Sequence_AsActionFlow {
 action RuntimeActivatesAcpdCdd;
             action RuntimeExecutesInputCycle;
             action RuntimeExecutesProcessingCycle;

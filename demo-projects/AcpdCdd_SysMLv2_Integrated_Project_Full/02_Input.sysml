@@ -4,7 +4,9 @@ package AcpdCdd_SysMLv2 {
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
 	private import ScalarValues::Boolean;
-        // Boolean guards used by explicit conditional branching.
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
+        private import AcpdCdd_SysMLv2::SWFailureCatalogue::*;
+// Boolean guards used by explicit conditional branching.
         attribute EvaluateUpdateCounter_detectsMissingEntries : Boolean;
         attribute Group0SampleCountPointerAndRange_isValid : Boolean;
         attribute OldGroup0Cache_isFilled : Boolean;
@@ -42,7 +44,7 @@ package AcpdCdd_SysMLv2 {
 
         // trlc-satisfies: 28824395
         // trlc-satisfies: 25094135
-        action def AcpdCdd_InitializeAdcGroupData {
+        action def AcpdCdd_InitializeAdcGroupData :> StaticHelperFunction {
             in item AdcGroupData : AdcGroupDataType;
             out item InitializedAdcGroupData : AdcGroupDataType;
             action CheckAdcGroupDataNotNull {
@@ -71,7 +73,7 @@ flow from AdcGroupData to CheckAdcGroupDataNotNull.AdcGroupData;
             flow from SetUpdateCounterToZero.InitializedAdcGroupData to InitializedAdcGroupData;
         }
 
-        action def AcpdCdd_AddAdcGroupDataEntry {
+        action def AcpdCdd_AddAdcGroupDataEntry :> StaticHelperFunction {
             in item SensorData : AdcGroupDataType;
             in item SensorDataEntry : AdcSensorDataEntryType;
             out item UpdatedSensorData : AdcGroupDataType;
@@ -109,7 +111,7 @@ flow from SensorData to CheckSensorDataNotNull.SensorData;
             flow from IncrementUpdateCounter.UpdatedSensorData to UpdatedSensorData;
         }
 
-        action def AcpdCdd_GetAdcGroupData {
+        action def AcpdCdd_GetAdcGroupData :> StaticHelperFunction {
             in item SensorData : AdcGroupDataType;
             out item result : AdcSensorDataBufferType;
             out item UpdatedSensorData : AdcGroupDataType;
@@ -162,7 +164,7 @@ flow from SensorData to CheckSensorDataNotNull.SensorData;
             flow from DecrementUpdateCounter.UpdatedSensorData to UpdatedSensorData;
         }
 
-        action def AcpdCdd_StartInputCollector {
+        action def AcpdCdd_StartInputCollector :> ModuleApiFunction {
             out attribute success : Boolean;
             out item group0Data : AdcGroupDataType;
             out item group1Data : AdcGroupDataType;
@@ -228,7 +230,7 @@ first SetupResultBufferGroup0 then SetupResultBufferGroup1;
         }
         // trlc-satisfies: 25127428
         // trlc-satisfies: 25187813
-        action def AcpdCdd_AdcGroup0NewData {
+        action def AcpdCdd_AdcGroup0NewData :> StaticHelperFunction {
 
             in item adcGroup0Sample : AdcSensorDataEntryType;
             in item groupDataEntryPair : AdcGroupDataEntryPairType;
@@ -348,7 +350,7 @@ flow from SetIsGroup0FilledTrue.updatedGroupDataEntryPair to WriteConsistentPair
             flow from ReturnUpdatedGroupDataEntryPair.updatedGroupDataEntryPair to updatedGroupDataEntryPair;
         }
 
-        action def AcpdCdd_AdcGroup1NewData {
+        action def AcpdCdd_AdcGroup1NewData :> StaticHelperFunction {
 
             in item adcGroup1Sample : AdcSensorDataEntryType;
             in item groupDataEntryPair : AdcGroupDataEntryPairType;
@@ -452,7 +454,7 @@ flow from SetIsGroup1FilledTrue.updatedGroupDataEntryPair to WriteConsistentPair
         }
 
         // trlc-satisfies: 25127531
-        action def AcpdCdd_AdcSupplyNewData {
+        action def AcpdCdd_AdcSupplyNewData :> StaticHelperFunction {
 
             in item adcSupplySample : AdcSensorDataEntryType;
             in item supplyData : AdcGroupDataType;
@@ -498,7 +500,7 @@ flow from adcSupplySample to UseActualSupplySample.supplySample;
         }
         // trlc-satisfies: 25130711
         // trlc-satisfies: 28710933
-        action def AcpdCdd_CollectInputData {
+        action def AcpdCdd_CollectInputData :> ModuleApiFunction {
             in item group0Data : AdcGroupDataType;
             in item group1Data : AdcGroupDataType;
             in item supplyData : AdcGroupDataType;
@@ -588,14 +590,18 @@ flow from group0Data to GetGroup0Data.group0Data;
             flow from GetGroup0Data.updatedGroup0Data to updatedGroup0Data;
             flow from GetGroup1Data.updatedGroup1Data to updatedGroup1Data;
             flow from GetSupplyData.updatedSupplyData to updatedSupplyData;
-        }
 
-        action def AcpdCdd_Input_Behavior {
-action AcpdCdd_StartInputCollector;
-            action AcpdCdd_AdcGroup0NewData;
-            action AcpdCdd_AdcGroup1NewData;
-            action AcpdCdd_AdcSupplyNewData;
-            action AcpdCdd_CollectInputData;
+            item missingOrStaleInputDataFailure : MissingOrStaleInputData {
+                attribute localEffect = "Returned InputData may contain stale, missing, or default ADC samples.";
+            }
+}
+
+        action AcpdCdd_Input_Behavior {
+action AcpdCdd_StartInputCollector : ModuleApiFunction;
+            action AcpdCdd_AdcGroup0NewData : StaticHelperFunction;
+            action AcpdCdd_AdcGroup1NewData : StaticHelperFunction;
+            action AcpdCdd_AdcSupplyNewData : StaticHelperFunction;
+            action AcpdCdd_CollectInputData : ModuleApiFunction;
 
             first AcpdCdd_StartInputCollector then AcpdCdd_CollectInputData;
             first AcpdCdd_AdcGroup0NewData then AcpdCdd_CollectInputData;
@@ -608,7 +614,7 @@ action AcpdCdd_StartInputCollector;
         // This follows the official SysML v2 conditional succession pattern:
         // first <sourceAction> if <Boolean expression> then <targetAction>;
         // Visualizers can render those guarded successions as dotted conditional arrows.
-        action def AcpdCdd_Input_Main10ms_GuardedBranching {
+        action AcpdCdd_Input_Main10ms_GuardedBranching {
 
             in item adcNotification : AdcNotificationPayloadType;
             out item inputData : InputDataType;
@@ -742,7 +748,7 @@ first validateSupplySample if SupplySample_isInvalid then setSupplyInvalidQualif
             action inputMain10msGuardedBranching : AcpdCdd_Input_Main10ms_GuardedBranching;
         }
 
-        action def AcpdCdd_Input_Sequence_AsActionFlow {
+        action AcpdCdd_Input_Sequence_AsActionFlow {
 action InputInitializesAdcGroupData;
             action InputAddsAdcGroupDataEntry;
             action InputRequestsStoredAdcGroupData;

@@ -4,8 +4,9 @@ package AcpdCdd_SysMLv2 {
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
 	private import ScalarValues::Boolean;
-
-        // trlc-satisfies: 25188489
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
+        private import AcpdCdd_SysMLv2::SWFailureCatalogue::*;
+// trlc-satisfies: 25188489
         port def ActivationInPort {
             in attribute activation;
         }
@@ -19,7 +20,7 @@ package AcpdCdd_SysMLv2 {
             out attribute Status;
         }
 
-        action def AcpdCdd_InitPowerDio {
+        action def AcpdCdd_InitPowerDio :> StaticHelperFunction {
 action SetDioChannelCto5vapp1Low;
             action SetDioChannelCto5vapp2Low;
             action Return;
@@ -28,7 +29,7 @@ action SetDioChannelCto5vapp1Low;
             first SetDioChannelCto5vapp2Low then Return;
         }
 
-        action def AcpdCdd_SetPowerDio {
+        action def AcpdCdd_SetPowerDio :> StaticHelperFunction {
             in attribute Status;
 action WriteDioChannelCto5vapp1;
             action WriteDioChannelCto5vapp2;
@@ -40,8 +41,8 @@ action WriteDioChannelCto5vapp1;
             first OptionalReadbackVerification then Return;
         }
 
-        action def AcpdCdd_PowermanagementInit {
-action AcpdCdd_InitPowerDio;
+        action def AcpdCdd_PowermanagementInit :> ModuleApiFunction {
+action AcpdCdd_InitPowerDio : StaticHelperFunction;
             // trlc-satisfies: 41716503
             action SetCurrentPowerStatePowerOff;
             action SetCurrentPowerTransitionNone;
@@ -53,7 +54,7 @@ action AcpdCdd_InitPowerDio;
         }
 
         // trlc-satisfies: 25188589
-        action def AcpdCdd_PowermanagementCalcStatus {
+        action def AcpdCdd_PowermanagementCalcStatus :> ModuleApiFunction {
             out item Status : PowerStatusType;
 action CopyCurrentPowerStateToStatus;
             action CopyCurrentPowerTransitionToStatus;
@@ -63,9 +64,13 @@ action CopyCurrentPowerStateToStatus;
             first CopyCurrentPowerStateToStatus then CopyCurrentPowerTransitionToStatus;
             first CopyCurrentPowerTransitionToStatus then ResetCurrentPowerTransitionToNone;
             first ResetCurrentPowerTransitionToNone then ReturnStatus;
-        }
 
-        action def AcpdCdd_PowermanagementExecute {
+            item incorrectPowerStatusFailure : PowerStateIncorrect {
+                attribute localEffect = "Returned PowerStatusType does not represent the actual power state or transition.";
+            }
+}
+
+        action def AcpdCdd_PowermanagementExecute :> ModuleApiFunction {
             in attribute PowerState;
 attribute PowerState_isValid : Boolean;
             attribute RequestedTransition_isPowerOffToPowerOn : Boolean;
@@ -104,7 +109,7 @@ attribute PowerState_isValid : Boolean;
                 first DetermineNoTransition if not SwitchOnEvent_isLatched then Return;
         }
 
-        action def AcpdCdd_Activation {
+        action def AcpdCdd_Activation :> ModuleApiFunction {
 attribute CompareActivationWithActivate_allows_ExecutePowerOn : Boolean;
             attribute CompareActivationWithActivate_allows_ExecutePowerOff : Boolean;
             action ReadActivationSignalFromRte;
@@ -118,14 +123,18 @@ attribute CompareActivationWithActivate_allows_ExecutePowerOn : Boolean;
                 first CompareActivationWithActivate if not CompareActivationWithActivate_allows_ExecutePowerOn then ExecutePowerOff;
 first ExecutePowerOn then Return;
             first ExecutePowerOff then Return;
-        }
 
-        action def AcpdCdd_Powermanagement_Behavior {
-action AcpdCdd_PowermanagementInit;
-            action AcpdCdd_Activation;
-            action AcpdCdd_PowermanagementExecute;
-            action AcpdCdd_SetPowerDio;
-            action AcpdCdd_PowermanagementCalcStatus;
+            item activationMisinterpretedFailure : ConditionIncorrectlyEvaluated {
+                attribute localEffect = "Requested activation state is interpreted incorrectly before power-state execution.";
+            }
+}
+
+        action AcpdCdd_Powermanagement_Behavior {
+action AcpdCdd_PowermanagementInit : ModuleApiFunction;
+            action AcpdCdd_Activation : ModuleApiFunction;
+            action AcpdCdd_PowermanagementExecute : ModuleApiFunction;
+            action AcpdCdd_SetPowerDio : StaticHelperFunction;
+            action AcpdCdd_PowermanagementCalcStatus : ModuleApiFunction;
 
             first AcpdCdd_PowermanagementInit then AcpdCdd_Activation;
             first AcpdCdd_Activation then AcpdCdd_PowermanagementExecute;
@@ -151,7 +160,7 @@ action AcpdCdd_PowermanagementInit;
             action powermanagementBehavior;
         }
 
-        action def AcpdCdd_Powermanagement_Sequence_AsActionFlow {
+        action AcpdCdd_Powermanagement_Sequence_AsActionFlow {
 action PowermanagementInitializesModule;
             action PowermanagementCalculatesPowerStatus;
 

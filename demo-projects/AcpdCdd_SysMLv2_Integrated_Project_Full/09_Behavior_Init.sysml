@@ -4,8 +4,9 @@ package AcpdCdd_SysMLv2 {
 
         private import ScalarValues::*;
 	private import ScalarValues::Boolean;
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
 
-        action def AcpdCdd_Initialization {
+        action AcpdCdd_Initialization {
 
             attribute AcpdCdd_active : Boolean;
             attribute setup_trial_counter;
@@ -14,8 +15,8 @@ attribute AcpdCddActive_isTrue : Boolean;
             action CheckAcpdCddActive;
             action ExecuteCyclicTasksIfActive;
             action CheckSetupTrialCounterAgainstMaxAttempts;
-            action AcpdCdd_StartInputCollector;
-            action AcpdCdd_StartProcessing;
+            action AcpdCdd_StartInputCollector : ModuleApiFunction;
+            action AcpdCdd_StartProcessing : ModuleApiFunction;
             action EnableAdcNotificationsAndHardwareTriggers;
             action SetAcpdCddActiveTrue;
             action IncrementSetupTrialCounter;
@@ -33,7 +34,7 @@ attribute AcpdCddActive_isTrue : Boolean;
                 first StopProcessing if not SetupTrialCounterBelowMaxAttempts then UpdateRteOutputWithSafeDefaultValues;
 }
 
-        action def AcpdCdd_Init_Sequence_AsActionFlow {
+        action AcpdCdd_Init_Sequence_AsActionFlow {
 attribute RuntimeInitializesInputModule_allows_RuntimeInitializesPowermanagementModule : Boolean;
             attribute RuntimeInitializesInputModule_allows_RuntimeStopsInitialization : Boolean;
             action RuntimeInitializesInputModule;
