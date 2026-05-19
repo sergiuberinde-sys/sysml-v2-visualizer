@@ -5,6 +5,7 @@ package AcpdCdd_SysMLv2 {
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
 	private import ScalarValues::Boolean;
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
         // Boolean guards used by explicit conditional branching.
         attribute AdcNotification_hasArrived : Boolean;
         attribute DecodedAdcTimestamp_isFresh : Boolean;
@@ -24,7 +25,7 @@ package AcpdCdd_SysMLv2 {
         // - Join_*     : join bar
         // The model remains parser-safe: these are normal action usages, not pseudo-SysML syntax.
 
-        action def AcpdCdd_Input_Main10ms_Branching {
+        action AcpdCdd_Input_Main10ms_Branching {
 
             in item notificationPayload : AdcNotificationPayloadType;
             out item inputData : InputDataType;
@@ -150,7 +151,7 @@ first ValidateSupplySample if SupplySample_isInvalid then SetSupplyInvalidQualif
             flow from ComposeFallbackInputData.composedInputData to PublishInputData.inputData;
         }
 
-        action def AcpdCdd_InputNotificationHandling_Conditional {
+        action AcpdCdd_InputNotificationHandling_Conditional {
 
             in item notificationPayload : AdcNotificationPayloadType;
             out item inputData : InputDataType;
@@ -183,7 +184,7 @@ first Decision_NotificationAvailable then Merge_NotificationHandling;
             first Merge_NotificationHandling then publishInputData;
         }
 
-        action def AcpdCdd_TimestampSupervision_Conditional {
+        action AcpdCdd_TimestampSupervision_Conditional {
 
             in item inputData : InputDataType;
             out item monitoringStatus : MonitoringStatusPayloadType;
@@ -215,7 +216,7 @@ first Decision_TimestampWithinTolerance then Merge_TimestampSupervision;
             first Merge_TimestampSupervision then publishMonitoringStatus;
         }
 
-        action def AcpdCdd_DeviationCheck_Conditional {
+        action AcpdCdd_DeviationCheck_Conditional {
 
             in item processedData : ChannelMeansType;
             out item monitoringStatus : MonitoringStatusPayloadType;
@@ -246,7 +247,7 @@ first Decision_SensorDeviationWithinLimit then Merge_DeviationCheck;
             first Merge_DeviationCheck then publishDeviationCheckResult;
         }
 
-        action def AcpdCdd_OutputQualifier_Conditional {
+        action AcpdCdd_OutputQualifier_Conditional {
 
             in item processedData : ChannelMeansType;
             in item monitoringStatus : MonitoringStatusPayloadType;
@@ -274,7 +275,7 @@ first Decision_MonitoringStatusOk then Merge_OutputQualifier;
             first Merge_OutputQualifier then publishRteOutput;
         }
 
-        action def AcpdCdd_Powermanagement_Conditional {
+        action AcpdCdd_Powermanagement_Conditional {
 
             in item activationStatus : ActivationStatusPayloadType;
             out item dioCommand : DioCommandPayloadType;
@@ -296,7 +297,7 @@ first Decision_ActivationRequested then Merge_PowermanagementCommand;
             first Merge_PowermanagementCommand then publishDioCommand;
         }
 
-        action def AcpdCdd_Main10ms_ConditionalOverview {
+        action AcpdCdd_Main10ms_ConditionalOverview {
 
             attribute inputDataFresh : Boolean;
             attribute sensorPairPlausible : Boolean;

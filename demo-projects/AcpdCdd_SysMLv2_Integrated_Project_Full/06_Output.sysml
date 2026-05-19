@@ -4,8 +4,9 @@ package AcpdCdd_SysMLv2 {
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
 	private import ScalarValues::Boolean;
-
-        port def AcceleratorDataInPort {
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
+        private import AcpdCdd_SysMLv2::SWFailureCatalogue::*;
+port def AcceleratorDataInPort {
             in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
         }
 
@@ -17,7 +18,7 @@ package AcpdCdd_SysMLv2 {
         // trlc-satisfies: 44879821
         // trlc-satisfies: 25131815
         // trlc-satisfies: 25131787
-        action def AcpdCdd_UpdateOutput {
+        action def AcpdCdd_UpdateOutput :> ModuleApiFunction {
             in item acceleratorData : tAcpdCdd_rc_AccrSnsr;
             out item RteData : tAcpdCdd_rc_AccrSnsr;
 action CheckAcceleratorDataPointer {
@@ -67,12 +68,19 @@ flow from CheckAcceleratorDataPointer.validAcceleratorData to ConvertAcpdCddData
             flow from MergeRteData.mergedRteData to Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc.mergedRteData;
             first Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc then Return;
             flow from Rte_Write_AcpdCdd_rc_AccrSnsrVcc_AcpdCdd_rc_SnsrVcc.RteData to RteData;
-        }
-        action def AcpdCdd_Output_Behavior {
+item nullInputDefaultNotAppliedFailure : DefaultValueNotApplied {
+                attribute localEffect = "NULL input is not converted to default/error output values.";
+            }
+
+            item incorrectRteOutputFailure : IncorrectOutputData {
+                attribute localEffect = "RTE output data does not consistently represent the qualified accelerator data.";
+            }
+}
+        action AcpdCdd_Output_Behavior {
 attribute ReceiveAcceleratorData_allows_AcpdCdd_UpdateOutput : Boolean;
             attribute ReceiveAcceleratorData_allows_WriteSafeDefaultOutput : Boolean;
             action ReceiveAcceleratorData;
-            action AcpdCdd_UpdateOutput;
+            action AcpdCdd_UpdateOutput : ModuleApiFunction;
             action WriteSafeDefaultOutput;
             action WriteRteOutput;
 
@@ -90,7 +98,7 @@ first AcpdCdd_UpdateOutput then WriteRteOutput;
             action outputBehavior;
         }
 
-        action def AcpdCdd_Output_Sequence_AsActionFlow {
+        action AcpdCdd_Output_Sequence_AsActionFlow {
 attribute OutputReceivesAcceleratorData_allows_OutputPreparesRteData : Boolean;
             attribute OutputReceivesAcceleratorData_allows_OutputRequestsSafeDefaultTransmission : Boolean;
             action OutputReceivesAcceleratorData;

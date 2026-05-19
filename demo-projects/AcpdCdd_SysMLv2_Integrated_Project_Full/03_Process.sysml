@@ -4,8 +4,9 @@ package AcpdCdd_SysMLv2 {
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
 	private import ScalarValues::Boolean;
-
-        port def InputDataInPort {
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
+        private import AcpdCdd_SysMLv2::SWFailureCatalogue::*;
+port def InputDataInPort {
             in item InputData : InputDataType;
         }
 
@@ -13,14 +14,14 @@ package AcpdCdd_SysMLv2 {
             out item ProcessedData : ChannelMeansType;
         }
 
-        action def AcpdCdd_StartProcessing {
+        action def AcpdCdd_StartProcessing :> ModuleApiFunction {
 action InitializeProcessWithDefault;
             action SetProcessingReady;
             first InitializeProcessWithDefault then SetProcessingReady;
         }
 
         // trlc-satisfies: 44880031
-        action def AcpdCdd_Process {
+        action def AcpdCdd_Process :> ModuleApiFunction {
             in item InputData : InputDataType;
             out item ProcessedData : ChannelMeansType;
 action CheckInputDataPointer {
@@ -87,10 +88,14 @@ flow from CheckInputDataPointer.checkedInputData to FetchSensorBuffers.InputData
             first MergeProcessedData then ReturnProcessedData;
             flow from MergeProcessedData.mergedProcessedData to ReturnProcessedData.mergedProcessedData;
             flow from ReturnProcessedData.ProcessedData to ProcessedData;
-        }
 
-        action def AcpdCdd_Process_Behavior {
-action AcpdCdd_Process;
+            item incorrectMeanComputationFailure : IncorrectOutputData {
+                attribute localEffect = "ChannelMeansType contains an incorrect averaged sensor or supply value.";
+            }
+}
+
+        action AcpdCdd_Process_Behavior {
+action AcpdCdd_Process : ModuleApiFunction;
             action ReturnProcessedData;
 
             first AcpdCdd_Process then ReturnProcessedData;
@@ -105,7 +110,7 @@ action AcpdCdd_Process;
             action processBehavior;
         }
 
-        action def AcpdCdd_Process_Sequence_AsActionFlow {
+        action AcpdCdd_Process_Sequence_AsActionFlow {
 action ProcessReceivesInputData;
             action FetchSensorBuffers;
             action ConvertSensorSamples;

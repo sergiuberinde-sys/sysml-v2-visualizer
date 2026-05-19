@@ -4,8 +4,9 @@ package AcpdCdd_SysMLv2 {
         private import ScalarValues::*;
         private import AcpdCdd_SysMLv2::Types::*;
 	private import ScalarValues::Boolean;
-
-        port def InputDataInPort {
+        private import AcpdCdd_SysMLv2::AUTOSAR_CDD_FunctionKinds::*;
+        private import AcpdCdd_SysMLv2::SWFailureCatalogue::*;
+port def InputDataInPort {
             in item InputData : InputDataType;
         }
 
@@ -30,7 +31,7 @@ package AcpdCdd_SysMLv2 {
         }
 
         // trlc-satisfies: 28710854
-        action def AcpdCdd_CrossCheckTimestamps {
+        action def AcpdCdd_CrossCheckTimestamps :> StaticHelperFunction {
             in attribute timestamp0;
             in attribute timestamp1;
             in attribute timestampOffset;
@@ -57,7 +58,7 @@ attribute CompareWithCrosscheckBound_allows_ReturnTrueIfInRange : Boolean;
         // trlc-satisfies: 41781989
         // trlc-satisfies: 28711565
         // trlc-satisfies: 30474716
-        action def AcpdCdd_CheckTimestamps {
+        action def AcpdCdd_CheckTimestamps :> StaticHelperFunction {
             in item InputData : InputDataType;
             out item ErrorCounters : AcpdCddCheckErrorCountersType;
 action InitializeErrorCounters;
@@ -86,10 +87,14 @@ action InitializeErrorCounters;
             first RecomputeInitialOffsetIfNeeded then CallAcpdCdd_CrossCheckTimestamps;
             first CallAcpdCdd_CrossCheckTimestamps then IncrementGroup0Group1CountersOnCrosscheckFail;
             first IncrementGroup0Group1CountersOnCrosscheckFail then ReturnErrorCounters;
-        }
+
+            item timestampErrorNotDetectedFailure : DetectionFailed {
+                attribute localEffect = "Timestamp/update-frequency inconsistency is not reflected in the error counters.";
+            }
+}
 
         // trlc-satisfies: 28711591
-        action def AcpdCdd_MissingDataCheck {
+        action def AcpdCdd_MissingDataCheck :> StaticHelperFunction {
             in item InputData : InputDataType;
             out item ErrorCounters : AcpdCddCheckErrorCountersType;
 action InitializeMissingDataCounters;
@@ -110,7 +115,11 @@ action InitializeMissingDataCounters;
             first IncrementGroup0Counter then IncrementGroup1Counter;
             first IncrementGroup1Counter then IncrementSupplyCounter;
             first IncrementSupplyCounter then ReturnMissingDataCounters;
-        }
+
+            item missingDataNotDetectedFailure : DetectionFailed {
+                attribute localEffect = "Missing, invalid, or stuck ADC samples are not reflected in the error counters.";
+            }
+}
 
         // trlc-satisfies: 25128928
         // trlc-satisfies: 44879718
@@ -122,7 +131,7 @@ action InitializeMissingDataCounters;
         // trlc-satisfies: 44879786
         // trlc-satisfies: 25128720
         // trlc-satisfies: 25128907
-        action def AcpdCdd_DeviationCheck {
+        action def AcpdCdd_DeviationCheck :> StaticHelperFunction {
             in item ProcessedData : ChannelMeansType;
 attribute Sensor0MonitoringMeanWithinAcceptableInterval : Boolean;
             attribute Sensor1MonitoringMeanWithinAcceptableInterval : Boolean;
@@ -154,9 +163,13 @@ first SelectSensor1MissionAndMonitoringMeans then ComputeSensor1AcceptableInterv
                 first CheckSensor1MonitoringWithinInterval if not Sensor1MonitoringMeanWithinAcceptableInterval then SetSensor1QualifierDegraded;
                 first SetSensor1QualifierDegraded if not Sensor1MonitoringMeanWithinAcceptableInterval then SetSensor1ValueToMinimum;
                 first SetSensor1ValueToMinimum if not Sensor1MonitoringMeanWithinAcceptableInterval then ReturnDeviationResult;
+
+            item deviationNotDetectedFailure : DetectionFailed {
+                attribute localEffect = "Mission/monitoring channel deviation is not detected or not classified correctly.";
+            }
 }
 
-        action def ResultPlausibilityCheck {
+        action def ResultPlausibilityCheck :> StaticHelperFunction {
 attribute Sensor0VoltageBelowLowerBound : Boolean;
             attribute Sensor0VoltageAboveUpperBound : Boolean;
             attribute Sensor1VoltageBelowLowerBound : Boolean;
@@ -187,7 +200,7 @@ attribute Sensor0VoltageBelowLowerBound : Boolean;
 
         // trlc-satisfies: 28883887
         // trlc-satisfies: 28883920
-        action def SupplyVoltageCheck {
+        action def SupplyVoltageCheck :> StaticHelperFunction {
 attribute Supply1OutOfValidRange : Boolean;
             attribute Supply2OutOfValidRange : Boolean;
             action CheckSupply1LowOrHighBound;
@@ -206,10 +219,14 @@ attribute Supply1OutOfValidRange : Boolean;
                 first SetSensor2AndSupply2QualifierError if Supply2OutOfValidRange then ReturnSupplyVoltageResult;
                 first CheckSupply2LowOrHighBound if not Supply2OutOfValidRange then LeaveSensor2AndSupply2QualifiersUnchanged;
                 first LeaveSensor2AndSupply2QualifiersUnchanged if not Supply2OutOfValidRange then ReturnSupplyVoltageResult;
+
+            item supplyFaultNotDetectedFailure : DetectionFailed {
+                attribute localEffect = "Supply voltage outside allowed thresholds is not converted into an error qualifier.";
+            }
 }
 
         // trlc-satisfies: 25188589
-        action def PowerStateVsQualifiers {
+        action PowerStateVsQualifiers {
 attribute PowerStateIsOff : Boolean;
             attribute TransitionIsSwitchToOn : Boolean;
             attribute TransitionIsSwitchToOff : Boolean;
@@ -233,7 +250,7 @@ attribute PowerStateIsOff : Boolean;
                 first ApplyStableOnChecks if not PowerStateIsOff and not TransitionIsSwitchToOn and not TransitionIsSwitchToOff then ReturnPowerQualifierResult;
         }
 
-        action def VARef_Error_Reaction {
+        action VARef_Error_Reaction {
             in attribute VARef1ErrorPresent;
             in attribute VARef2ErrorPresent;
 attribute VARef1ErrorPresent_isTrue : Boolean;
@@ -260,10 +277,10 @@ attribute VARef1ErrorPresent_isTrue : Boolean;
 
         // trlc-satisfies: 30477411
         // trlc-satisfies: 30477478
-        action def ADC_Error_Callbacks {
-action AcpdCdd_IncrementAdcConvErrGroup0;
-            action AcpdCdd_IncrementAdcConvErrGroup1;
-            action AcpdCdd_IncrementAdcConvErrSupply;
+        action ADC_Error_Callbacks {
+action AcpdCdd_IncrementAdcConvErrGroup0 : StaticHelperFunction;
+            action AcpdCdd_IncrementAdcConvErrGroup1 : StaticHelperFunction;
+            action AcpdCdd_IncrementAdcConvErrSupply : StaticHelperFunction;
             action EnterExclusiveArea;
             action CheckCounterMaximum;
             action IncrementCounterSafely;
@@ -279,11 +296,11 @@ action AcpdCdd_IncrementAdcConvErrGroup0;
             first ExitExclusiveArea then ApplyAdcErrorImpactToQualifiers;
         }
 
-        action def AcpdCdd_IncrementAdcConvErrGroup0;
-        action def AcpdCdd_IncrementAdcConvErrGroup1;
-        action def AcpdCdd_IncrementAdcConvErrSupply;
+        action def AcpdCdd_IncrementAdcConvErrGroup0 :> StaticHelperFunction;
+        action def AcpdCdd_IncrementAdcConvErrGroup1 :> StaticHelperFunction;
+        action def AcpdCdd_IncrementAdcConvErrSupply :> StaticHelperFunction;
 
-        action def AcpdCdd_Monitoring {
+        action def AcpdCdd_Monitoring :> ModuleApiFunction {
             in item InputData : InputDataType;
             in item ProcessedData : ChannelMeansType;
             in item PowerCycleStatus : PowerStatusType;
@@ -293,13 +310,13 @@ action AcpdCdd_IncrementAdcConvErrGroup0;
 
             // trlc-satisfies: 25094047
 action InitializeQualifiersFromProcessedData;
-            action AcpdCdd_MissingDataCheck;
-            action AcpdCdd_CheckTimestamps;
+            action AcpdCdd_MissingDataCheck : StaticHelperFunction;
+            action AcpdCdd_CheckTimestamps : StaticHelperFunction;
             action CombineWithAdcErrorCallbackCounters;
             action PowerStateVsQualifiers;
-            action AcpdCdd_DeviationCheck;
-            action ResultPlausibilityCheck;
-            action SupplyVoltageCheck;
+            action AcpdCdd_DeviationCheck : StaticHelperFunction;
+            action ResultPlausibilityCheck : StaticHelperFunction;
+            action SupplyVoltageCheck : StaticHelperFunction;
             action VARef_Error_Reaction;
             action ReturnAcceleratorData;
 
@@ -312,16 +329,19 @@ action InitializeQualifiersFromProcessedData;
             first ResultPlausibilityCheck then SupplyVoltageCheck;
             first SupplyVoltageCheck then VARef_Error_Reaction;
             first VARef_Error_Reaction then ReturnAcceleratorData;
-        }
+item qualifierIncorrectFailure : QualifierIncorrect {
+                attribute localEffect = "Monitoring returns sensor or supply data with an incorrect qualifier.";
+            }
+}
 
-        action def AcpdCdd_Monitoring_Behavior {
-action AcpdCdd_Monitoring;
-            action AcpdCdd_MissingDataCheck;
-            action AcpdCdd_CheckTimestamps;
-            action AcpdCdd_CrossCheckTimestamps;
-            action AcpdCdd_DeviationCheck;
-            action ResultPlausibilityCheck;
-            action SupplyVoltageCheck;
+        action AcpdCdd_Monitoring_Behavior {
+action AcpdCdd_Monitoring : ModuleApiFunction;
+            action AcpdCdd_MissingDataCheck : StaticHelperFunction;
+            action AcpdCdd_CheckTimestamps : StaticHelperFunction;
+            action AcpdCdd_CrossCheckTimestamps : StaticHelperFunction;
+            action AcpdCdd_DeviationCheck : StaticHelperFunction;
+            action ResultPlausibilityCheck : StaticHelperFunction;
+            action SupplyVoltageCheck : StaticHelperFunction;
             action PowerStateVsQualifiers;
             action VARef_Error_Reaction;
             action ADC_Error_Callbacks;
@@ -357,7 +377,7 @@ action AcpdCdd_Monitoring;
             action monitoringBehavior;
         }
 
-        action def AcpdCdd_Monitoring_Sequence_AsActionFlow {
+        action AcpdCdd_Monitoring_Sequence_AsActionFlow {
 action MonitoringReceivesProcessedData;
             action MonitoringReceivesPowerStatus;
 
