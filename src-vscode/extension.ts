@@ -676,9 +676,28 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         const newUri = editor.document.uri.toString();
-        const sameFile = currentSysmlUri?.toString() === newUri;
+        const oldUri = currentSysmlUri;
+        const sameFile = oldUri?.toString() === newUri;
         currentSysmlUri  = editor.document.uri;
         currentSysmlText = editor.document.getText();
+
+        // Close the previous SysML tab so col1 never accumulates more than one
+        // SysML file. This handles the case where VS Code opens a new file as a
+        // fresh tab (rather than replacing the preview tab) after the user has
+        // clicked inside the visualizer panel.
+        if (!sameFile && oldUri) {
+          const oldStr = oldUri.toString();
+          for (const group of vscode.window.tabGroups.all) {
+            for (const tab of group.tabs) {
+              if (tab.input instanceof vscode.TabInputText &&
+                  tab.input.uri.toString() === oldStr) {
+                void vscode.window.tabGroups.close(tab, false);
+                break;
+              }
+            }
+          }
+        }
+
         // Only reload the model when switching to a DIFFERENT .sysml file.
         // Same-file activations happen when revealSemanticElement (element chip
         // click in the trace view) calls showTextDocument — sending loadModel in
