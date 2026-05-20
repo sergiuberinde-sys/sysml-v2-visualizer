@@ -364,8 +364,8 @@ export default function App() {
   const officialParseResultRef = useRef<SysMLV2ParseResult | null>(null);
   // True when running inside the VS Code extension — the extension manages all
   // parsing and sends updateGraph, so the webview should not call the parser itself.
-  const isVSCodeModeRef = useRef(false);
-  const [isVSCodeMode, setIsVSCodeMode] = useState(false);
+  const isVSCodeModeRef = useRef(getAppMode() === 'vscode');
+  const [isVSCodeMode, setIsVSCodeMode] = useState(getAppMode() === 'vscode');
 
   // Cursor sync & focus subtree toggles (official mode only)
   const [syncCursor,   setSyncCursor]   = useState(true);
