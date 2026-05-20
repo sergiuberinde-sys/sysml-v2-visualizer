@@ -362,7 +362,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       const doc    = await vscode.workspace.openTextDocument(currentSysmlUri);
-      const editor = await vscode.window.showTextDocument(doc, { viewColumn: getDocColumn(currentSysmlUri) });
+      const editor = await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One });
       const pos    = new vscode.Position(0, 0);
       editor.selection = new vscode.Selection(pos, pos);
       editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
@@ -537,7 +537,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
         const position = new vscode.Position(line - 1, (column ?? 1) - 1);
         const editor = await vscode.window.showTextDocument(doc, {
-          viewColumn: getDocColumn(currentSysmlUri),
+          viewColumn: vscode.ViewColumn.One,
           preserveFocus: true,
         });
         editor.selection = new vscode.Selection(position, position);
@@ -574,7 +574,7 @@ export function activate(context: vscode.ExtensionContext): void {
           suppressEditorSync();
           const doc = await vscode.workspace.openTextDocument(found.uri);
           const editor = await vscode.window.showTextDocument(doc, {
-            viewColumn: getDocColumn(found.uri),
+            viewColumn: vscode.ViewColumn.One,
             preserveFocus: true,
           });
           editor.selection = new vscode.Selection(found.range.start, found.range.start);
@@ -599,7 +599,7 @@ export function activate(context: vscode.ExtensionContext): void {
         const startPos = new vscode.Position(range.startLine - 1, 0);
         const endPos   = new vscode.Position(range.endLine - 1, Number.MAX_SAFE_INTEGER);
         const editor = await vscode.window.showTextDocument(doc, {
-          viewColumn: getDocColumn(currentSysmlUri),
+          viewColumn: vscode.ViewColumn.One,
           preserveFocus: true,
         });
         editor.selection = new vscode.Selection(startPos, startPos);
@@ -656,13 +656,14 @@ export function activate(context: vscode.ExtensionContext): void {
 
       if (isSysml(editor.document)) {
         // Enforce column-1 placement while the visualizer panel is open.
+        // moveEditorToFirstGroup moves the active tab without creating a duplicate,
+        // unlike showTextDocument which would open a second copy in col 1.
         if (!movingToCol1 && editor.viewColumn !== vscode.ViewColumn.One) {
           movingToCol1 = true;
-          void vscode.window.showTextDocument(editor.document, {
-            viewColumn: vscode.ViewColumn.One,
-            preserveFocus: false,
-          }).then(() => { movingToCol1 = false; }, () => { movingToCol1 = false; });
-          // Let the re-triggered event (file now in col 1) handle loadModel.
+          void vscode.commands.executeCommand('workbench.action.moveEditorToFirstGroup')
+            .then(() => { movingToCol1 = false; }, () => { movingToCol1 = false; });
+          // The move re-triggers onDidChangeActiveTextEditor with viewColumn === One;
+          // that event handles the loadModel update.
           return;
         }
 
@@ -1509,17 +1510,6 @@ function getActiveSysmlEditor(): vscode.TextEditor | undefined {
   return editor && isSysml(editor.document) ? editor : undefined;
 }
 
-/**
- * Returns the ViewColumn of the already-open editor showing `uri`, falling
- * back to ViewColumn.One. Using the existing column keeps the visualizer
- * panel visible — it avoids opening a new column beside the webview.
- */
-function getDocColumn(uri: vscode.Uri): vscode.ViewColumn {
-  const existing = vscode.window.visibleTextEditors.find(
-    e => e.document.uri.toString() === uri.toString(),
-  );
-  return existing?.viewColumn ?? vscode.ViewColumn.One;
-}
 
 function isSysml(doc: vscode.TextDocument): boolean {
   return doc.fileName.endsWith('.sysml');
