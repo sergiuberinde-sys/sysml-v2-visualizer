@@ -197,7 +197,21 @@ export function activate(context: vscode.ExtensionContext): void {
         console.log(`[sysml-visualizer] updateGraph: ${gNodes.length} nodes, rangeIndex=${nodeIdToRange.size}`);
       }
     } catch (err) {
-      console.error('[sysml-visualizer] parse ERROR:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[sysml-visualizer] parse ERROR:', msg);
+      // ENOENT on the java spawn means Java is not installed / not on PATH.
+      if (msg.includes('ENOENT') || msg.includes('spawn')) {
+        void vscode.window.showErrorMessage(
+          'SysML v2 Visualizer: Java not found. ' +
+          'Please install Java 17 or 21 (https://adoptium.net) and restart VS Code. ' +
+          'Or set the SYSML_JAVA_HOME environment variable to your Java installation directory.',
+          'Open Download Page',
+        ).then(choice => {
+          if (choice === 'Open Download Page') {
+            void vscode.env.openExternal(vscode.Uri.parse('https://adoptium.net/temurin/releases/?version=21'));
+          }
+        });
+      }
     }
   }
 
