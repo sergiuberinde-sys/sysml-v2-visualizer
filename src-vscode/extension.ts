@@ -372,13 +372,25 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Visualizer panel command ──────────────────────────────────────────────────
 
-  const cmd = vscode.commands.registerCommand('sysmlVisualizer.openVisualizer', () => {
-    // Snapshot the active sysml file BEFORE opening the panel.
+  const cmd = vscode.commands.registerCommand('sysmlVisualizer.openVisualizer', async () => {
+    // If a panel is already open, just bring it into view — no duplicate panels.
+    if (activePanel) {
+      activePanel.reveal(vscode.ViewColumn.Two, false);
+      return;
+    }
+
+    // Snapshot the active sysml file BEFORE opening the panel, then move it
+    // to column 1 so the visualizer can open in column 2 beside it.
     const preLaunchSysml = getActiveSysmlEditor();
     if (preLaunchSysml) {
       currentSysmlUri  = preLaunchSysml.document.uri;
       currentSysmlText = preLaunchSysml.document.getText();
       console.log(`[sysml-visualizer] captured initial sysml file: ${path.basename(preLaunchSysml.document.fileName)}`);
+      // Ensure the SysML file is in column 1 so the visualizer lands in column 2.
+      await vscode.window.showTextDocument(preLaunchSysml.document, {
+        viewColumn: vscode.ViewColumn.One,
+        preserveFocus: true,
+      });
     } else {
       console.log('[sysml-visualizer] no active .sysml editor at launch time');
     }
@@ -386,7 +398,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const panel = vscode.window.createWebviewPanel(
       'sysmlVisualizer',
       'SysML v2 Visualizer',
-      vscode.ViewColumn.Beside,
+      vscode.ViewColumn.Two,
       {
         enableScripts: true,
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist')],
@@ -623,6 +635,12 @@ export function activate(context: vscode.ExtensionContext): void {
     }, undefined, disposables);
 
     // ── Active editor switches ────────────────────────────────────────────────
+    // When the panel is open we enforce a two-column layout: SysML file on the
+    // left (column 1), visualizer on the right (column 2).  If a SysML file
+    // becomes active in any column other than 1 we silently move it there;
+    // the resulting re-activation carries the file in column 1 and proceeds
+    // normally.  A flag guards against the move triggering a second re-entry.
+    let movingToCol1 = false;
 
     vscode.window.onDidChangeActiveTextEditor(editor => {
       if (editor === undefined) {
@@ -632,6 +650,17 @@ export function activate(context: vscode.ExtensionContext): void {
       }
 
       if (isSysml(editor.document)) {
+        // Enforce column-1 placement while the visualizer panel is open.
+        if (!movingToCol1 && editor.viewColumn !== vscode.ViewColumn.One) {
+          movingToCol1 = true;
+          void vscode.window.showTextDocument(editor.document, {
+            viewColumn: vscode.ViewColumn.One,
+            preserveFocus: false,
+          }).then(() => { movingToCol1 = false; }, () => { movingToCol1 = false; });
+          // Let the re-triggered event (file now in col 1) handle loadModel.
+          return;
+        }
+
         const newUri = editor.document.uri.toString();
         const sameFile = currentSysmlUri?.toString() === newUri;
         currentSysmlUri  = editor.document.uri;
@@ -695,7 +724,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showWarningMessage('SysML Visualizer: open the visualizer panel first.');
         return;
       }
-      activePanel.reveal(vscode.ViewColumn.Beside, true);
+      activePanel.reveal(vscode.ViewColumn.Two, true);
       void activePanel.webview.postMessage({ type: 'revealTrlcReq', numericId });
     }),
   );
