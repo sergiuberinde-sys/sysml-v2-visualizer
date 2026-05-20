@@ -37,6 +37,15 @@ function resolveStdlibPath(): string | null {
 // $JAVA_HOME is skipped on macOS because Maven/Gradle commonly point it at an
 // older JDK; on Windows that ambiguity is rare and JAVA_HOME is the standard.
 import { readdirSync } from 'fs';
+import { execSync } from 'child_process';
+
+/** Score a JDK directory name: higher version = higher score, prefer JDK over JRE. */
+function jdkScore(name: string): number {
+  const isJre = /jre/i.test(name) && !/jdk/i.test(name);
+  const ver   = name.match(/(\d+)/);
+  return (ver ? parseInt(ver[1], 10) : 0) - (isJre ? 1000 : 0);
+}
+
 function resolveJavaExe(): string {
   const isWin = process.platform === 'win32';
   const exe   = isWin ? 'java.exe' : 'java';
@@ -47,10 +56,14 @@ function resolveJavaExe(): string {
   }
 
   if (!isWin) {
-    // 2. macOS Homebrew (arm64 and Intel)
+    // 2. macOS — Homebrew well-known paths (newest major first)
     for (const candidate of [
       '/opt/homebrew/opt/openjdk@21/bin/java',
+      '/opt/homebrew/opt/openjdk@17/bin/java',
+      '/opt/homebrew/opt/openjdk/bin/java',
       '/usr/local/opt/openjdk@21/bin/java',
+      '/usr/local/opt/openjdk@17/bin/java',
+      '/usr/local/opt/openjdk/bin/java',
     ]) {
       if (existsSync(candidate)) {
         console.log(`[sysml-v2-parser-service] Using Java from Homebrew: ${candidate}`);
@@ -58,7 +71,7 @@ function resolveJavaExe(): string {
       }
     }
   } else {
-    // 3a. Windows — JAVA_HOME (set automatically by Oracle, Adoptium, Microsoft, Corretto installers)
+    // 3a. Windows — JAVA_HOME (set by Oracle, Adoptium, Microsoft, Corretto installers)
     if (process.env['JAVA_HOME']) {
       const candidate = join(process.env['JAVA_HOME'], 'bin', 'java.exe');
       if (existsSync(candidate)) {
@@ -67,33 +80,61 @@ function resolveJavaExe(): string {
       }
     }
 
-    // 3b. Windows — scan common installation roots for any jdk-21.x directory
+    // 3b. Windows — scan all common installation roots for ANY JDK/JRE
+    const pf   = process.env['PROGRAMFILES']       ?? 'C:\\Program Files';
+    const pf86 = process.env['PROGRAMFILES(X86)']  ?? 'C:\\Program Files (x86)';
+    const ld   = process.env['LOCALAPPDATA']        ?? '';
     const roots: string[] = [
-      'C:\\Program Files\\Eclipse Adoptium',
-      'C:\\Program Files\\Microsoft',
-      'C:\\Program Files\\Java',
-      'C:\\Program Files\\Amazon Corretto',
-      ...(process.env['PROGRAMFILES']      ? [`${process.env['PROGRAMFILES']}\\Eclipse Adoptium`,
-                                               `${process.env['PROGRAMFILES']}\\Microsoft`] : []),
-      ...(process.env['PROGRAMFILES(X86)'] ? [`${process.env['PROGRAMFILES(X86)']}\\Java`]  : []),
+      // Adoptium / Eclipse Temurin
+      `${pf}\\Eclipse Adoptium`, `${pf}\\Adoptium`,
+      // Microsoft Build of OpenJDK
+      `${pf}\\Microsoft`,
+      // Oracle JDK / OpenJDK
+      `${pf}\\Java`, `${pf86}\\Java`,
+      // Amazon Corretto
+      `${pf}\\Amazon Corretto`,
+      // Azul Zulu
+      `${pf}\\Zulu`, `${pf}\\Azul`,
+      // BellSoft Liberica
+      `${pf}\\BellSoft`,
+      // GraalVM
+      `${pf}\\GraalVM`,
+      // Generic OpenJDK
+      `${pf}\\OpenJDK`,
+      // Scoop / user-level installs
+      ...(ld ? [`${ld}\\Programs`] : []),
     ];
+
+    const found: { candidate: string; score: number }[] = [];
     for (const root of roots) {
       if (!existsSync(root)) continue;
       let entries: string[] = [];
       try { entries = readdirSync(root); } catch { continue; }
-      // Prefer entries matching jdk-21 or jdk21 (case-insensitive)
-      const jdk21 = entries.filter(e => /jdk-?21/i.test(e)).sort().reverse(); // newest patch first
-      for (const entry of jdk21) {
+      for (const entry of entries) {
         const candidate = join(root, entry, 'bin', 'java.exe');
         if (existsSync(candidate)) {
-          console.log(`[sysml-v2-parser-service] Using Java 21 from ${root}: ${candidate}`);
-          return candidate;
+          found.push({ candidate, score: jdkScore(entry) });
         }
       }
     }
+    if (found.length > 0) {
+      found.sort((a, b) => b.score - a.score);
+      console.log(`[sysml-v2-parser-service] Using Java from directory scan: ${found[0].candidate}`);
+      return found[0].candidate;
+    }
+
+    // 3c. Windows — ask `where.exe` to locate java on PATH
+    try {
+      const result = execSync('where java.exe', { encoding: 'utf8', timeout: 3000 }).trim();
+      const first  = result.split('\n')[0]?.trim();
+      if (first && existsSync(first)) {
+        console.log(`[sysml-v2-parser-service] Using Java from where.exe: ${first}`);
+        return first;
+      }
+    } catch { /* where.exe failed — fall through */ }
   }
 
-  // 4. Last resort — works if Java is on the system PATH
+  // 4. Last resort — works if java is on PATH (e.g. VS Code launched from terminal)
   return exe;
 }
 
