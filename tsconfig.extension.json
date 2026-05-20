@@ -14,6 +14,12 @@
     "noUnusedParameters": true
   },
   "include": ["src-vscode"],
-  "files": ["src/core/modelBuilder.ts"],
+  "files": [
+    "src/core/modelBuilder.ts",
+    "parser-service/src/types.ts",
+    "parser-service/src/javaWrapperClient.ts",
+    "parser-service/src/graphBuilder.ts",
+    "parser-service/src/behaviorBuilder.ts"
+  ],
   "exclude": ["node_modules", ".vscode-test"]
 }
