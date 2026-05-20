@@ -1,0 +1,2 @@
+target/*
+!target/sysml-parse-cli.jar
