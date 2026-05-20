@@ -595,6 +595,7 @@ export default function App() {
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
         setIsVSCodeMode(true);
+        setOfficialParseLoading(true);
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
@@ -602,6 +603,7 @@ export default function App() {
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
         setIsVSCodeMode(true);
+        setOfficialParseLoading(true);
         setSource(msg.text);
       } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
@@ -634,6 +636,7 @@ export default function App() {
         }
       } else if (msg.type === 'updateGraph' && msg.graph) {
         console.log('[App] received updateGraph, behavior:', msg.behavior);
+        setOfficialParseLoading(false);
         setOfficialParseResult(prev => {
           const base = prev ?? { success: true, diagnostics: [] };
           return {
