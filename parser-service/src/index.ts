@@ -8,9 +8,51 @@
  */
 
 import express, { Request, Response, NextFunction } from 'express';
+import { createHash } from 'crypto';
 import { createOfficialBackendClient } from './officialBackendClient';
 import { buildGraph } from './graphBuilder';
 import { buildBehavior } from './behaviorBuilder';
+import type { SysMLV2ParseResult } from './types';
+
+// ── Parse result cache ────────────────────────────────────────────────────────
+// Key = sha256 of (primary text + sorted context texts). Avoids redundant JVM
+// invocations when the user switches between already-seen files or the extension
+// triggers a re-parse for a file that hasn't actually changed.
+
+const CACHE_TTL_MS  = 5 * 60 * 1000; // 5 minutes
+const CACHE_MAX     = 10;
+
+interface CacheEntry { result: SysMLV2ParseResult; ts: number }
+const parseCache = new Map<string, CacheEntry>();
+
+function makeCacheKey(text: string, context: { name: string; text: string }[]): string {
+  const h = createHash('sha256');
+  h.update(text);
+  for (const c of [...context].sort((a, b) => a.name.localeCompare(b.name))) {
+    h.update('\x00' + c.name + '\x00' + c.text);
+  }
+  return h.digest('hex');
+}
+
+function cacheGet(key: string): SysMLV2ParseResult | null {
+  const entry = parseCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > CACHE_TTL_MS) { parseCache.delete(key); return null; }
+  return entry.result;
+}
+
+function cacheSet(key: string, result: SysMLV2ParseResult): void {
+  if (parseCache.size >= CACHE_MAX) {
+    // Evict the oldest entry
+    let oldestKey = '';
+    let oldestTs  = Infinity;
+    for (const [k, v] of parseCache) {
+      if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
+    }
+    if (oldestKey) parseCache.delete(oldestKey);
+  }
+  parseCache.set(key, { result, ts: Date.now() });
+}
 
 const app = express();
 const PORT = parseInt(process.env['PARSER_SERVICE_PORT'] ?? process.env['PORT'] ?? '9001', 10);
@@ -69,6 +111,15 @@ app.post('/parse', async (req: Request, res: Response): Promise<void> => {
       typeof (f as Record<string, unknown>).name === 'string' &&
       typeof (f as Record<string, unknown>).text === 'string'
   );
+
+  const cacheKey = makeCacheKey(body.text, context);
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    console.log('[sysml-v2-parser-service] Cache hit — returning cached result');
+    res.json(cached);
+    return;
+  }
+
   const result = await backendClient.parse(body.text, context);
 
   // Build and embed the containment graph (including connection edges) so
@@ -81,6 +132,7 @@ app.post('/parse', async (req: Request, res: Response): Promise<void> => {
     if (!result.behavior) result.behavior = { actions: [], flows: [], conditionals: [] };
   }
 
+  cacheSet(cacheKey, result);
   res.json(result);
 });
 

@@ -9,6 +9,7 @@ export interface ModelNode {
   type: string;
   name: string | null;
   direction?: string | null;
+  isComposite?: boolean;
   startLine?: number;
   endLine?: number;
   children: ModelNode[];

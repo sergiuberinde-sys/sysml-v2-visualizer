@@ -20,8 +20,11 @@ import org.omg.sysml.xtext.xmi.SysMLxStandaloneSetup;
 import org.eclipse.xtext.nodemodel.ICompositeNode;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -38,6 +41,11 @@ import java.util.Set;
  *
  * Usage (normal):  java -jar sysml-parse-cli.jar <file.sysml>
  * Usage (debug):   java -jar sysml-parse-cli.jar --debug <file.sysml>
+ * Usage (server):  java -jar sysml-parse-cli.jar --server
+ *   Loads stdlib once, then reads one-line JSON requests from stdin and writes
+ *   one-line JSON responses to stdout.  Amortizes the 2.5-min stdlib startup.
+ *   Request:  {"id":"<str>","primaryPath":"<path>","contextPaths":["<path>",...]}
+ *   Response: {"id":"<str>","success":<bool>,"diagnostics":[...],"model":[...]}
  *
  * Exit codes:
  *   0  parsed without errors (warnings may be present)
@@ -47,11 +55,14 @@ import java.util.Set;
 public class SysmlParseCli {
 
     public static void main(String[] args) {
-        boolean debug = args.length > 0 && "--debug".equals(args[0]);
-        String[] rest = debug ? Arrays.copyOfRange(args, 1, args.length) : args;
+        boolean server = args.length > 0 && "--server".equals(args[0]);
+        boolean debug  = args.length > 0 && "--debug".equals(args[0]);
+        String[] rest  = (server || debug) ? Arrays.copyOfRange(args, 1, args.length) : args;
 
         try {
-            if (debug) {
+            if (server) {
+                runServer();
+            } else if (debug) {
                 runDebug(rest);
             } else {
                 run(rest);
@@ -165,6 +176,251 @@ public class SysmlParseCli {
             emit(wrapperErrorJson(e));
             System.exit(2);
         }
+    }
+
+    // ── Server mode ───────────────────────────────────────────────────────────
+
+    /**
+     * Long-lived server: loads stdlib once, then processes one-line JSON requests
+     * from stdin and writes one-line JSON responses to stdout.
+     *
+     * Startup handshake (written to stdout before accepting requests):
+     *   {"ready":true}          — stdlib loaded OK (or skipped)
+     *   {"ready":false,"error":"<msg>"}  — startup failed
+     */
+    private static void runServer() {
+        PrintStream realOut = System.out;
+        SysMLInteractive sysml;
+
+        try {
+            System.setOut(System.err);
+            sysml = SysMLInteractive.createInstance();
+
+            String stdlibPath = System.getenv("SYSML_STDLIB_PATH");
+            if (stdlibPath != null && !stdlibPath.isBlank()) {
+                System.err.println("[server] Loading SysML stdlib from: " + stdlibPath);
+                sysml.loadLibrary(stdlibPath);
+                System.err.println("[server] Stdlib loaded — ready.");
+            }
+        } catch (Throwable t) {
+            System.setOut(realOut);
+            t.printStackTrace(System.err);
+            realOut.println("{\"ready\":false,\"error\":" + jsonStr(t.getMessage()) + "}");
+            realOut.flush();
+            System.exit(2);
+            return;
+        } finally {
+            System.setOut(realOut);
+        }
+
+        realOut.println("{\"ready\":true}");
+        realOut.flush();
+
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+
+                String reqId = null;
+                try {
+                    reqId = extractJsonString(line, "id");
+                    String primaryPath = extractJsonString(line, "primaryPath");
+                    List<String> ctxPaths = extractJsonStringArray(line, "contextPaths");
+
+                    if (primaryPath == null) throw new IllegalArgumentException("Missing primaryPath");
+
+                    String result  = executeForServer(sysml, primaryPath, ctxPaths);
+                    String compact = compactJson(result);
+                    // Prepend the request id into the response JSON object
+                    String response = "{\"id\":" + jsonStr(reqId) + "," + compact.substring(1);
+                    realOut.println(response);
+                } catch (Throwable t) {
+                    String errMsg = t.getMessage() != null ? t.getMessage() : t.getClass().getName();
+                    realOut.println("{\"id\":" + jsonStr(reqId) +
+                            ",\"success\":false,\"diagnostics\":[{\"message\":" + jsonStr("Server error: " + errMsg) +
+                            ",\"severity\":\"error\",\"line\":0,\"column\":0}],\"model\":[]}");
+                }
+                realOut.flush();
+            }
+        } catch (Exception e) {
+            e.printStackTrace(System.err);
+            System.exit(2);
+        }
+    }
+
+    /**
+     * Execute a single parse request against a shared SysMLInteractive instance.
+     * Returns the toJson() payload (may be multi-line; caller compacts it).
+     *
+     * Important: we do NOT call EcoreUtil.resolveAll(resourceSet) here — that
+     * traverses all 94 stdlib resources and can trigger NPEs in the Pilot
+     * Implementation's derived-feature adapters.  Instead we resolve only the
+     * primary resource, which is enough because cross-references to stdlib types
+     * are extracted from the Xtext parse-tree via NodeModelUtils when the proxy
+     * is still unresolved (see crossRefName()).
+     */
+    private static String executeForServer(SysMLInteractive sysml,
+                                           String primaryPath,
+                                           List<String> contextPaths) {
+        File primaryFile = new File(primaryPath);
+        if (!primaryFile.exists()) return errorJson("File not found: " + primaryPath);
+
+        PrintStream realOut = System.out;
+        boolean hasContext = false;
+
+        try {
+            System.setOut(System.err);
+
+            // Unload primary file from the resource set so edits are reflected on reparse.
+            URI primaryUri = URI.createFileURI(primaryFile.getAbsolutePath());
+            Resource stale = sysml.getResourceSet().getResource(primaryUri, false);
+            if (stale != null) {
+                sysml.getResourceSet().getResources().remove(stale);
+                stale.unload();
+            }
+
+            // Load context files (only if not already present — they're stable within a session).
+            for (String ctxPath : contextPaths) {
+                File ctx = new File(ctxPath);
+                if (!ctx.exists()) continue;
+                URI ctxUri = URI.createFileURI(ctx.getAbsolutePath());
+                if (sysml.getResourceSet().getResource(ctxUri, false) == null) {
+                    sysml.getResourceSet().getResource(ctxUri, true).getContents();
+                    hasContext = true;
+                }
+            }
+        } finally {
+            System.setOut(realOut);
+        }
+
+        try {
+            Resource resource = sysml.getResourceSet()
+                    .getResource(URI.createFileURI(primaryFile.getAbsolutePath()), true);
+
+            // Resolve cross-references in the primary resource only.
+            // Full-ResourceSet resolveAll is intentionally skipped: it re-traverses 94
+            // stdlib resources on every request and triggers NPEs in derived-feature
+            // adapters of the Pilot Implementation.
+            try {
+                EcoreUtil.resolveAll(resource);
+            } catch (Exception ignored) {
+                // Some cross-references may remain as proxies; crossRefName() handles
+                // them via NodeModelUtils parse-tree fallback.
+            }
+
+            Set<EObject> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+            List<Node> model = new ArrayList<>();
+            for (EObject root : resource.getContents()) {
+                model.add(buildNode(root, visited));
+            }
+
+            boolean hasStdlib = (System.getenv("SYSML_STDLIB_PATH") != null);
+            boolean suppress  = hasStdlib || hasContext;
+            List<Diag> diags = new ArrayList<>();
+            List<Resource.Diagnostic> trueErrors = new ArrayList<>();
+            for (Resource.Diagnostic d : resource.getErrors()) {
+                String msg = d.getMessage();
+                if (suppress && msg != null && msg.startsWith("Couldn't resolve reference to")) {
+                    // suppress cross-ref errors when stdlib/context is provided
+                } else {
+                    diags.add(new Diag("error", msg, d.getLine(), d.getColumn()));
+                    trueErrors.add(d);
+                }
+            }
+            for (Resource.Diagnostic d : resource.getWarnings()) {
+                diags.add(new Diag("warning", d.getMessage(), d.getLine(), d.getColumn()));
+            }
+
+            return toJson(trueErrors.isEmpty(), diags, model);
+        } catch (Exception e) {
+            return wrapperErrorJson(e);
+        }
+    }
+
+    /** Extract a JSON string value by key (handles basic escape sequences). */
+    private static String extractJsonString(String json, String key) {
+        String search = "\"" + key + "\":\"";
+        int start = json.indexOf(search);
+        if (start < 0) return null;
+        start += search.length();
+        StringBuilder sb = new StringBuilder();
+        int i = start;
+        while (i < json.length()) {
+            char c = json.charAt(i);
+            if (c == '\\' && i + 1 < json.length()) {
+                char next = json.charAt(i + 1);
+                switch (next) {
+                    case '"':  sb.append('"');  i += 2; continue;
+                    case '\\': sb.append('\\'); i += 2; continue;
+                    case '/':  sb.append('/');  i += 2; continue;
+                    case 'n':  sb.append('\n'); i += 2; continue;
+                    case 'r':  sb.append('\r'); i += 2; continue;
+                    case 't':  sb.append('\t'); i += 2; continue;
+                    default:   sb.append(next); i += 2; continue;
+                }
+            }
+            if (c == '"') break;
+            sb.append(c);
+            i++;
+        }
+        return sb.toString();
+    }
+
+    /** Extract a JSON string array value by key. */
+    private static List<String> extractJsonStringArray(String json, String key) {
+        String search = "\"" + key + "\":[";
+        int start = json.indexOf(search);
+        if (start < 0) return List.of();
+        start += search.length();
+        int end = json.indexOf("]", start);
+        if (end < 0) return List.of();
+        String content = json.substring(start, end);
+        List<String> result = new ArrayList<>();
+        int pos = 0;
+        while (pos < content.length()) {
+            int qstart = content.indexOf('"', pos);
+            if (qstart < 0) break;
+            StringBuilder sb = new StringBuilder();
+            int i = qstart + 1;
+            while (i < content.length()) {
+                char c = content.charAt(i);
+                if (c == '\\' && i + 1 < content.length()) {
+                    char next = content.charAt(i + 1);
+                    switch (next) {
+                        case '"':  sb.append('"');  i += 2; continue;
+                        case '\\': sb.append('\\'); i += 2; continue;
+                        case '/':  sb.append('/');  i += 2; continue;
+                        default:   sb.append(next); i += 2; continue;
+                    }
+                }
+                if (c == '"') break;
+                sb.append(c);
+                i++;
+            }
+            result.add(sb.toString());
+            pos = i + 1;
+        }
+        return result;
+    }
+
+    /** Compact a JSON string to a single line by removing whitespace outside strings. */
+    private static String compactJson(String json) {
+        StringBuilder sb = new StringBuilder(json.length());
+        boolean inString = false;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (inString) {
+                sb.append(c);
+                if (c == '\\' && i + 1 < json.length()) sb.append(json.charAt(++i));
+                else if (c == '"') inString = false;
+            } else {
+                if (c == '"') { inString = true; sb.append(c); }
+                else if (c != ' ' && c != '\n' && c != '\r' && c != '\t') sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     // ── Debug mode ────────────────────────────────────────────────────────────
@@ -418,7 +674,7 @@ public class SysmlParseCli {
      */
     private static Node buildNode(EObject obj, Set<EObject> visited) {
         if (!visited.add(obj)) {
-            return new Node(obj.eClass().getName(), nameOf(obj), null, List.of(), 0, 0);
+            return new Node(obj.eClass().getName(), nameOf(obj), null, List.of(), 0, 0, null);
         }
 
         String emfType = obj.eClass().getName();
@@ -451,6 +707,16 @@ public class SysmlParseCli {
         // (used inside FeatureReferenceExpression conditions).
         if ("Membership".equals(emfType) && name == null) {
             name = crossRefName(obj, "memberElement");
+        }
+        // Superclassing.general names the supertype in `part def A :> B { ... }`.
+        // Extracting it lets graphBuilder emit specialization edges between PartDefinitions.
+        if ("Superclassing".equals(emfType) && name == null) {
+            name = crossRefName(obj, "general");
+        }
+        // Subsetting.subsettedFeature names the subsetted feature in `part a :>> b`.
+        // Extracting it lets graphBuilder emit subsetting edges between PartUsages.
+        if ("Subsetting".equals(emfType) && name == null) {
+            name = crossRefName(obj, "subsettedFeature");
         }
 
         // Feature.direction attribute (FeatureDirectionKind enum: in, out, inout, none).
@@ -489,7 +755,17 @@ public class SysmlParseCli {
                 // Skip individual children that trigger NPE in Pilot Implementation adapters.
             }
         }
-        return new Node(emfType, name, direction, children, startLine, endLine);
+        // Feature.isComposite — false for 'ref part/item/...' usages (non-composite shared aggregation).
+        Boolean isComposite = null;
+        EStructuralFeature compositeFeature = obj.eClass().getEStructuralFeature("isComposite");
+        if (compositeFeature != null) {
+            try {
+                Object val = obj.eGet(compositeFeature);
+                if (val instanceof Boolean b) isComposite = b;
+            } catch (Exception ignored) {}
+        }
+
+        return new Node(emfType, name, direction, children, startLine, endLine, isComposite);
     }
 
     private static String nameOf(EObject obj) {
@@ -581,6 +857,9 @@ public class SysmlParseCli {
             sb.append("\n").append(pad1).append("\"startLine\": ").append(node.startLine()).append(",");
             sb.append("\n").append(pad1).append("\"endLine\": ").append(node.endLine()).append(",");
         }
+        if (node.isComposite() != null && !node.isComposite()) {
+            sb.append("\n").append(pad1).append("\"isComposite\": false,");
+        }
         sb.append("\n").append(pad1).append("\"children\": [");
         List<Node> children = node.children();
         for (int i = 0; i < children.size(); i++) {
@@ -611,7 +890,7 @@ public class SysmlParseCli {
     }
 
     private record Diag(String severity, String message, int line, int column) {}
-    private record Node(String type, String name, String direction, List<Node> children, int startLine, int endLine) {}
+    private record Node(String type, String name, String direction, List<Node> children, int startLine, int endLine, Boolean isComposite) {}
     private record DebugEntry(String path, String eClass,
                               java.util.Map<String, Object> features) {}
 }
