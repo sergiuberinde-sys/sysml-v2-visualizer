@@ -375,7 +375,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const cmd = vscode.commands.registerCommand('sysmlVisualizer.openVisualizer', async () => {
     // If a panel is already open, just bring it into view — no duplicate panels.
     if (activePanel) {
-      activePanel.reveal(vscode.ViewColumn.Two, false);
+      activePanel.reveal(activePanel.viewColumn ?? vscode.ViewColumn.Beside, false);
       return;
     }
 
@@ -386,11 +386,16 @@ export function activate(context: vscode.ExtensionContext): void {
       currentSysmlUri  = preLaunchSysml.document.uri;
       currentSysmlText = preLaunchSysml.document.getText();
       console.log(`[sysml-visualizer] captured initial sysml file: ${path.basename(preLaunchSysml.document.fileName)}`);
-      // Ensure the SysML file is in column 1 so the visualizer lands in column 2.
-      await vscode.window.showTextDocument(preLaunchSysml.document, {
-        viewColumn: vscode.ViewColumn.One,
-        preserveFocus: true,
-      });
+      // Move the SysML file to column 1 and focus it so that ViewColumn.Beside
+      // reliably opens the panel in column 2 to the right.
+      try {
+        await vscode.window.showTextDocument(preLaunchSysml.document, {
+          viewColumn: vscode.ViewColumn.One,
+          preserveFocus: false,
+        });
+      } catch (e) {
+        console.warn('[sysml-visualizer] showTextDocument to col1 failed:', e);
+      }
     } else {
       console.log('[sysml-visualizer] no active .sysml editor at launch time');
     }
@@ -398,7 +403,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const panel = vscode.window.createWebviewPanel(
       'sysmlVisualizer',
       'SysML v2 Visualizer',
-      vscode.ViewColumn.Two,
+      vscode.ViewColumn.Beside,
       {
         enableScripts: true,
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'dist')],
@@ -724,7 +729,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showWarningMessage('SysML Visualizer: open the visualizer panel first.');
         return;
       }
-      activePanel.reveal(vscode.ViewColumn.Two, true);
+      activePanel.reveal(activePanel.viewColumn ?? vscode.ViewColumn.Beside, true);
       void activePanel.webview.postMessage({ type: 'revealTrlcReq', numericId });
     }),
   );
