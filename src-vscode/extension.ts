@@ -7,9 +7,8 @@ import { buildGraph } from '../parser-service/src/graphBuilder';
 import { buildBehavior } from '../parser-service/src/behaviorBuilder';
 import type { SysMLV2ParseResult } from '../parser-service/src/types';
 
-// ── Parse result cache ────────────────────────────────────────────────────────
-// Keyed by SHA-256(primary text + sorted context texts). Avoids redundant JVM
-// round-trips when switching back to a file that hasn't changed.
+// ── In-memory parse cache ─────────────────────────────────────────────────────
+// Fast same-session cache. Keyed by SHA-256(primary text + sorted context texts).
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 10;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -39,6 +38,40 @@ function parseCacheSet(key: string, result: SysMLV2ParseResult): void {
   }
   parseCache.set(key, { result, ts: Date.now() });
 }
+
+// ── Persistent on-disk cache ──────────────────────────────────────────────────
+// Survives VS Code restarts. Same content hash → instant load, no JVM call.
+// Stored in context.globalStorageUri (set during activate).
+const DISK_CACHE_MAX = 50;
+let diskCacheDir: string | null = null;
+
+function diskCacheGet(key: string): SysMLV2ParseResult | null {
+  if (!diskCacheDir) return null;
+  try {
+    return JSON.parse(fs.readFileSync(path.join(diskCacheDir, `${key}.json`), 'utf8')) as SysMLV2ParseResult;
+  } catch {
+    return null;
+  }
+}
+
+function diskCacheSet(key: string, result: SysMLV2ParseResult): void {
+  if (!diskCacheDir) return;
+  try {
+    fs.mkdirSync(diskCacheDir, { recursive: true });
+    fs.writeFileSync(path.join(diskCacheDir, `${key}.json`), JSON.stringify(result), 'utf8');
+    // Evict oldest entries when over limit
+    const files = fs.readdirSync(diskCacheDir)
+      .filter(f => f.endsWith('.json'))
+      .map(f => ({ name: f, mtime: fs.statSync(path.join(diskCacheDir!, f)).mtimeMs }))
+      .sort((a, b) => a.mtime - b.mtime);
+    while (files.length > DISK_CACHE_MAX) {
+      const oldest = files.shift()!;
+      try { fs.unlinkSync(path.join(diskCacheDir, oldest.name)); } catch { /* ignore */ }
+    }
+  } catch (e) {
+    console.warn('[sysml-visualizer] disk cache write failed:', e);
+  }
+}
 import {
   analyzeSysML,
   getSymbolAtPosition,
@@ -65,6 +98,8 @@ export function activate(context: vscode.ExtensionContext): void {
   // Populated by publishDiagnosticsOfficial; read by the revealSemanticElement handler.
   type NodeRange = { startLine: number; endLine: number };
   let nodeIdToRange = new Map<string, NodeRange>();
+
+  diskCacheDir = context.globalStorageUri.fsPath;
 
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
   context.subscriptions.push(diagnosticCollection);
@@ -152,12 +187,39 @@ export function activate(context: vscode.ExtensionContext): void {
 
       const primaryText = document.getText();
       const cacheKey    = parseCacheKey(primaryText, contextFiles);
-      const cached      = parseCacheGet(cacheKey);
-      if (cached) {
-        console.log(`[sysml-visualizer] cache hit — skipping JVM parse`);
+
+      // 1. Memory cache (hot path — same session, unchanged file)
+      let result = parseCacheGet(cacheKey);
+      let cacheSource = 'memory';
+
+      // 2. Disk cache (survives restarts — unchanged file, new session)
+      if (!result) {
+        result = diskCacheGet(cacheKey);
+        if (result) {
+          cacheSource = 'disk';
+          parseCacheSet(cacheKey, result);
+        }
       }
-      const result: SysMLV2ParseResult = cached ?? await javaClient.parse(primaryText, contextFiles);
-      if (!cached) parseCacheSet(cacheKey, result);
+
+      // 3. JVM parse (first time or file changed)
+      if (!result) {
+        result = await javaClient.parse(primaryText, contextFiles);
+        cacheSource = 'jvm';
+      }
+
+      // Build graph + behavior (fast JS; always needed for the webview)
+      if (result.model && !result.graph) {
+        result.graph    = buildGraph(result.model);
+        result.behavior = buildBehavior(result.model);
+      }
+
+      // Persist fresh results so the next open is instant
+      if (cacheSource === 'jvm') {
+        parseCacheSet(cacheKey, result);
+        diskCacheSet(cacheKey, result);
+      }
+
+      console.log(`[sysml-visualizer] parse done (source=${cacheSource})`);
 
       // VS Code diagnostic squiggles
       const diags = result.diagnostics.map(d => {
@@ -169,11 +231,6 @@ export function activate(context: vscode.ExtensionContext): void {
       console.log(`[sysml-visualizer] diagnostics: ${diags.length}`);
 
       if (activePanel) {
-        // Build graph + behavior from the model tree (Java wrapper returns model[]).
-        if (result.model && !result.graph) {
-          result.graph    = buildGraph(result.model);
-          result.behavior = buildBehavior(result.model);
-        }
         const graph    = result.graph    ?? { nodes: [], edges: [] };
         const behavior = result.behavior ?? null;
 
