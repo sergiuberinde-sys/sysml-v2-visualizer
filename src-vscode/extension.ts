@@ -106,19 +106,22 @@ async function startManagedParserService(extensionPath: string, configuredUrl: s
     console.log(`[sysml-visualizer] Parser service exited (code ${code ?? 'unknown'})`);
   });
 
-  // Poll until ready (max ~15 s).
-  for (let i = 0; i < 50; i++) {
+  // Poll until ready (up to ~30 s of active checks).
+  // The JVM (Xtext/Eclipse) can take 30-60 s on a cold Windows machine, so we
+  // do NOT kill the process on timeout — we return the URL and let it finish
+  // starting in the background. Individual parse calls will fail fast
+  // (connection refused) until the service is up, then succeed automatically.
+  for (let i = 0; i < 100; i++) {
     await new Promise(r => setTimeout(r, 300));
     if (await isServiceReachable(url)) {
-      console.log(`[sysml-visualizer] Parser service auto-started at ${url}`);
+      console.log(`[sysml-visualizer] Parser service ready at ${url}`);
       return url;
     }
   }
 
-  console.warn(`[sysml-visualizer] Parser service did not start in time; using ${configuredUrl}`);
-  child.kill();
-  _managedParserProcess = undefined;
-  return configuredUrl;
+  console.warn(`[sysml-visualizer] Parser service not yet ready after 30 s (JVM may still be loading). ` +
+               `Returning ${url} — parse calls will succeed once it finishes starting.`);
+  return url;  // keep the process alive; do NOT kill it
 }
 
 export function activate(context: vscode.ExtensionContext): void {
