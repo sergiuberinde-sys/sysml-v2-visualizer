@@ -1,167 +1,55 @@
 # SysML v2 Parser Service
 
-This is the **wrapper service** that the SysML v2 Visualizer calls when
-Official SysML v2 mode is active (both in the webview and VS Code Problems panel).
+This package contains the Node.js bridge between the VS Code extension and the official OMG SysML v2 Java parser.
 
-It exposes `POST /parse` and `GET /health` and routes to whichever backend is
-configured (Java wrapper → HTTP backend → stub).
+## Role in the architecture
 
----
+```
+Extension host (src-vscode/extension.ts)
+        │
+        ▼
+JavaWrapperClient  (parser-service/src/javaWrapperClient.ts)
+  • Manages a persistent JVM process via stdin/stdout JSON protocol
+  • Locates Java automatically (JAVA_HOME, well-known install dirs, PATH)
+        │
+        ▼
+JVM process  (java-parser-wrapper/target/sysml-parse-cli.jar)
+```
 
-## Quick start — Java wrapper mode (recommended)
+The extension host imports `JavaWrapperClient`, `buildGraph`, and `buildBehavior` directly from this package's source — no HTTP server is involved in the normal VS Code extension flow.
 
-**Requirements:** Java 21, Maven, the `java-parser-wrapper` JAR built.
+## Source files
 
-### Step 1 — build the Java CLI wrapper
+| File | Purpose |
+|------|---------|
+| `javaWrapperClient.ts` | Persistent JVM process manager; the main integration point |
+| `graphBuilder.ts` | Converts the Java parser's AST model into a graph for the structure view |
+| `behaviorBuilder.ts` | Extracts behavior/action flow data from the AST model |
+| `types.ts` | Shared TypeScript types (`SysMLV2ParseResult`, etc.) |
+| `officialBackendClient.ts` | Interface implemented by `JavaWrapperClient` |
+| `index.ts` | Optional standalone HTTP server (see below) |
+
+## Optional: standalone HTTP server mode
+
+`index.ts` exposes the parser as an HTTP service (`POST /parse`, `GET /health`) on port 9001. This is useful for running the parser outside VS Code (CI pipelines, other tooling).
 
 ```bash
-# One-time: install the Pilot Implementation fat JAR into local Maven repo.
-# (Skip if you have already done this.)
-mvn install:install-file \
-  -Dfile=$HOME/official-backends/SysML-v2-Pilot-Implementation/org.omg.sysml.interactive/target/org.omg.sysml.interactive-0.59.0-SNAPSHOT-all.jar \
-  -DgroupId=org.omg.sysml \
-  -DartifactId=org.omg.sysml.interactive \
-  -Dversion=0.59.0-SNAPSHOT \
-  -Dclassifier=all \
-  -Dpackaging=jar \
-  -DgeneratePom=true
-
-# Build the CLI wrapper JAR
-cd java-parser-wrapper
-mvn clean package
-# Produces: java-parser-wrapper/target/sysml-parse-cli.jar
+# From the repo root
+npm run parser:dev    # development (ts-node, hot reload)
+npm run parser:start  # production (requires npm run parser:build first)
 ```
 
-### Step 2 — start the parser service
-
-```bash
-# From the repo root — set JAVA_HOME to Java 21 (required; JAR is compiled for Java 21)
-JAVA_HOME=/opt/homebrew/Cellar/openjdk@21/21.0.11/libexec/openjdk.jdk/Contents/Home \
-  npm run parser:start
-```
-
-The service auto-detects the JAR at `java-parser-wrapper/target/sysml-parse-cli.jar`
-relative to the project root and logs `Java wrapper mode (auto-detected JAR)`.
-
-### Step 3 — enable official mode in VS Code
-
-In VS Code settings, set:
-
-```json
-{
-  "sysmlVisualizer.officialParserMode": true
-}
-```
-
-This routes VS Code Problems panel diagnostics through the parser service.
-The `parserServiceUrl` setting defaults to `http://localhost:9001`.
-
----
-
-## Port layout
-
-| Service | Default port | Role |
-|---|---|---|
-| **This wrapper** | `9001` | Parser gateway called by the extension |
-
----
-
-## Quick start (stub mode — no backend)
-
-```bash
-# From the repo root:
-npm run parser:build   # compile TypeScript
-npm run parser:start   # start on http://localhost:9001
-```
-
-Or from inside this folder:
-
-```bash
-npm install
-npm run dev     # ts-node (development, live-reload)
-npm run build   # tsc → dist/
-npm run start   # node dist/index.js
-```
-
----
+The VS Code extension setting `sysmlVisualizer.parserServiceUrl` can point to this service if you prefer HTTP mode over the embedded JVM.
 
 ## Configuration
 
 | Env var | Default | Description |
-|---|---|---|
-| `PARSER_SERVICE_PORT` | `9001` | Port this wrapper listens on |
-| `PORT` | `9001` | Fallback if `PARSER_SERVICE_PORT` is not set |
-| `SYSML_PARSER_JAR` | *(auto)* | Explicit path to `sysml-parse-cli.jar` |
-| `JAVA_HOME` | *(system)* | Java 21 home — **required** when system `java` is not Java 21 |
-| `OFFICIAL_SYSML_BACKEND_URL` | *(unset)* | HTTP backend URL (legacy fallback) |
+|---------|---------|-------------|
+| `SYSML_PARSER_JAR` | *(auto-detected)* | Explicit path to `sysml-parse-cli.jar` |
+| `SYSML_STDLIB_PATH` | *(auto-detected)* | Path to the SysML standard library directory |
+| `SYSML_JAVA_HOME` | *(auto-detected)* | Override Java installation to use |
+| `PARSER_SERVICE_PORT` | `9001` | Port for the optional HTTP server |
 
-**Backend selection priority:**
-1. `SYSML_PARSER_JAR` set → Java wrapper at that path
-2. JAR auto-detected at `java-parser-wrapper/target/sysml-parse-cli.jar` → Java wrapper
-3. `OFFICIAL_SYSML_BACKEND_URL` set → HTTP client
-4. None → stub (returns "not connected")
+## SysML standard library
 
----
-
-## Endpoints
-
-### `GET /health`
-
-```json
-{
-  "status": "ok",
-  "service": "sysml-v2-parser-wrapper",
-  "officialParserConnected": false
-}
-```
-
-`officialParserConnected` reflects a live probe of the upstream backend.
-
-### `POST /parse`
-
-**Request body:** `{ "text": "<sysml source text>" }`
-
-**Response when backend is not connected:**
-```json
-{
-  "success": false,
-  "diagnostics": [
-    { "message": "Official backend not connected.", "severity": "info", "line": 1, "column": 1 }
-  ],
-  "error": "Official backend not connected"
-}
-```
-
-**Response when backend is connected:** forwarded from the upstream backend
-(see `contract/openapi.yaml` and `sample-response.json`).
-
----
-
-## Response format
-
-The TypeScript interface the visualizer uses:
-```typescript
-// src/core/sysmlv2Official/SysMLV2ParseResult.ts
-interface SysMLV2ParseResult {
-  success: boolean;
-  diagnostics: Array<{
-    message: string;
-    line?: number;
-    column?: number;
-    severity: 'error' | 'warning' | 'info';
-  }>;
-  modelJson?: unknown;
-  rawResponse?: unknown;
-  error?: string;
-}
-```
-
-Full schema: `contract/openapi.yaml`.  Examples: `sample-response.json`.
-
----
-
-## Further reading
-
-- `docs/OFFICIAL_BACKEND_OPTIONS.md` — which backend to use for text parsing vs storage
-- `docs/OFFICIAL_BACKEND_ENDPOINT_MAPPING.md` — confirmed endpoint findings and integration path
-- `docs/RUN_OFFICIAL_SYSML_API_SERVICES.md` — API Services local setup (storage layer, not parser)
+`sysml-stdlib/` contains the official OMG SysML v2 standard library files. The JVM loads these on startup. The path is resolved from `SYSML_STDLIB_PATH`, or auto-detected relative to the JAR location.
