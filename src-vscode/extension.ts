@@ -171,9 +171,17 @@ export function activate(context: vscode.ExtensionContext): void {
                                       vscode.DiagnosticSeverity.Information;
   }
 
+  const pendingDiagnosticTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   function publishDiagnosticsForDocument(document: vscode.TextDocument): void {
     if (!document.fileName.endsWith('.sysml')) return;
-    void publishDiagnosticsOfficial(document);
+    const key = document.uri.toString();
+    const existing = pendingDiagnosticTimers.get(key);
+    if (existing) clearTimeout(existing);
+    pendingDiagnosticTimers.set(key, setTimeout(() => {
+      pendingDiagnosticTimers.delete(key);
+      void publishDiagnosticsOfficial(document);
+    }, 500));
   }
 
   // ── TRLC annotation scanner ───────────────────────────────────────────────────

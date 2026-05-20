@@ -85,7 +85,7 @@ export default function RequirementsView({ result, selection, onSelect, trlcData
       <div className="behavior-placeholder">
         <div>No TRLC requirements loaded.</div>
         <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>
-          Use the <code>Import TRLC</code> button to load a requirements JSON file.
+          Use the <code>TRLC</code> button in the toolbar to import a <code>.trlc</code> file.
         </div>
       </div>
     );

@@ -68,6 +68,7 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
     const id = path;
     const gn: GraphNode = { id, label: node.name ?? node.type, type: node.type };
     if (node.direction != null) gn.direction = node.direction;
+    if (node.isComposite === false) gn.isComposite = false;
     if (node.startLine != null && node.startLine > 0) {
       gn.startLine = node.startLine;
       gn.endLine   = node.endLine;
@@ -487,13 +488,15 @@ function toVizNode(
       // PartUsage with body items = package-scope structural block (e.g. "part system { ... }")
       return body.length > 0
         ? { kind: 'partUsage', name, namespace, type: typeName, body, line: 0 }
-        : { kind: 'partAlias', name, type: typeName, line: 0 };
+        : { kind: 'partAlias', name, type: typeName, line: 0,
+            ...(gNode.isComposite === false ? { isRef: true } : {}) };
 
     case 'ItemUsage':
       return { kind: 'itemAlias', name, type: typeName, line: 0 };
 
     case 'OccurrenceUsage':
-      return { kind: 'partAlias', name, type: typeName, line: 0 };
+      return { kind: 'partAlias', name, type: typeName, line: 0,
+               ...(gNode.isComposite === false ? { isRef: true } : {}) };
 
     case 'AttributeUsage':
       return { kind: 'attributeUsage', name, type: typeName, line: 0 };

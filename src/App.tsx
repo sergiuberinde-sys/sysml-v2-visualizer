@@ -362,6 +362,9 @@ export default function App() {
   const [officialParseLoading, setOfficialParseLoading] = useState(false);
   // Stable ref so the VS Code message handler can access the latest parse result
   const officialParseResultRef = useRef<SysMLV2ParseResult | null>(null);
+  // True when running inside the VS Code extension — the extension manages all
+  // parsing and sends updateGraph, so the webview should not call the parser itself.
+  const isVSCodeMode = useRef(false);
 
   // Cursor sync & focus subtree toggles (official mode only)
   const [syncCursor,   setSyncCursor]   = useState(true);
@@ -513,8 +516,11 @@ export default function App() {
     }, HISTORY_DEBOUNCE_MS);
   }, [source, vizModel]);
 
-  // Call HTTP parser service when source, endpoint, or context files change
+  // Call HTTP parser service when source, endpoint, or context files change.
+  // Skipped in VS Code mode: the extension parses and sends updateGraph directly,
+  // so calling the parser here would be a redundant second round-trip.
   useEffect(() => {
+    if (isVSCodeMode.current) return;
     let cancelled = false;
     setOfficialParseLoading(true);
     const svc = new HttpSysMLV2ParserService(serviceEndpoint);
@@ -586,17 +592,20 @@ export default function App() {
       if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
         fromExtension.current = true;
+        isVSCodeMode.current = true;
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
       } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
         fromExtension.current = true;
+        isVSCodeMode.current = true;
         setSource(msg.text);
       } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
       } else if (msg.type === 'parserServiceConfig' && typeof msg.parserServiceUrl === 'string') {
         // VS Code extension sent the configured parser service URL from settings.
         // This overrides the localStorage default so the extension config is authoritative.
+        isVSCodeMode.current = true;
         setServiceEndpoint(msg.parserServiceUrl);
       } else if (msg.type === 'trlcAnnotations' && Array.isArray(msg.trlcAnnotations)) {
         setTrlcAnnotations(msg.trlcAnnotations);
@@ -727,6 +736,13 @@ export default function App() {
         type: 'revealSource',
         sourceLocation: { line: selection.line, column: 1 },
       });
+      return;
+    }
+    // Last-resort fallback: text-search by element name (e.g. trace-chip click when
+    // graph is unavailable). The extension uses findSysMLDefinition across all .sysml files.
+    if (selection.extra?.lookupByName === 'true' && selection.name) {
+      console.log('[CursorSync] visualizer→editor (name lookup fallback)', selection.name);
+      getVsCodeApi()?.postMessage({ type: 'revealElementInSource', name: selection.name });
     }
   }, [selection]); // eslint-disable-line react-hooks/exhaustive-deps
 

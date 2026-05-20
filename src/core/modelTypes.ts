@@ -25,7 +25,7 @@ export type SysMLNode =
   | { kind: 'attributeUsage'; name: string; type: string;                                                                line: number }
   | { kind: 'occurrenceDef';  name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'port';           name: string; direction: 'in' | 'out' | 'inout' | ''; portType: string;                              line: number }
-  | { kind: 'partAlias';      name: string; type: string;                                                                           line: number }
+  | { kind: 'partAlias';      name: string; type: string; isRef?: boolean;                                                          line: number }
   | { kind: 'itemAlias';      name: string; type: string;                                                                           line: number }
   | { kind: 'connection';     fromPart: string; fromPort: string; toPart: string; toPort: string; connType?: string;             line: number }
   | { kind: 'message';        name: string; from: string; to: string; occurrence: string; fromColumn?: number; toColumn?: number;  line: number }

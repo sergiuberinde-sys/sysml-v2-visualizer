@@ -21,6 +21,7 @@ export interface GraphNode {
   label: string;
   type: string;
   direction?: string;
+  isComposite?: boolean;
   startLine?: number;
   endLine?: number;
 }
@@ -29,7 +30,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: 'contains' | 'typedBy' | 'connection';
+  type: 'contains' | 'typedBy' | 'connection' | 'specialization' | 'subsetting';
   label?: string;
 }
 
@@ -71,6 +72,7 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     const label = node.name ?? node.type;
     const n: GraphNode = { id: path, label, type: node.type };
     if (node.direction != null) n.direction = node.direction;
+    if (node.isComposite === false) n.isComposite = false;
     if (node.startLine != null && node.startLine > 0) {
       n.startLine = node.startLine;
       n.endLine   = node.endLine;
@@ -405,6 +407,67 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
                       : flowName ?? payloadType;
 
     edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
+  }
+
+  // ── Pass 6: specialization edges (Superclassing between PartDefinitions) ─────
+  //
+  // `part def A :> B` → PartDefinition A has a Superclassing child whose label
+  // the Java parser now sets to B's name.  Emit source=A, target=B.
+
+  function findDefAncestor(startId: string): string | null {
+    let id = parentOf.get(startId);
+    while (id !== undefined) {
+      const n = nodeById.get(id);
+      if (!n) return null;
+      if (TYPED_DEF_TYPES.has(n.type)) return id;
+      if (!MEMBERSHIP_WRAPPERS.has(n.type)) return null;
+      id = parentOf.get(id);
+    }
+    return null;
+  }
+
+  const seenSpec = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'Superclassing') continue;
+    if (n.label === n.type) continue;
+
+    const specificId = findDefAncestor(n.id);
+    if (!specificId) continue;
+
+    const generalId = defByName.get(n.label);
+    if (!generalId || generalId === specificId) continue;
+
+    const edgeId = `${specificId}->specializes->${generalId}`;
+    if (seenSpec.has(edgeId)) continue;
+    seenSpec.add(edgeId);
+
+    edges.push({ id: edgeId, source: specificId, target: generalId, type: 'specialization' });
+  }
+
+  // ── Pass 7: subsetting edges (Subsetting between PartUsages) ─────────────────
+  //
+  // `part a :>> b` → PartUsage a has a Subsetting child whose label the Java
+  // parser now sets to b's name.  Emit source=a, target=b.
+  // Excludes ReferenceSubsetting (different EMF type, handled in Pass 3/4).
+
+  const seenSub = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'Subsetting') continue;
+    if (n.label === n.type) continue;
+
+    const subId = findUsageAncestor(n.id);
+    if (!subId) continue;
+
+    const superCandidates = partUsagesByName.get(n.label);
+    if (!superCandidates?.length) continue;
+    const superId = superCandidates[0];
+    if (superId === subId) continue;
+
+    const edgeId = `${subId}->subsets->${superId}`;
+    if (seenSub.has(edgeId)) continue;
+    seenSub.add(edgeId);
+
+    edges.push({ id: edgeId, source: subId, target: superId, type: 'subsetting' });
   }
 
   return { nodes, edges };
