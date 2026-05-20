@@ -596,6 +596,7 @@ export default function App() {
         isVSCodeModeRef.current = true;
         setIsVSCodeMode(true);
         setOfficialParseLoading(true);
+        setOfficialParseResult(null); // clear stale result while new file parses
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
@@ -641,6 +642,7 @@ export default function App() {
           const base = prev ?? { success: true, diagnostics: [] };
           return {
             ...base,
+            error: undefined, // clear any stale SERVICE_UNAVAILABLE from the initial HTTP probe
             graph: msg.graph,
             behavior: msg.behavior ?? base.behavior,
             // Extension parsed with full workspace context → its success/diagnostics
