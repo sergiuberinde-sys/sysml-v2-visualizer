@@ -6,7 +6,7 @@
   "version": "0.0.1",
   "type": "module",
   "engines": {
-    "vscode": "^1.118.0"
+    "vscode": "^1.71.0"
   },
   "main": "./out-extension/src-vscode/extension.js",
   "activationEvents": [
@@ -96,7 +96,7 @@
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/vscode": "^1.118.0",
+    "@types/vscode": "^1.71.0",
     "@vitejs/plugin-react": "^6.0.1",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.1",
