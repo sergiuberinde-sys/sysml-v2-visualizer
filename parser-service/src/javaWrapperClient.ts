@@ -142,6 +142,26 @@ export function resolveJarPath(): string {
   return process.env['SYSML_PARSER_JAR'] ?? DEFAULT_JAR;
 }
 
+/** Returns the Java major version (e.g. 21), or null if it cannot be determined. */
+function getJavaMajorVersion(javaExe: string): number | null {
+  for (const args of [['--version'], ['-version']]) {
+    try {
+      // '--version' prints to stdout; '-version' to stderr — capture both.
+      const out = execSync(`"${javaExe}" ${args.join(' ')}`, {
+        encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const m = out.match(/(?:java|openjdk)\s+(\d+)/i);
+      if (m) return parseInt(m[1], 10);
+    } catch (e) {
+      // execSync throws when the process exits non-zero; stderr is in e.stderr
+      const combined = [(e as NodeJS.ErrnoException & { stderr?: string }).stderr ?? '', String(e)].join(' ');
+      const m = combined.match(/(?:java|openjdk)\s+version\s+"?(\d+)/i);
+      if (m) return parseInt(m[1], 10);
+    }
+  }
+  return null;
+}
+
 // ── Persistent JVM process ────────────────────────────────────────────────────
 
 /**
@@ -179,8 +199,19 @@ class JavaPersistentProcess {
   ensureStarted(): Promise<void> {
     if (this.ready) return Promise.resolve();
     if (this.startingPromise) return this.startingPromise;
-    this.startingPromise = this.doStart();
+    this.startingPromise = this.checkVersionThenStart();
     return this.startingPromise;
+  }
+
+  private checkVersionThenStart(): Promise<void> {
+    const version = getJavaMajorVersion(this.javaExe);
+    if (version !== null && version < 17) {
+      return Promise.reject(new Error(
+        `Java ${version} detected but Java 17 or 21 is required. ` +
+        `Please install Java 21 from https://adoptium.net and restart VS Code.`
+      ));
+    }
+    return this.doStart();
   }
 
   private doStart(): Promise<void> {
@@ -235,8 +266,14 @@ class JavaPersistentProcess {
         }
       };
 
+      // Capture stderr so we can include it in error messages.
+      let stderrCapture = '';
       proc.stdout!.on('data', onEarlyData);
-      proc.stderr!.on('data', (chunk: Buffer) => process.stderr.write(chunk));
+      proc.stderr!.on('data', (chunk: Buffer) => {
+        const text = chunk.toString('utf8');
+        stderrCapture += text;
+        process.stderr.write(text);
+      });
 
       proc.on('error', (err) => {
         clearTimeout(timer);
@@ -249,7 +286,11 @@ class JavaPersistentProcess {
         clearTimeout(timer);
         if (!settled) {
           settled = true;
-          reject(new Error(`JVM server exited before ready (code ${code})`));
+          const detail = stderrCapture.trim().split('\n').slice(0, 3).join(' | ');
+          const hint = detail.includes('UnsupportedClassVersionError') || detail.includes('class file version')
+            ? ' (Java version too old — install Java 17 or 21)'
+            : detail ? ` — ${detail}` : '';
+          reject(new Error(`JVM server exited before ready (code ${code})${hint}`));
         }
         this.drainPending(new Error(`JVM server process exited (code ${code})`));
         this.reset();
