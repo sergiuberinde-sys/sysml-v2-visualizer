@@ -364,7 +364,8 @@ export default function App() {
   const officialParseResultRef = useRef<SysMLV2ParseResult | null>(null);
   // True when running inside the VS Code extension — the extension manages all
   // parsing and sends updateGraph, so the webview should not call the parser itself.
-  const isVSCodeMode = useRef(false);
+  const isVSCodeModeRef = useRef(false);
+  const [isVSCodeMode, setIsVSCodeMode] = useState(false);
 
   // Cursor sync & focus subtree toggles (official mode only)
   const [syncCursor,   setSyncCursor]   = useState(true);
@@ -520,7 +521,7 @@ export default function App() {
   // Skipped in VS Code mode: the extension parses and sends updateGraph directly,
   // so calling the parser here would be a redundant second round-trip.
   useEffect(() => {
-    if (isVSCodeMode.current) return;
+    if (isVSCodeModeRef.current) return;
     let cancelled = false;
     setOfficialParseLoading(true);
     const svc = new HttpSysMLV2ParserService(serviceEndpoint);
@@ -592,20 +593,23 @@ export default function App() {
       if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
         fromExtension.current = true;
-        isVSCodeMode.current = true;
+        isVSCodeModeRef.current = true;
+        setIsVSCodeMode(true);
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
       } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
         fromExtension.current = true;
-        isVSCodeMode.current = true;
+        isVSCodeModeRef.current = true;
+        setIsVSCodeMode(true);
         setSource(msg.text);
       } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
       } else if (msg.type === 'parserServiceConfig' && typeof msg.parserServiceUrl === 'string') {
         // VS Code extension sent the configured parser service URL from settings.
         // This overrides the localStorage default so the extension config is authoritative.
-        isVSCodeMode.current = true;
+        isVSCodeModeRef.current = true;
+        setIsVSCodeMode(true);
         setServiceEndpoint(msg.parserServiceUrl);
       } else if (msg.type === 'trlcAnnotations' && Array.isArray(msg.trlcAnnotations)) {
         setTrlcAnnotations(msg.trlcAnnotations);
@@ -1192,18 +1196,20 @@ export default function App() {
                   {r.charAt(0).toUpperCase() + r.slice(1)}
                 </button>
               ))}
-              <input
-                type="text"
-                value={serviceEndpoint}
-                onChange={e => setServiceEndpoint(e.target.value)}
-                placeholder="http://localhost:9001"
-                title="SysML v2 parser service endpoint URL"
-                style={{
-                  fontSize: 11, background: '#1e293b', color: '#e2e8f0',
-                  border: '1px solid #334155', borderRadius: 3,
-                  padding: '1px 6px', width: 190,
-                }}
-              />
+              {!isVSCodeMode && (
+                <input
+                  type="text"
+                  value={serviceEndpoint}
+                  onChange={e => setServiceEndpoint(e.target.value)}
+                  placeholder="http://localhost:9001"
+                  title="SysML v2 parser service endpoint URL"
+                  style={{
+                    fontSize: 11, background: '#1e293b', color: '#e2e8f0',
+                    border: '1px solid #334155', borderRadius: 3,
+                    padding: '1px 6px', width: 190,
+                  }}
+                />
+              )}
               <button
                 type="button"
                 title={
@@ -1322,7 +1328,7 @@ export default function App() {
             )}
           </div>
           <div className="view-area">
-            {/* ── Parser service status banner ──────────────────────────── */}
+            {/* ── Parser status banner ──────────────────────────────────── */}
             <div style={{
               padding: '10px 16px',
               background: '#0f172a',
@@ -1333,16 +1339,20 @@ export default function App() {
               flexDirection: 'column',
               gap: 6,
             }}>
-              <span style={{ color: '#64748b' }}>
-                Requires the SysML v2 parser service. See{' '}
-                <code style={{ color: '#94a3b8' }}>parser-service/README.md</code>.
-              </span>
+              {!isVSCodeMode && (
+                <span style={{ color: '#64748b' }}>
+                  Requires the SysML v2 parser service. See{' '}
+                  <code style={{ color: '#94a3b8' }}>parser-service/README.md</code>.
+                </span>
+              )}
               {officialParseLoading && (
                 <span style={{ color: '#94a3b8' }}>Parsing…</span>
               )}
               {!officialParseLoading && officialParseResult?.error === 'SERVICE_UNAVAILABLE' && (
                 <span style={{ color: '#ef4444' }}>
-                  Parser service not available. Check endpoint: {serviceEndpoint}
+                  {isVSCodeMode
+                    ? 'Parser not available. Ensure the Java parser is installed.'
+                    : `Parser service not available. Check endpoint: ${serviceEndpoint}`}
                 </span>
               )}
               {!officialParseLoading && officialParseResult && officialParseResult.error !== 'SERVICE_UNAVAILABLE' && (() => {
@@ -1358,12 +1368,12 @@ export default function App() {
                 const message = officialParseResult.success
                   ? 'Parsed successfully.'
                   : onlyUnresolvedRefs
-                    ? `Parsed — ${unresolvedCount} unresolved import(s) (cross-file references not available in standalone mode).`
+                    ? `Parsed — ${unresolvedCount} unresolved import(s).`
                     : `Parse failed — ${officialParseResult.diagnostics.length} issue(s) reported.`;
                 return (
                   <span style={{ color }}>
                     {message}
-                    {officialParseResult.error && ` (${officialParseResult.error})`}
+                    {!isVSCodeMode && officialParseResult.error && ` (${officialParseResult.error})`}
                   </span>
                 );
               })()}
