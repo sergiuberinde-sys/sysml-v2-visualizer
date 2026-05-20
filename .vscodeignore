@@ -1,18 +1,45 @@
-# Exclude development source — only ship the compiled outputs
+# ── Development sources (compiled outputs are shipped instead) ────────────────
 src/**
 src-vscode/**
 scripts/**
 node_modules/**
 .vscode-test/**
+parser-service/src/**
+parser-service/node_modules/**
+parser-service/dist/**
+parser-service/__tests__/**
+parser-service/tsconfig.json
+parser-service/package*.json
 
-# Config / tooling
+# ── Java build artefacts (only the final JAR is needed) ──────────────────────
+java-parser-wrapper/src/**
+java-parser-wrapper/pom.xml
+java-parser-wrapper/target/classes/**
+java-parser-wrapper/target/generated-sources/**
+java-parser-wrapper/target/maven-archiver/**
+java-parser-wrapper/target/maven-status/**
+java-parser-wrapper/target/sysml-parse-cli-*-SNAPSHOT.jar
+
+# ── Dev/CI tooling ────────────────────────────────────────────────────────────
+.claude/**
+.github/**
+.vscode/**
+docs/**
+test/**
+demo/**
+demo-projects/**
+official-sysmlv2-samples/**
+*.vsix
 tsconfig*.json
 vite.config.ts
+vitest.config.ts
 eslint.config.js
 .eslintrc*
 .gitignore
+index.html
 
-# Keep dist/ and out-extension/ — they are the runtime artefacts
-# (vsce would otherwise exclude dist because it is in .gitignore)
+# ── Keep compiled runtime artefacts ──────────────────────────────────────────
 !dist/**
 !out-extension/**
+!java-parser-wrapper/target/sysml-parse-cli.jar
+!parser-service/sysml-stdlib/**
