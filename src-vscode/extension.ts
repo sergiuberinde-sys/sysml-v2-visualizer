@@ -1,10 +1,44 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'crypto';
 import { JavaWrapperClient } from '../parser-service/src/javaWrapperClient';
 import { buildGraph } from '../parser-service/src/graphBuilder';
 import { buildBehavior } from '../parser-service/src/behaviorBuilder';
 import type { SysMLV2ParseResult } from '../parser-service/src/types';
+
+// ── Parse result cache ────────────────────────────────────────────────────────
+// Keyed by SHA-256(primary text + sorted context texts). Avoids redundant JVM
+// round-trips when switching back to a file that hasn't changed.
+const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
+const PARSE_CACHE_MAX    = 10;
+interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
+const parseCache = new Map<string, ParseCacheEntry>();
+
+function parseCacheKey(text: string, context: { name: string; text: string }[]): string {
+  const h = createHash('sha256');
+  h.update(text);
+  for (const c of [...context].sort((a, b) => a.name.localeCompare(b.name))) {
+    h.update('\x00' + c.name + '\x00' + c.text);
+  }
+  return h.digest('hex');
+}
+
+function parseCacheGet(key: string): SysMLV2ParseResult | null {
+  const e = parseCache.get(key);
+  if (!e) return null;
+  if (Date.now() - e.ts > PARSE_CACHE_TTL_MS) { parseCache.delete(key); return null; }
+  return e.result;
+}
+
+function parseCacheSet(key: string, result: SysMLV2ParseResult): void {
+  if (parseCache.size >= PARSE_CACHE_MAX) {
+    let oldestKey = ''; let oldestTs = Infinity;
+    for (const [k, v] of parseCache) { if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; } }
+    if (oldestKey) parseCache.delete(oldestKey);
+  }
+  parseCache.set(key, { result, ts: Date.now() });
+}
 import {
   analyzeSysML,
   getSymbolAtPosition,
@@ -116,7 +150,14 @@ export function activate(context: vscode.ExtensionContext): void {
         } catch { /* skip */ }
       }));
 
-      const result: SysMLV2ParseResult = await javaClient.parse(document.getText(), contextFiles);
+      const primaryText = document.getText();
+      const cacheKey    = parseCacheKey(primaryText, contextFiles);
+      const cached      = parseCacheGet(cacheKey);
+      if (cached) {
+        console.log(`[sysml-visualizer] cache hit — skipping JVM parse`);
+      }
+      const result: SysMLV2ParseResult = cached ?? await javaClient.parse(primaryText, contextFiles);
+      if (!cached) parseCacheSet(cacheKey, result);
 
       // VS Code diagnostic squiggles
       const diags = result.diagnostics.map(d => {
