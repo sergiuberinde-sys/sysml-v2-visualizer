@@ -6,6 +6,7 @@ import { JavaWrapperClient } from '../parser-service/src/javaWrapperClient';
 import { buildGraph } from '../parser-service/src/graphBuilder';
 import { buildBehavior } from '../parser-service/src/behaviorBuilder';
 import type { SysMLV2ParseResult } from '../parser-service/src/types';
+import { ensureJava } from './javaInstaller';
 
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(primary text + sorted context texts).
@@ -86,7 +87,7 @@ import type { SysMLNode } from '../src/core/modelTypes';
 import { scanRawAnnotations } from '../src/core/trlc/extractTraces';
 
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   let currentSysmlUri: vscode.Uri | undefined;
   let currentSysmlText: string | undefined;
 
@@ -104,6 +105,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
   context.subscriptions.push(diagnosticCollection);
 
+  // ── Java runtime — auto-install if missing or too old ────────────────────────
+  // Runs before JavaWrapperClient is created so SYSML_JAVA_HOME is set first.
+  const javaJustInstalled = await ensureJava(context.globalStorageUri.fsPath);
+
   // ── Direct Java parser client (no HTTP) ──────────────────────────────────────
   // Paths resolved from the extension installation directory so they work
   // both during development and in the packaged VSIX.
@@ -114,6 +119,19 @@ export function activate(context: vscode.ExtensionContext): void {
     process.env['SYSML_STDLIB_PATH'] = stdlibDir;
   }
   const javaClient = new JavaWrapperClient(jarPath);
+
+  // After a fresh Java install the JVM stdlib load can take 30–90 s on Windows.
+  // Show a progress notification so the user knows the parser is starting up.
+  if (javaJustInstalled) {
+    void vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title:    'SysML v2 Visualizer: Starting parser (one-time initialisation, ~30–90 s)…',
+        cancellable: false,
+      },
+      () => javaClient.waitForReady().catch(() => { /* startup errors are reported separately */ }),
+    );
+  }
 
   // ── Diagnostic helpers ────────────────────────────────────────────────────────
 
@@ -256,18 +274,11 @@ export function activate(context: vscode.ExtensionContext): void {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[sysml-visualizer] parse ERROR:', msg);
-      // ENOENT on the java spawn means Java is not installed / not on PATH.
       if (msg.includes('ENOENT') || msg.includes('spawn')) {
         void vscode.window.showErrorMessage(
-          'SysML v2 Visualizer: Java not found. ' +
-          'Please install Java 17 or 21 (https://adoptium.net) and restart VS Code. ' +
-          'Or set the SYSML_JAVA_HOME environment variable to your Java installation directory.',
-          'Open Download Page',
-        ).then(choice => {
-          if (choice === 'Open Download Page') {
-            void vscode.env.openExternal(vscode.Uri.parse('https://adoptium.net/temurin/releases/?version=21'));
-          }
-        });
+          'SysML v2 Visualizer: Java runtime not found. ' +
+          'Restart VS Code to retry auto-installation, or install Java 17+ manually from https://adoptium.net',
+        );
       }
     }
   }
