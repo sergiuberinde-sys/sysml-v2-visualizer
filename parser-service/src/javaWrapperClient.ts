@@ -344,12 +344,12 @@ class JavaPersistentProcess {
 
   private doSend(requestLine: string): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      // 60 s is generous for a single parse without stdlib loading overhead
-      const RESPONSE_TIMEOUT_MS = 60_000;
+      // 5 min covers slow first-parse on Windows (JIT warm-up, class loading)
+      const RESPONSE_TIMEOUT_MS = 5 * 60_000;
       const timer = setTimeout(() => {
         this.pendingResolve = null;
         this.pendingReject  = null;
-        reject(new Error('JVM server request timed out after 60s'));
+        reject(new Error('JVM server request timed out after 5 minutes'));
       }, RESPONSE_TIMEOUT_MS);
 
       this.pendingResolve = (line: string) => { clearTimeout(timer); resolve(line); };
@@ -400,6 +400,11 @@ export class JavaWrapperClient implements OfficialBackendClient {
           console.error('[sysml-v2-parser-service] JVM warmup failed:', err);
         });
     }
+  }
+
+  /** Resolves when the persistent JVM is ready to accept parse requests. */
+  waitForReady(): Promise<void> {
+    return getPersistentJVM(this.jarPath, this.javaExe).ensureStarted();
   }
 
   async health(): Promise<boolean> {

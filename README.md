@@ -69,11 +69,13 @@ demo-projects/          Example .sysml files
 |------|---------|---------|
 | Node.js | 20+ | Build the extension and webview |
 | npm | bundled with Node | Package management |
-| Java | 17 or 21 | Run the JVM parser at runtime |
+| Java | 17 or 21 | Run the JVM parser at runtime — **auto-installed** by the extension if missing |
 | Maven | 3.8+ | Rebuild the JAR (only needed if changing Java wrapper source) |
 | vsce | bundled via `@vscode/vsce` | Package the `.vsix` |
 
 The pre-built JAR is committed to the repository so **Maven is not required** unless the Java wrapper source is changed.
+
+> **Java auto-installation** — if Java 17 or 21 is not found on activation, the extension downloads Eclipse Temurin 21 from [Adoptium](https://adoptium.net) (~200 MB) and stores it in VS Code's global storage. Supported platforms: macOS (x64, arm64), Linux (x64, arm64), Windows (x64). The download happens once; subsequent launches reuse the cached runtime.
 
 ---
 
@@ -166,12 +168,6 @@ npm test
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `sysmlVisualizer.parserServiceUrl` | `http://localhost:9001` | Legacy HTTP parser URL (not used in current architecture) |
-
----
-
-## Supported SysML v2 syntax
-
-See [SUPPORTED_SYNTAX.md](SUPPORTED_SYNTAX.md) for the full list of supported constructs with examples.
 
 ---
 
