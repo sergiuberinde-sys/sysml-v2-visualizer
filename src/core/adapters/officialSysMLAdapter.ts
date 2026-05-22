@@ -718,6 +718,47 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
   }
 
   /**
+   * Extract message participants from a FlowUsage that represents a SysML v2 message
+   * (e.g. `message req from ctrl to sensor`).
+   *
+   * Unlike port-to-port FlowUsages (which use FeatureChaining), message-style FlowUsages
+   * carry their participant references via ReferenceSubsetting nodes inside each
+   * EventOccurrenceUsage child.  Returns [fromParticipant, toParticipant] or null.
+   */
+  function extractMessageParticipants(flowId: string): [string, string] | null {
+    const parts: string[] = [];
+
+    function findRefInEvent(eventId: string): void {
+      for (const kid of childrenOf.get(eventId) ?? []) {
+        const n = nodeIndex.get(kid);
+        if (!n) continue;
+        // Check for ReferenceSubsetting before the TRANSPARENT_TYPES guard
+        // because ReferenceSubsetting IS in TRANSPARENT_TYPES but carries the name we need.
+        if (n.type === 'ReferenceSubsetting' && n.label && n.label !== 'ReferenceSubsetting') {
+          parts.push(n.label);
+          return;
+        }
+        if (TRANSPARENT_TYPES.has(n.type)) findRefInEvent(kid);
+      }
+    }
+
+    function findEvents(id: string): void {
+      for (const kid of childrenOf.get(id) ?? []) {
+        const n = nodeIndex.get(kid);
+        if (!n) continue;
+        if (n.type === 'EventOccurrenceUsage') {
+          findRefInEvent(kid);
+        } else if (TRANSPARENT_TYPES.has(n.type)) {
+          findEvents(kid);
+        }
+      }
+    }
+
+    findEvents(flowId);
+    return parts.length >= 2 ? [parts[0], parts[1]] : null;
+  }
+
+  /**
    * Extract flow endpoints from a FlowUsage by finding its EventOccurrenceUsage children
    * and collecting their FeatureChaining chains (e.g. ["acpdCdd", "callCollectInputData"]).
    */
@@ -817,7 +858,9 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
   // PartUsage nodes (e.g. "part acpdCdd : AcpdCdd;") are promoted from
   // body-only partAlias to partUsage in result.nodes[] and become visible in
   // the Structure view.
-  function traverse(ids: string[], namespace: string, parentIsPackage = false): SysMLNode[] {
+  // occurrenceCtx: name of the enclosing OccurrenceDefinition when traversing its children,
+  // so FlowUsage message nodes can carry the correct `occurrence` field.
+  function traverse(ids: string[], namespace: string, parentIsPackage = false, occurrenceCtx: string | null = null): SysMLNode[] {
     const body: SysMLNode[] = [];
 
     for (const id of ids) {
@@ -829,7 +872,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
       if (TRANSPARENT_TYPES.has(gNode.type)) {
         // Fold children into the current scope, preserving package-scope context
         // so that PartUsage inside OwningMembership inside Package is still promoted.
-        body.push(...traverse(kids, namespace, parentIsPackage));
+        body.push(...traverse(kids, namespace, parentIsPackage, occurrenceCtx));
         continue;
       }
 
@@ -852,10 +895,24 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
         continue;
       }
 
-      // FlowUsage: extract flow endpoints from EventOccurrenceUsage children.
+      // FlowUsage: port-to-port flow (FeatureChaining) or message (ReferenceSubsetting).
       if (gNode.type === 'FlowUsage') {
         const conn = extractFlowEndpoints(id);
-        if (conn) body.push(conn);
+        if (conn) {
+          body.push(conn);
+        } else if (occurrenceCtx) {
+          const parts = extractMessageParticipants(id);
+          if (parts) {
+            body.push({
+              kind: 'message',
+              name: gNode.label !== gNode.type ? gNode.label : '',
+              from: parts[0],
+              to:   parts[1],
+              occurrence: occurrenceCtx,
+              line: gNode.startLine ?? 0,
+            });
+          }
+        }
         continue;
       }
 
@@ -874,7 +931,10 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
           : namespace;
 
       const isPackage = gNode.type === 'Package' || gNode.type === 'LibraryPackage';
-      const bodyItems = traverse(kids, childNs, isPackage);
+      const childOccCtx = gNode.type === 'OccurrenceDefinition' && gNode.label !== gNode.type
+        ? gNode.label
+        : null;
+      const bodyItems = traverse(kids, childNs, isPackage, childOccCtx);
       // Resolve type name: typedBy edge (authoritative) → fallback to FeatureTyping DFS.
       const typeName  = typedByLabel.get(id) ?? findTypeName(id);
       // For PortUsage, check gNode.direction first (direct declaration), then
