@@ -21,7 +21,7 @@ interface Props {
 }
 
 export default function SequenceView({ result, occurrenceName, selection, onSelect }: Props) {
-  const { participants, messages } = useMemo(() => {
+  const { participants, messages, activations } = useMemo(() => {
     const occ = result.nodes.find(
       (n): n is Extract<VizNode,{ kind: 'occurrenceDef' }> =>
         n.kind === 'occurrenceDef' && n.name === occurrenceName,
@@ -37,7 +37,16 @@ export default function SequenceView({ result, occurrenceName, selection, onSele
       if (!seen.has(m.from)) { seen.add(m.from); participants.push(m.from); }
       if (!seen.has(m.to))   { seen.add(m.to);   participants.push(m.to);   }
     }
-    return { participants, messages: msgs };
+
+    const activations = new Map<string, { min: number; max: number }>();
+    for (let i = 0; i < msgs.length; i++) {
+      for (const p of [msgs[i].from, msgs[i].to]) {
+        const cur = activations.get(p) ?? { min: i, max: i };
+        activations.set(p, { min: Math.min(cur.min, i), max: Math.max(cur.max, i) });
+      }
+    }
+
+    return { participants, messages: msgs, activations };
   }, [result, occurrenceName]);
 
   if (messages.length === 0) {
@@ -124,10 +133,22 @@ export default function SequenceView({ result, occurrenceName, selection, onSele
                 x1={x} y1={lifeTop} x2={x} y2={lifeBot}
                 stroke={selected ? '#4a6fa8' : '#374151'} strokeWidth={1} strokeDasharray="5 4"
               />
-              <rect
-                x={x - 4} y={lifeTop + 10} width={8} height={lifelineH - 20}
-                fill="#1e2a3a" stroke="#374151" strokeWidth={0.5} rx={2}
-              />
+              {(() => {
+                const act = activations.get(p);
+                if (!act) return null;
+                const actTop = TOP_PAD + BOX_H + FIRST_MSG + act.min * MSG_STEP - 12;
+                const actBot = TOP_PAD + BOX_H + FIRST_MSG + act.max * MSG_STEP + 12;
+                return (
+                  <rect
+                    x={x - 6} y={actTop}
+                    width={12} height={actBot - actTop}
+                    fill={selected ? '#1a3060' : '#172040'}
+                    stroke={selected ? '#3b82f6' : '#2d5a9e'}
+                    strokeWidth={1}
+                    rx={2}
+                  />
+                );
+              })()}
             </g>
           );
         })}
