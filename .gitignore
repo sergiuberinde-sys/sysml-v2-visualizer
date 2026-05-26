@@ -13,6 +13,9 @@ out-extension
 dist-ssr
 *.local
 
+# Built JAR — not tracked in git; build from source (see README § Building the JAR)
+java-parser-wrapper/target/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

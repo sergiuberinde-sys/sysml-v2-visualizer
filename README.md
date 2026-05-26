@@ -54,8 +54,8 @@ parser-service/
   sysml-stdlib/         Official SysML v2 standard library (tracked in git)
 java-parser-wrapper/
   src/                  Java source for the stdin/stdout JVM wrapper
-  target/
-    sysml-parse-cli.jar Pre-built fat JAR (tracked in git)
+  target/               Build output — NOT tracked in git (see § Building the JAR)
+    sysml-parse-cli.jar Built locally with mvn clean package
 syntaxes/               TextMate grammar for .sysml syntax highlighting
 scripts/                Build helper scripts
 demo-projects/          Example .sysml files
@@ -70,10 +70,10 @@ demo-projects/          Example .sysml files
 | Node.js | 20+ | Build the extension and webview |
 | npm | bundled with Node | Package management |
 | Java | 17 or 21 | Run the JVM parser at runtime — **auto-installed** by the extension if missing |
-| Maven | 3.8+ | Rebuild the JAR (only needed if changing Java wrapper source) |
+| Maven | 3.8+ | **Required** to build the JAR from source (see § Building the JAR) |
 | vsce | bundled via `@vscode/vsce` | Package the `.vsix` |
 
-The pre-built JAR is committed to the repository so **Maven is not required** unless the Java wrapper source is changed.
+The JAR is **not committed to the repository** and must be built locally before running the extension. See the [Building the JAR](#building-the-jar) section.
 
 > **Java auto-installation** — if Java 17 or 21 is not found on activation, the extension downloads Eclipse Temurin 21 from [Adoptium](https://adoptium.net) (~200 MB) and stores it in VS Code's global storage. Supported platforms: macOS (x64, arm64), Linux (x64, arm64), Windows (x64). The download happens once; subsequent launches reuse the cached runtime.
 
@@ -95,15 +95,42 @@ npm run compile:extension
 # 4. Open the repo in VS Code and press F5 to launch an Extension Development Host.
 ```
 
-### Rebuilding the JAR
+### Building the JAR
 
-Only needed when changing `java-parser-wrapper/src/`:
+The JAR is not stored in git. You must build it once before running the extension.
+
+#### Step 1 — Build and install the SysML v2 Pilot Implementation (one-time)
+
+The wrapper depends on the official [SysML-v2-Pilot-Implementation](https://github.com/Systems-Modeling/SysML-v2-Pilot-Implementation) fat JAR, which must be built from source and installed into your local Maven repository.
+
+```bash
+# Clone the Pilot Implementation anywhere on your machine
+git clone https://github.com/Systems-Modeling/SysML-v2-Pilot-Implementation.git
+cd SysML-v2-Pilot-Implementation/org.omg.sysml.interactive
+
+# Build the fat JAR (takes ~10-20 min, requires Java 21 and Maven)
+mvn clean package -DskipTests
+
+# Install into local Maven repository
+mvn install:install-file \
+  -Dfile=target/org.omg.sysml.interactive-0.59.0-SNAPSHOT-all.jar \
+  -DgroupId=org.omg.sysml \
+  -DartifactId=org.omg.sysml.interactive \
+  -Dversion=0.59.0-SNAPSHOT \
+  -Dclassifier=all \
+  -Dpackaging=jar \
+  -DgeneratePom=true
+```
+
+#### Step 2 — Build the wrapper JAR
 
 ```bash
 cd java-parser-wrapper
 mvn clean package -DskipTests
 # Output: target/sysml-parse-cli.jar
 ```
+
+Repeat Step 2 only when changing `java-parser-wrapper/src/`. Step 1 is a one-time setup.
 
 ---
 

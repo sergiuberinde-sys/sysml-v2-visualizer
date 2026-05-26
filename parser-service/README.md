@@ -14,6 +14,7 @@ JavaWrapperClient  (parser-service/src/javaWrapperClient.ts)
         │
         ▼
 JVM process  (java-parser-wrapper/target/sysml-parse-cli.jar)
+  • Built from source — see root README § Building the JAR
 ```
 
 The extension host imports `JavaWrapperClient`, `buildGraph`, and `buildBehavior` directly from this package's source — no HTTP server is involved in the normal VS Code extension flow.
