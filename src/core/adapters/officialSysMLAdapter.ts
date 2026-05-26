@@ -387,6 +387,105 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
     edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
   }
 
+  // ── Pass 6: message-style FlowUsage → 'message' edges ───────────────────────
+  //
+  // 'message X from partA.event to partB.event' inside a part def creates a
+  // FlowUsage whose endpoints use:
+  //   ParameterMembership → EventOccurrenceUsage → ReferenceSubsetting
+  //     → Feature → FeatureChaining[partName] FeatureChaining[eventName]
+  //
+  // We extract the participant names (first FeatureChaining under Feature) and
+  // resolve them to PartUsage sibling nodes in the same container.  Multiple
+  // messages between the same ordered pair are merged into one labeled edge.
+
+  /**
+   * Walk through membership wrappers in the subtree of a FlowUsage to find
+   * EventOccurrenceUsage children, then resolve the participant name via:
+   *   ReferenceSubsetting → Feature → FeatureChaining[0]  (primary path)
+   *   ReferenceSubsetting.label                            (fallback)
+   * Returns the ordered pair of participant names, or null.
+   */
+  function extractMsgParticipantsBCG(flowId: string): [string, string] | null {
+    const names: string[] = [];
+
+    function fromEvent(evtId: string): void {
+      for (const refId of childrenOfContainment.get(evtId) ?? []) {
+        const refN = nodeById.get(refId);
+        if (!refN || refN.type !== 'ReferenceSubsetting') continue;
+        // Primary: Feature → FeatureChaining chain gives part name as first segment
+        for (const featId of childrenOfContainment.get(refId) ?? []) {
+          const featN = nodeById.get(featId);
+          if (!featN || featN.type !== 'Feature') continue;
+          const chains = (childrenOfContainment.get(featId) ?? [])
+            .map(id => nodeById.get(id))
+            .filter((n): n is GraphNode => !!n && n.type === 'FeatureChaining' && n.label !== n.type);
+          if (chains.length >= 1) { names.push(chains[0].label); return; }
+        }
+        // Fallback: ReferenceSubsetting label was resolved by the parser
+        if (refN.label !== refN.type) { names.push(refN.label); return; }
+      }
+    }
+
+    function walk(id: string): void {
+      for (const kid of childrenOfContainment.get(id) ?? []) {
+        const n = nodeById.get(kid);
+        if (!n) continue;
+        if (n.type === 'EventOccurrenceUsage') { fromEvent(kid); }
+        else if (MEMBERSHIP_WRAPPERS.has(n.type)) { walk(kid); }
+      }
+    }
+
+    walk(flowId);
+    return names.length >= 2 ? [names[0], names[1]] : null;
+  }
+
+  /**
+   * Given a FlowUsage node ID and a participant name, walk up through membership
+   * wrappers to reach the semantic container, then find the PartUsage sibling
+   * with the matching label.
+   */
+  function findSiblingPartBCG(flowId: string, name: string): string | null {
+    let ancestorId: string | undefined = parentOf.get(flowId);
+    while (ancestorId !== undefined && MEMBERSHIP_WRAPPERS.has(nodeById.get(ancestorId)?.type ?? '')) {
+      ancestorId = parentOf.get(ancestorId);
+    }
+    if (!ancestorId) return null;
+
+    function search(cId: string): string | null {
+      for (const kid of childrenOfContainment.get(cId) ?? []) {
+        const n = nodeById.get(kid);
+        if (!n) continue;
+        if (n.type === 'PartUsage' && n.label === name) return kid;
+        if (MEMBERSHIP_WRAPPERS.has(n.type)) { const f = search(kid); if (f) return f; }
+      }
+      return null;
+    }
+    return search(ancestorId);
+  }
+
+  // Group messages by ordered (srcId, tgtId) pair to produce one edge per pair.
+  const msgGroups = new Map<string, { srcId: string; tgtId: string; names: string[] }>();
+
+  for (const n of nodes) {
+    if (n.type !== 'FlowUsage') continue;
+    const pair = extractMsgParticipantsBCG(n.id);
+    if (!pair) continue;
+    const srcId = findSiblingPartBCG(n.id, pair[0]);
+    const tgtId = findSiblingPartBCG(n.id, pair[1]);
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+    const key      = `${srcId}:${tgtId}`;
+    const flowName = n.label !== n.type ? n.label : '';
+    if (!msgGroups.has(key)) msgGroups.set(key, { srcId, tgtId, names: [] });
+    if (flowName) msgGroups.get(key)!.names.push(flowName);
+  }
+
+  for (const [key, { srcId, tgtId, names }] of msgGroups) {
+    const label = names.length === 0  ? undefined
+                : names.length <= 2   ? names.join(', ')
+                : `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+    edges.push({ id: `msg:${key}`, source: srcId, target: tgtId, type: 'message', label });
+  }
+
   return { nodes, edges };
 }
 

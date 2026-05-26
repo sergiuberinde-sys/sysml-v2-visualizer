@@ -6,9 +6,11 @@
  *   'typedBy'        — FeatureTyping cross-reference resolved by the adapter
  *                      (usage → definition); only present when the type name can
  *                      be resolved to a named definition node in the same graph.
- *   'connection'     — ConnectionUsage endpoint resolved via ReferenceSubsetting
- *                      cross-reference (portA → portB); only present when both
- *                      endpoints resolve to PortUsage nodes in the same graph.
+ *   'connection'     — Structural wiring: ConnectionUsage / FlowConnectionUsage /
+ *                      structural FlowUsage endpoint resolved to PortUsage nodes.
+ *   'message'        — Behavioural message: FlowUsage with message syntax inside
+ *                      a PartDefinition scope, resolved to PartUsage participant
+ *                      nodes (no ports involved).
  *   'specialization' — Superclassing (`:>`) between PartDefinitions:
  *                      source is the specific/sub def, target is the general/super def.
  *   'subsetting'     — Subsetting (`:>>`) between PartUsages:
@@ -28,7 +30,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: 'contains' | 'typedBy' | 'connection' | 'specialization' | 'subsetting';
+  type: 'contains' | 'typedBy' | 'connection' | 'message' | 'specialization' | 'subsetting';
   label?: string;
 }
 

@@ -9,14 +9,17 @@ import type { SysMLV2ParseResult } from '../parser-service/src/types';
 import { ensureJava } from './javaInstaller';
 
 // ── In-memory parse cache ─────────────────────────────────────────────────────
-// Fast same-session cache. Keyed by SHA-256(primary text + sorted context texts).
+// Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
+// Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
+const GRAPH_VERSION      = 'g9';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
-const PARSE_CACHE_MAX    = 10;
+const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
 const parseCache = new Map<string, ParseCacheEntry>();
 
 function parseCacheKey(text: string, context: { name: string; text: string }[]): string {
   const h = createHash('sha256');
+  h.update(GRAPH_VERSION);
   h.update(text);
   for (const c of [...context].sort((a, b) => a.name.localeCompare(b.name))) {
     h.update('\x00' + c.name + '\x00' + c.text);
@@ -188,89 +191,122 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void activePanel.webview.postMessage({ type: 'trlcAnnotations', trlcAnnotations });
   }
 
-  async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
-    const uri = document.uri;
-    console.log(`[sysml-visualizer] START parse: ${path.basename(uri.fsPath)}`);
-    try {
-      // Collect all other .sysml files as cross-file import context.
-      const contextFiles: { name: string; text: string }[] = [];
-      const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
-      await Promise.all(allSysml.map(async (u) => {
-        if (u.toString() === uri.toString()) return;
-        try {
-          const bytes = await vscode.workspace.fs.readFile(u);
-          contextFiles.push({ name: u.path.split('/').pop() ?? u.path, text: Buffer.from(bytes).toString('utf8') });
-        } catch { /* skip */ }
-      }));
+  /** True when the parse result contains unresolved cross-file reference errors. */
+  function hasResolveErrors(result: SysMLV2ParseResult): boolean {
+    return result.diagnostics.some(
+      d => d.severity === 'error' && d.message.startsWith("Couldn't resolve reference to"),
+    );
+  }
 
-      const primaryText = document.getText();
-      const cacheKey    = parseCacheKey(primaryText, contextFiles);
+  /** Read all .sysml files in the workspace except primaryUri. */
+  async function collectContextFiles(primaryUri: vscode.Uri): Promise<{ name: string; text: string }[]> {
+    const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+    const contextFiles: { name: string; text: string }[] = [];
+    await Promise.all(allSysml.map(async (u) => {
+      if (u.toString() === primaryUri.toString()) return;
+      try {
+        const bytes = await vscode.workspace.fs.readFile(u);
+        contextFiles.push({ name: u.path.split('/').pop() ?? u.path, text: Buffer.from(bytes).toString('utf8') });
+      } catch { /* skip unreadable files */ }
+    }));
+    return contextFiles;
+  }
 
-      // 1. Memory cache (hot path — same session, unchanged file)
-      let result = parseCacheGet(cacheKey);
-      let cacheSource = 'memory';
+  /** Apply a parse result to VS Code squiggles and the webview. */
+  function applyResult(document: vscode.TextDocument, result: SysMLV2ParseResult): void {
+    const diags = result.diagnostics.map(d => {
+      const vd = new vscode.Diagnostic(toVsCodeRange(document, d.line, d.column), d.message, mapSeverity(d));
+      vd.source = 'SysML v2 (official)';
+      return vd;
+    });
+    diagnosticCollection.set(document.uri, diags);
 
-      // 2. Disk cache (survives restarts — unchanged file, new session)
-      if (!result) {
-        result = diskCacheGet(cacheKey);
-        if (result) {
-          cacheSource = 'disk';
-          parseCacheSet(cacheKey, result);
+    if (activePanel) {
+      const graph    = result.graph    ?? { nodes: [], edges: [] };
+      const behavior = result.behavior ?? null;
+      void activePanel.webview.postMessage({
+        type: 'updateGraph',
+        graph,
+        behavior,
+        success: result.success,
+        diagnostics: result.diagnostics,
+      });
+      type GNode = { id: string; startLine?: number; endLine?: number };
+      const gNodes = (graph as { nodes: GNode[] }).nodes;
+      nodeIdToRange = new Map();
+      for (const n of gNodes) {
+        if (n.startLine != null && n.startLine > 0) {
+          nodeIdToRange.set(n.id, { startLine: n.startLine, endLine: n.endLine ?? n.startLine });
         }
       }
+      console.log(`[sysml-visualizer] updateGraph: ${gNodes.length} nodes, rangeIndex=${nodeIdToRange.size}`);
+    }
+  }
 
-      // 3. JVM parse (first time or file changed)
-      if (!result) {
-        result = await javaClient.parse(primaryText, contextFiles);
-        cacheSource = 'jvm';
+  async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
+    const uri         = document.uri;
+    const primaryText = document.getText();
+    console.log(`[sysml-visualizer] START parse: ${path.basename(uri.fsPath)}`);
+
+    try {
+      // ── Phase 1: primary-only parse (no context file reads) ──────────────────
+      // Gives immediate feedback without touching the workspace filesystem.
+      // Cache key uses an empty context list so it is stable regardless of what
+      // other files exist in the workspace.
+      const primaryOnlyKey = parseCacheKey(primaryText, []);
+
+      let phase1 = parseCacheGet(primaryOnlyKey) ?? diskCacheGet(primaryOnlyKey);
+      const phase1FromCache = !!phase1;
+      if (!phase1) {
+        phase1 = await javaClient.parse(primaryText, []);
+      } else if (!parseCacheGet(primaryOnlyKey)) {
+        parseCacheSet(primaryOnlyKey, phase1); // promote disk hit to memory
       }
 
-      // Build graph + behavior (fast JS; always needed for the webview)
+      if (phase1.model && !phase1.graph) {
+        phase1.graph    = buildGraph(phase1.model);
+        phase1.behavior = buildBehavior(phase1.model);
+      }
+
+      // Publish phase-1 result immediately so the UI is never blank while waiting.
+      applyResult(document, phase1);
+
+      if (!hasResolveErrors(phase1)) {
+        // File is self-contained — no cross-file references. Cache and stop.
+        if (!phase1FromCache) {
+          parseCacheSet(primaryOnlyKey, phase1);
+          diskCacheSet(primaryOnlyKey, phase1);
+        }
+        console.log('[sysml-visualizer] parse done (phase 1, self-contained)');
+        return;
+      }
+
+      // ── Phase 2: re-parse with context (file has cross-file references) ──────
+      // Only reached when phase 1 produced "Couldn't resolve reference to" errors.
+      const contextFiles   = await collectContextFiles(uri);
+      const fullKey        = parseCacheKey(primaryText, contextFiles);
+
+      let result = parseCacheGet(fullKey) ?? diskCacheGet(fullKey);
+      const fromCache = !!result;
+      if (!result) {
+        result = await javaClient.parse(primaryText, contextFiles);
+      } else if (!parseCacheGet(fullKey)) {
+        parseCacheSet(fullKey, result);
+      }
+
       if (result.model && !result.graph) {
         result.graph    = buildGraph(result.model);
         result.behavior = buildBehavior(result.model);
       }
 
-      // Persist fresh results so the next open is instant
-      if (cacheSource === 'jvm') {
-        parseCacheSet(cacheKey, result);
-        diskCacheSet(cacheKey, result);
+      applyResult(document, result);
+
+      if (!fromCache) {
+        parseCacheSet(fullKey, result);
+        diskCacheSet(fullKey, result);
       }
+      console.log(`[sysml-visualizer] parse done (phase 2 with context, fromCache=${fromCache})`);
 
-      console.log(`[sysml-visualizer] parse done (source=${cacheSource})`);
-
-      // VS Code diagnostic squiggles
-      const diags = result.diagnostics.map(d => {
-        const vd = new vscode.Diagnostic(toVsCodeRange(document, d.line, d.column), d.message, mapSeverity(d));
-        vd.source = 'SysML v2 (official)';
-        return vd;
-      });
-      diagnosticCollection.set(uri, diags);
-      console.log(`[sysml-visualizer] diagnostics: ${diags.length}`);
-
-      if (activePanel) {
-        const graph    = result.graph    ?? { nodes: [], edges: [] };
-        const behavior = result.behavior ?? null;
-
-        void activePanel.webview.postMessage({
-          type: 'updateGraph',
-          graph,
-          behavior,
-          success: result.success,
-          diagnostics: result.diagnostics,
-        });
-
-        // Rebuild semantic-ID → source range index for reverse (visualizer → editor) sync.
-        type GNode = { id: string; startLine?: number; endLine?: number };
-        const gNodes = (graph as { nodes: GNode[] }).nodes;
-        nodeIdToRange = new Map();
-        for (const n of gNodes) {
-          if (n.startLine != null && n.startLine > 0) {
-            nodeIdToRange.set(n.id, { startLine: n.startLine, endLine: n.endLine ?? n.startLine });
-          }
-        }
-        console.log(`[sysml-visualizer] updateGraph: ${gNodes.length} nodes, rangeIndex=${nodeIdToRange.size}`);
-      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[sysml-visualizer] parse ERROR:', msg);
