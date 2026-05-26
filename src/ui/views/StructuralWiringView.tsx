@@ -52,6 +52,7 @@ const PORT_BIO_C  = '#c084fc';
 const SCOPE_BG    = '#0a1628';
 const SCOPE_BDR   = '#38bdf8';
 const CONN_C      = '#22c55e';
+const MSG_C       = '#7dd3fc';
 const EDGE_SEL_C  = '#89b4fa'; // selected edge / port highlight colour
 const DIM         = '#334155';
 
@@ -462,10 +463,11 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       }
     }
 
-    // Connection edges within this scope
+    // Connection edges within this scope (structural port-to-port + behavioral message part-to-part)
     const inScopeConns = graph.edges.filter(
-      e => e.type === 'connection' && portOwner.has(e.source) && portOwner.has(e.target),
+      e => (e.type === 'connection' || e.type === 'message') && portOwner.has(e.source) && portOwner.has(e.target),
     );
+
 
     // Which canonical port IDs appear as source vs target across in-scope edges.
     // Non-canonical IDs (parser duplicates) are resolved to canonical so the
@@ -777,14 +779,12 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         const isConnected = !isEdgeSel && (selection?.id === srcRf || selection?.id === tgtRf);
         const highlightEdge = isEdgeSel || isConnected;
 
-        const edgeC = highlightEdge ? EDGE_SEL_C : CONN_C;
+        const isMsg  = conn.type === 'message';
+        const edgeC  = highlightEdge ? EDGE_SEL_C : (isMsg ? MSG_C : CONN_C);
 
-        // Route edges to port-handle squares.
-        // Always exit from the outgoing (right/-out) handle and enter at the
-        // incoming (left/no-suffix) handle so flow direction is unambiguous,
-        // regardless of the port's declared in/out direction.
-        const isSrcPort = srcNode?.type === 'PortUsage';
-        const isTgtPort = tgtNode?.type === 'PortUsage';
+        // Route structural edges to port-handle squares; message edges connect parts directly.
+        const isSrcPort = !isMsg && srcNode?.type === 'PortUsage';
+        const isTgtPort = !isMsg && tgtNode?.type === 'PortUsage';
         // Remap through canonicalPortId: a non-canonical duplicate ID must attach
         // to the handle of the single canonical (visible) square for that port.
         const srcCanon  = canonicalPortId.get(conn.source) ?? conn.source;
@@ -799,13 +799,13 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           sourceHandle:    srcHandle,
           targetHandle:    tgtHandle,
           type:            'smoothstep',
-          animated:        true,
+          animated:        !isMsg,
           label,
           // Label background prevents text landing directly on port glyphs or node text.
           labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace' },
           labelBgStyle:    { fill: '#030c06', fillOpacity: 0.95, rx: 3, ry: 3 },
           labelBgPadding:  [3, 4] as [number, number],
-          style:           { stroke: edgeC, strokeWidth: highlightEdge ? 2.5 : 1.5 },
+          style:           { stroke: edgeC, strokeWidth: highlightEdge ? 2.5 : 1.5, ...(isMsg ? { strokeDasharray: '6 3' } : {}) },
           markerEnd:       { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 },
           // Smooth rounded corners on the orthogonal bends
           pathOptions:     { borderRadius: 12 },

@@ -30,7 +30,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: 'contains' | 'typedBy' | 'connection' | 'specialization' | 'subsetting';
+  type: 'contains' | 'typedBy' | 'connection' | 'message' | 'specialization' | 'subsetting';
   label?: string;
 }
 
@@ -468,6 +468,88 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     seenSub.add(edgeId);
 
     edges.push({ id: edgeId, source: subId, target: superId, type: 'subsetting' });
+  }
+
+  // ── Pass 8: message-style FlowUsage → 'message' edges ───────────────────────
+  //
+  // 'message X from partA.event to partB.event' inside a part def (or action def)
+  // creates a FlowUsage whose endpoints use:
+  //   ParameterMembership → EventOccurrenceUsage → ReferenceSubsetting
+  //     → Feature → FeatureChaining[partName] FeatureChaining[eventName]
+  //
+  // We extract the participant names and resolve them to PartUsage sibling nodes
+  // in the same semantic container.  Multiple messages between the same ordered
+  // pair are merged into one labeled edge.
+
+  function extractMsgParticipants(flowId: string): [string, string] | null {
+    const names: string[] = [];
+
+    function fromEvent(evtId: string): void {
+      for (const refId of childrenOf.get(evtId) ?? []) {
+        const refN = nodeById.get(refId);
+        if (!refN || refN.type !== 'ReferenceSubsetting') continue;
+        for (const featId of childrenOf.get(refId) ?? []) {
+          const featN = nodeById.get(featId);
+          if (!featN || featN.type !== 'Feature') continue;
+          const chains = (childrenOf.get(featId) ?? [])
+            .map(id => nodeById.get(id))
+            .filter((n): n is GraphNode => !!n && n.type === 'FeatureChaining' && n.label !== n.type);
+          if (chains.length >= 1) { names.push(chains[0].label); return; }
+        }
+        if (refN.label !== refN.type) { names.push(refN.label); return; }
+      }
+    }
+
+    function walkFlow(id: string): void {
+      for (const kid of childrenOf.get(id) ?? []) {
+        const n = nodeById.get(kid);
+        if (!n) continue;
+        if (n.type === 'EventOccurrenceUsage') { fromEvent(kid); }
+        else if (MEMBERSHIP_WRAPPERS.has(n.type)) { walkFlow(kid); }
+      }
+    }
+
+    walkFlow(flowId);
+    return names.length >= 2 ? [names[0], names[1]] : null;
+  }
+
+  function findSiblingPart(flowId: string, name: string): string | null {
+    let ancestorId: string | undefined = parentOf.get(flowId);
+    while (ancestorId !== undefined && MEMBERSHIP_WRAPPERS.has(nodeById.get(ancestorId)?.type ?? '')) {
+      ancestorId = parentOf.get(ancestorId);
+    }
+    if (!ancestorId) return null;
+
+    function searchPart(cId: string): string | null {
+      for (const kid of childrenOf.get(cId) ?? []) {
+        const n = nodeById.get(kid);
+        if (!n) continue;
+        if (n.type === 'PartUsage' && n.label === name) return kid;
+        if (MEMBERSHIP_WRAPPERS.has(n.type)) { const f = searchPart(kid); if (f) return f; }
+      }
+      return null;
+    }
+    return searchPart(ancestorId);
+  }
+
+  const msgGroups = new Map<string, { srcId: string; tgtId: string; names: string[] }>();
+  for (const n of nodes) {
+    if (n.type !== 'FlowUsage') continue;
+    const pair = extractMsgParticipants(n.id);
+    if (!pair) continue;
+    const srcId = findSiblingPart(n.id, pair[0]);
+    const tgtId = findSiblingPart(n.id, pair[1]);
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+    const key      = `${srcId}:${tgtId}`;
+    const flowName = n.label !== n.type ? n.label : '';
+    if (!msgGroups.has(key)) msgGroups.set(key, { srcId, tgtId, names: [] });
+    if (flowName) msgGroups.get(key)!.names.push(flowName);
+  }
+  for (const [key, { srcId, tgtId, names }] of msgGroups) {
+    const label = names.length === 0  ? undefined
+                : names.length <= 2   ? names.join(', ')
+                : `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+    edges.push({ id: `msg:${key}`, source: srcId, target: tgtId, type: 'message', label });
   }
 
   return { nodes, edges };
