@@ -1,5 +1,5 @@
 import { spawn } from 'child_process';
-import { existsSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
+import { existsSync, promises as fsPromises } from 'fs';
 import { join, basename } from 'path';
 import { tmpdir } from 'os';
 import { randomBytes } from 'crypto';
@@ -37,7 +37,10 @@ function resolveStdlibPath(): string | null {
 // $JAVA_HOME is skipped on macOS because Maven/Gradle commonly point it at an
 // older JDK; on Windows that ambiguity is rare and JAVA_HOME is the standard.
 import { readdirSync } from 'fs';
-import { execSync } from 'child_process';
+import { execSync, exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 /** Score a JDK directory name: higher version = higher score, prefer JDK over JRE. */
 function jdkScore(name: string): number {
@@ -143,17 +146,16 @@ export function resolveJarPath(): string {
 }
 
 /** Returns the Java major version (e.g. 21), or null if it cannot be determined. */
-function getJavaMajorVersion(javaExe: string): number | null {
+async function getJavaMajorVersion(javaExe: string): Promise<number | null> {
   for (const args of [['--version'], ['-version']]) {
     try {
-      // '--version' prints to stdout; '-version' to stderr — capture both.
-      const out = execSync(`"${javaExe}" ${args.join(' ')}`, {
-        encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
+      const { stdout, stderr } = await execAsync(`"${javaExe}" ${args.join(' ')}`, {
+        timeout: 5000,
       });
+      const out = stdout + stderr;
       const m = out.match(/(?:java|openjdk)\s+(\d+)/i);
       if (m) return parseInt(m[1], 10);
     } catch (e) {
-      // execSync throws when the process exits non-zero; stderr is in e.stderr
       const combined = [(e as NodeJS.ErrnoException & { stderr?: string }).stderr ?? '', String(e)].join(' ');
       const m = combined.match(/(?:java|openjdk)\s+version\s+"?(\d+)/i);
       if (m) return parseInt(m[1], 10);
@@ -203,13 +205,13 @@ class JavaPersistentProcess {
     return this.startingPromise;
   }
 
-  private checkVersionThenStart(): Promise<void> {
-    const version = getJavaMajorVersion(this.javaExe);
+  private async checkVersionThenStart(): Promise<void> {
+    const version = await getJavaMajorVersion(this.javaExe);
     if (version !== null && version < 17) {
-      return Promise.reject(new Error(
+      throw new Error(
         `Java ${version} detected but Java 17 or 21 is required. ` +
         `Please install Java 21 from https://adoptium.net and restart VS Code.`
-      ));
+      );
     }
     return this.doStart();
   }
@@ -270,9 +272,7 @@ class JavaPersistentProcess {
       let stderrCapture = '';
       proc.stdout!.on('data', onEarlyData);
       proc.stderr!.on('data', (chunk: Buffer) => {
-        const text = chunk.toString('utf8');
-        stderrCapture += text;
-        process.stderr.write(text);
+        stderrCapture += chunk.toString('utf8');
       });
 
       proc.on('error', (err) => {
@@ -419,17 +419,17 @@ export class JavaWrapperClient implements OfficialBackendClient {
       );
     }
 
-    const tmpDir  = mkdtempSync(join(tmpdir(), 'sysml-'));
+    const tmpDir  = await fsPromises.mkdtemp(join(tmpdir(), 'sysml-'));
     const tmpFile = join(tmpDir, 'primary.sysml');
 
     try {
-      writeFileSync(tmpFile, text, 'utf8');
+      await fsPromises.writeFile(tmpFile, text, 'utf8');
 
       const contextPaths: string[] = [];
       for (const ctx of context) {
         const safeName = basename(ctx.name).replace(/[^a-zA-Z0-9_\-.]/g, '_');
         const ctxPath  = join(tmpDir, safeName);
-        writeFileSync(ctxPath, ctx.text, 'utf8');
+        await fsPromises.writeFile(ctxPath, ctx.text, 'utf8');
         contextPaths.push(ctxPath);
       }
 
@@ -454,7 +454,7 @@ export class JavaWrapperClient implements OfficialBackendClient {
       const msg = err instanceof Error ? err.message : String(err);
       return wrapperError(`Official SysML parser wrapper failed: ${msg}`);
     } finally {
-      try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+      try { await fsPromises.rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
     }
   }
 }

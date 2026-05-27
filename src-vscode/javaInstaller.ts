@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as https from 'https';
-import * as http from 'http';
 import { mkdirSync, readdirSync } from 'fs';
-import { execSync, spawnSync } from 'child_process';
+import { exec, execSync } from 'child_process';
+import { promisify } from 'util';
 import { tmpdir } from 'os';
+
+const execAsync = promisify(exec);
 
 const JAVA_VERSION = 21;
 const MIN_JAVA_VERSION = 17;
@@ -19,13 +20,17 @@ function adoptiumTarget(): { os: string; arch: string; ext: 'tar.gz' | 'zip' } |
   return { os: adoptOs, arch: adoptArch, ext: process.platform === 'win32' ? 'zip' : 'tar.gz' };
 }
 
-function javaVersion(exe: string): number | null {
+async function javaVersion(exe: string): Promise<number | null> {
   try {
-    const r = spawnSync(exe, ['--version'], { encoding: 'utf8', timeout: 5000 });
-    const out = (r.stdout ?? '') + (r.stderr ?? '');
+    const { stdout, stderr } = await execAsync(`"${exe}" --version`, { timeout: 5000 });
+    const out = (stdout ?? '') + (stderr ?? '');
     const m = out.match(/(?:java|openjdk)\s+(\d+)/i);
     return m ? parseInt(m[1], 10) : null;
-  } catch { return null; }
+  } catch (e) {
+    const out = [(e as NodeJS.ErrnoException & { stderr?: string }).stderr ?? '', String(e)].join(' ');
+    const m = out.match(/(?:java|openjdk)\s+(\d+)/i);
+    return m ? parseInt(m[1], 10) : null;
+  }
 }
 
 /** Walk directory tree (depth ≤ 4) to find bin/java[.exe]. */
@@ -44,50 +49,75 @@ function findJavaExe(dir: string, depth = 0): string | null {
   return null;
 }
 
-/** Follow HTTP redirects (up to 5 hops) and return the final URL. */
-function resolveRedirects(url: string, hops = 0): Promise<string> {
-  if (hops > 5) return Promise.reject(new Error('Too many redirects'));
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https') ? https : http;
-    mod.get(url, { headers: { 'User-Agent': 'sysml-v2-visualizer-vscode' } }, (res) => {
-      const { statusCode, headers } = res;
-      res.resume();
-      if (statusCode && statusCode >= 300 && statusCode < 400 && headers.location) {
-        const next = headers.location.startsWith('http')
-          ? headers.location
-          : new URL(headers.location, url).href;
-        resolve(resolveRedirects(next, hops + 1));
-      } else if (statusCode === 200) {
-        resolve(url);
-      } else {
-        reject(new Error(`HTTP ${statusCode} from Adoptium API`));
-      }
-    }).on('error', reject);
-  });
+/**
+ * Download `url` to `destPath` with progress reporting.
+ * Primary: Node.js fetch (fast, progress-aware).
+ * Fallback: system curl / PowerShell — these already respect corporate proxy
+ *           settings and CA certificates configured by IT.
+ */
+async function downloadFile(
+  url: string,
+  destPath: string,
+  onProgress: (pct: number) => void,
+  onFallback: () => void,
+): Promise<void> {
+  try {
+    await fetchToFile(url, destPath, onProgress);
+  } catch (fetchErr) {
+    console.log(`[sysml] fetch download failed (${fetchErr}) — retrying with system curl`);
+    onFallback();
+    await downloadWithSystemTool(url, destPath);
+  }
 }
 
-/** Stream-download `url` to `destPath`, calling `onProgress` with 0–100. */
-function downloadFile(url: string, destPath: string, onProgress: (pct: number) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const mod = url.startsWith('https') ? https : http;
-    mod.get(url, { headers: { 'User-Agent': 'sysml-v2-visualizer-vscode' } }, (res) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} downloading Java`));
-        return;
-      }
-      const total    = parseInt(res.headers['content-length'] ?? '0', 10);
-      let   received = 0;
-      const out      = fs.createWriteStream(destPath);
-      res.on('data', (chunk: Buffer) => {
-        received += chunk.length;
-        if (total > 0) onProgress(Math.round((received / total) * 100));
+/** Stream download via Node.js fetch with per-chunk progress. */
+async function fetchToFile(url: string, destPath: string, onProgress: (pct: number) => void): Promise<void> {
+  const res = await fetch(url, { headers: { 'User-Agent': 'sysml-v2-visualizer-vscode' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status} from Adoptium`);
+
+  const total    = parseInt(res.headers.get('content-length') ?? '0', 10);
+  let   received = 0;
+  const out      = fs.createWriteStream(destPath);
+
+  const reader = res.body!.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      await new Promise<void>((resolve, reject) => {
+        out.write(Buffer.from(value), err => (err ? reject(err) : resolve()));
       });
-      res.pipe(out);
-      out.on('finish', resolve);
-      out.on('error', reject);
-      res.on('error', reject);
-    }).on('error', reject);
-  });
+      received += value.length;
+      if (total > 0) onProgress(Math.round((received / total) * 100));
+    }
+    await new Promise<void>((resolve, reject) =>
+      out.end((err: Error | null) => (err ? reject(err) : resolve())),
+    );
+  } catch (err) {
+    out.destroy();
+    throw err;
+  }
+}
+
+/**
+ * Download via the OS-level tool (async — does not block the event loop).
+ * curl  — macOS, Linux, Windows 10 1803+ (built-in); uses libcurl / WinHTTP.
+ * PowerShell WebClient — Windows fallback; uses .NET HttpClient / WinHTTP.
+ * Both honour the system proxy and trusted CA store configured by IT.
+ */
+async function downloadWithSystemTool(url: string, destPath: string): Promise<void> {
+  if (process.platform === 'win32') {
+    try {
+      await execAsync(`curl.exe -L -f -s -o "${destPath}" "${url}"`, { timeout: 600_000 });
+    } catch {
+      await execAsync(
+        `powershell -Command "& { $ProgressPreference='SilentlyContinue'; (New-Object System.Net.WebClient).DownloadFile('${url}','${destPath}') }"`,
+        { timeout: 600_000 },
+      );
+    }
+  } else {
+    await execAsync(`curl -L -f -s -o "${destPath}" "${url}"`, { timeout: 600_000 });
+  }
 }
 
 /** Extract JDK archive to `extractDir` and return the Java home path. */
@@ -128,7 +158,7 @@ export async function ensureJava(globalStoragePath: string): Promise<boolean> {
   // 1. Already-managed Java downloaded by a previous session
   const managedExe = findJavaExe(managedDir);
   if (managedExe) {
-    const v = javaVersion(managedExe);
+    const v = await javaVersion(managedExe);
     if (v && v >= MIN_JAVA_VERSION) {
       process.env['SYSML_JAVA_HOME'] = path.dirname(path.dirname(managedExe));
       console.log(`[sysml] Using managed Java ${v} from global storage`);
@@ -136,9 +166,34 @@ export async function ensureJava(globalStoragePath: string): Promise<boolean> {
     }
   }
 
-  // 2. System Java is sufficient — let resolveJavaExe() find it as usual
+  // 2a. macOS / Linux: check well-known installation paths before PATH lookup.
+  //     VS Code launched from the Dock won't have /opt/homebrew/bin in PATH,
+  //     but Homebrew Java is still usable via its absolute path.
+  if (process.platform !== 'win32') {
+    const candidates = [
+      '/opt/homebrew/opt/openjdk@21/bin/java',
+      '/opt/homebrew/opt/openjdk@17/bin/java',
+      '/opt/homebrew/opt/openjdk/bin/java',
+      '/usr/local/opt/openjdk@21/bin/java',
+      '/usr/local/opt/openjdk@17/bin/java',
+      '/usr/local/opt/openjdk/bin/java',
+      '/usr/lib/jvm/java-21-openjdk-amd64/bin/java',
+      '/usr/lib/jvm/java-17-openjdk-amd64/bin/java',
+      '/usr/bin/java',
+    ];
+    for (const candidate of candidates) {
+      if (!fs.existsSync(candidate)) continue;
+      const v = await javaVersion(candidate);
+      if (v && v >= MIN_JAVA_VERSION) {
+        console.log(`[sysml] Java ${v} found at ${candidate} — no download needed`);
+        return false;
+      }
+    }
+  }
+
+  // 2b. System Java is on PATH — let resolveJavaExe() find it as usual
   const systemExe = process.platform === 'win32' ? 'java.exe' : 'java';
-  const sysV = javaVersion(systemExe);
+  const sysV = await javaVersion(systemExe);
   if (sysV && sysV >= MIN_JAVA_VERSION) {
     console.log(`[sysml] System Java ${sysV} found — no download needed`);
     return false;
@@ -165,13 +220,12 @@ export async function ensureJava(globalStoragePath: string): Promise<boolean> {
         cancellable: false,
       },
       async (progress) => {
-        progress.report({ message: 'Resolving download URL…' });
-        const downloadUrl = await resolveRedirects(apiUrl);
-
         progress.report({ message: 'Downloading (~200 MB)…' });
-        await downloadFile(downloadUrl, tmpFile, (pct) => {
-          progress.report({ message: `Downloading… ${pct}%` });
-        });
+        await downloadFile(
+          apiUrl, tmpFile,
+          (pct) => progress.report({ message: `Downloading… ${pct}%` }),
+          ()    => progress.report({ message: 'Downloading via system curl…' }),
+        );
 
         progress.report({ message: 'Extracting…' });
         try { fs.rmSync(managedDir, { recursive: true, force: true }); } catch { /* ignore */ }

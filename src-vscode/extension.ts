@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import { promises as fsAsync } from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { JavaWrapperClient } from '../parser-service/src/javaWrapperClient';
@@ -11,7 +12,7 @@ import { ensureJava } from './javaInstaller';
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g9';
+const GRAPH_VERSION      = 'g11';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -49,28 +50,32 @@ function parseCacheSet(key: string, result: SysMLV2ParseResult): void {
 const DISK_CACHE_MAX = 50;
 let diskCacheDir: string | null = null;
 
-function diskCacheGet(key: string): SysMLV2ParseResult | null {
+async function diskCacheGet(key: string): Promise<SysMLV2ParseResult | null> {
   if (!diskCacheDir) return null;
   try {
-    return JSON.parse(fs.readFileSync(path.join(diskCacheDir, `${key}.json`), 'utf8')) as SysMLV2ParseResult;
+    const text = await fsAsync.readFile(path.join(diskCacheDir, `${key}.json`), 'utf8');
+    return JSON.parse(text) as SysMLV2ParseResult;
   } catch {
     return null;
   }
 }
 
-function diskCacheSet(key: string, result: SysMLV2ParseResult): void {
+async function diskCacheSet(key: string, result: SysMLV2ParseResult): Promise<void> {
   if (!diskCacheDir) return;
   try {
-    fs.mkdirSync(diskCacheDir, { recursive: true });
-    fs.writeFileSync(path.join(diskCacheDir, `${key}.json`), JSON.stringify(result), 'utf8');
+    await fsAsync.mkdir(diskCacheDir, { recursive: true });
+    await fsAsync.writeFile(path.join(diskCacheDir, `${key}.json`), JSON.stringify(result), 'utf8');
     // Evict oldest entries when over limit
-    const files = fs.readdirSync(diskCacheDir)
-      .filter(f => f.endsWith('.json'))
-      .map(f => ({ name: f, mtime: fs.statSync(path.join(diskCacheDir!, f)).mtimeMs }))
-      .sort((a, b) => a.mtime - b.mtime);
-    while (files.length > DISK_CACHE_MAX) {
-      const oldest = files.shift()!;
-      try { fs.unlinkSync(path.join(diskCacheDir, oldest.name)); } catch { /* ignore */ }
+    const names = (await fsAsync.readdir(diskCacheDir)).filter(f => f.endsWith('.json'));
+    if (names.length > DISK_CACHE_MAX) {
+      const stats = await Promise.all(
+        names.map(async f => ({ name: f, mtime: (await fsAsync.stat(path.join(diskCacheDir!, f))).mtimeMs }))
+      );
+      stats.sort((a, b) => a.mtime - b.mtime);
+      while (stats.length > DISK_CACHE_MAX) {
+        const oldest = stats.shift()!;
+        try { await fsAsync.unlink(path.join(diskCacheDir, oldest.name)); } catch { /* ignore */ }
+      }
     }
   } catch (e) {
     console.warn('[sysml-visualizer] disk cache write failed:', e);
@@ -255,7 +260,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // other files exist in the workspace.
       const primaryOnlyKey = parseCacheKey(primaryText, []);
 
-      let phase1 = parseCacheGet(primaryOnlyKey) ?? diskCacheGet(primaryOnlyKey);
+      let phase1 = parseCacheGet(primaryOnlyKey) ?? await diskCacheGet(primaryOnlyKey);
       const phase1FromCache = !!phase1;
       if (!phase1) {
         phase1 = await javaClient.parse(primaryText, []);
@@ -275,7 +280,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // File is self-contained — no cross-file references. Cache and stop.
         if (!phase1FromCache) {
           parseCacheSet(primaryOnlyKey, phase1);
-          diskCacheSet(primaryOnlyKey, phase1);
+          void diskCacheSet(primaryOnlyKey, phase1);
         }
         console.log('[sysml-visualizer] parse done (phase 1, self-contained)');
         return;
@@ -286,7 +291,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const contextFiles   = await collectContextFiles(uri);
       const fullKey        = parseCacheKey(primaryText, contextFiles);
 
-      let result = parseCacheGet(fullKey) ?? diskCacheGet(fullKey);
+      let result = parseCacheGet(fullKey) ?? await diskCacheGet(fullKey);
       const fromCache = !!result;
       if (!result) {
         result = await javaClient.parse(primaryText, contextFiles);
@@ -303,7 +308,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
       if (!fromCache) {
         parseCacheSet(fullKey, result);
-        diskCacheSet(fullKey, result);
+        void diskCacheSet(fullKey, result);
       }
       console.log(`[sysml-visualizer] parse done (phase 2 with context, fromCache=${fromCache})`);
 
@@ -485,7 +490,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         sendCurrentModelToWebview();
         // Send trlc annotations immediately so the Trace view is ready
         // even before the parse completes.
-        void sendTrlcAnnotations();
+        sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
 
       } else if (msg.type === 'applyFullTextEdit') {
         if (!currentSysmlUri) {
@@ -718,7 +723,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           console.log(`[sysml-visualizer] same sysml file refocused — skipping loadModel`);
         }
         // Resend trlc annotations so new file's traces appear immediately.
-        void sendTrlcAnnotations();
+        sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
       } else {
         console.log('[sysml-visualizer] non-sysml editor active — keeping current model');
       }

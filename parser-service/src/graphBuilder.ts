@@ -155,6 +155,17 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     }
   }
 
+  // PartUsage name→[id] index: used as a fallback when port nodes are absent
+  // (e.g. cross-file ports not present in a Phase 1 single-file parse).
+  const partsByName = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.type === 'PartUsage' && n.label !== n.type) {
+      const list = partsByName.get(n.label) ?? [];
+      list.push(n.id);
+      partsByName.set(n.label, list);
+    }
+  }
+
   // Collect all FeatureChaining labels in DFS order within a subtree.
   function collectFeatureChainingNames(startId: string): string[] {
     const names: string[] = [];
@@ -216,41 +227,47 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
 
   const seenConn = new Set<string>();
 
-  for (const n of nodes) {
-    if (n.type !== 'ConnectionUsage') continue;
-
+  // Snapshot before iterating: `for…of` on a live array visits elements pushed
+  // during the loop.  The old code pushed fallback nodes with type 'ConnectionUsage',
+  // which caused the loop to process them again, push more fallbacks, and so on —
+  // an unbounded loop that exhausted the V8 heap (exit code 5 / OOM crash).
+  // The fallback nodes themselves are unnecessary: the original ConnectionUsage node
+  // is already in the containment tree and the webview's extractConnectionEndpoints
+  // walks its EndFeatureMembership→FeatureChaining children to get fromPart/fromPort
+  // regardless of whether the referenced port nodes exist in the model.
+  for (const n of nodes.filter(n => n.type === 'ConnectionUsage')) {
     const chains = collectEndpointChains(n.id);
-    if (chains.length < 2) {
-      // Endpoints not resolvable — add a visible fallback node under the parent.
-      const parentId = parentOf.get(n.id);
-      const fallbackId = `conn-fallback-${n.id}`;
-      nodes.push({ id: fallbackId, label: '«connection» connect', type: 'ConnectionUsage' });
-      if (parentId) {
-        edges.push({ id: `${parentId}->${fallbackId}`, source: parentId, target: fallbackId, type: 'contains' });
-      }
-      continue;
-    }
+    if (chains.length < 2) continue;
 
     const [chainA, chainB] = chains;
-    const sourceId = resolveChain(chainA);
-    const targetId = resolveChain(chainB);
+    let sourceId = resolveChain(chainA);
+    let targetId = resolveChain(chainB);
 
-    if (!sourceId || !targetId || sourceId === targetId) {
-      // Resolution failed — add fallback node.
-      const parentId = parentOf.get(n.id);
-      const fallbackId = `conn-fallback-${n.id}`;
-      nodes.push({ id: fallbackId, label: '«connection» connect', type: 'ConnectionUsage' });
-      if (parentId) {
-        edges.push({ id: `${parentId}->${fallbackId}`, source: parentId, target: fallbackId, type: 'contains' });
-      }
-      continue;
-    }
+    // When port nodes are absent (cross-file imports not in Phase 1 model), fall
+    // back to the PartUsage owner so the wiring view still draws the connection.
+    // chain[0] is the part name when the chain has 2+ segments (part.port).
+    if (!sourceId && chainA.length >= 2) sourceId = partsByName.get(chainA[0])?.[0] ?? null;
+    if (!targetId && chainB.length >= 2) targetId = partsByName.get(chainB[0])?.[0] ?? null;
+
+    if (!sourceId || !targetId || sourceId === targetId) continue;
 
     const edgeId = `connection:${sourceId}:${targetId}`;
     if (seenConn.has(edgeId)) continue;
     seenConn.add(edgeId);
 
-    edges.push({ id: edgeId, source: sourceId, target: targetId, type: 'connection', label: 'connect' });
+    // When falling back to part-level endpoints, use the port name(s) as the
+    // edge label so the wiring view conveys what is actually being connected.
+    const nodeA = nodeById.get(sourceId);
+    const nodeB = nodeById.get(targetId);
+    const isPartFallback = nodeA?.type === 'PartUsage' || nodeB?.type === 'PartUsage';
+    let label = 'connect';
+    if (isPartFallback) {
+      const portA = chainA[chainA.length - 1];
+      const portB = chainB[chainB.length - 1];
+      label = portA === portB ? portA : `${portA} / ${portB}`;
+    }
+
+    edges.push({ id: edgeId, source: sourceId, target: targetId, type: 'connection', label });
   }
 
   // ── Shared: PartUsage index + typedBy lookup + type-aware port resolution ─────
