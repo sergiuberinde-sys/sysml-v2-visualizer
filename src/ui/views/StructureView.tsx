@@ -337,7 +337,7 @@ function SysmlPartNode({ data }: NodeProps) {
   const targetPos = isLR ? Position.Left   : Position.Top;
 
   const portDisplays: PortDisplay[] = ports.map(p =>
-    makeBoundaryPortDisplay(p.name, p.name, p.direction, p.portType ?? '')
+    makeBoundaryPortDisplay(p.name, p.name, p.direction, p.portType ?? '', p.direction)
   );
 
   return (

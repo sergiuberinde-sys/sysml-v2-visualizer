@@ -280,7 +280,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     }
 
     function portDisplay(port: GraphNode): PortDisplay {
-      return makeBoundaryPortDisplay(port.id, port.label, resolvePortDir(port), '');
+      return makeBoundaryPortDisplay(port.id, port.label, resolvePortDir(port), '', port.direction ?? '');
     }
 
     // ── Leaf-part view: scope has no nested PartUsages ──────────────────────────

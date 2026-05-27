@@ -82,25 +82,33 @@ export function resolvePortDirection(name: string, direction: string): string {
  * When `direction` is empty the label is used as a name-heuristic fallback
  * (via resolvePortDirection) so untyped ports still get an arrow.
  */
+/**
+ * @param arrowDir - Explicit direction for the SVG arrow drawn inside the port
+ *   square. Pass `port.direction ?? ''` (the raw declared value) so arrows only
+ *   appear when the SysML source explicitly declares `in`/`out`/`inout`.
+ *   Omitting it falls back to the heuristic-resolved `direction` (legacy behaviour).
+ *   Per SysML v2 §C, the port symbol arrow reflects the *declared* direction only.
+ */
 export function makeBoundaryPortDisplay(
   id:        string,
   label:     string,
   direction: string,
   portType:  string,
+  arrowDir?: string,
 ): PortDisplay {
   direction = resolvePortDirection(label, direction);
   return {
     id, label, direction, portType,
     squareStyle: {
       background: 'transparent',
-      border:     `1.5px dashed ${PORT_MARKER_COLOR}`,
+      border:     `1.5px solid ${PORT_MARKER_COLOR}`,
       borderRadius: 0,
       zIndex:     20,
     },
     labelStyle: {
       color: PORT_MARKER_COLOR,
     },
-    svgContent: portMarkerSvg(direction),
+    svgContent: portMarkerSvg(arrowDir ?? direction),
   };
 }
 
