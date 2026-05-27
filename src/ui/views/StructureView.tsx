@@ -938,7 +938,9 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
             labelBgStyle: { fill: '#040f08', fillOpacity: 0.9 },
           } : {}),
           style: { stroke: '#4ade80', strokeWidth: 2 },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#4ade80', width: 11, height: 11 },
+          // ConnectionUsage is undirected — no arrowhead. Only flow types (FlowUsage,
+          // FlowConnectionUsage, SuccessionItemFlow) carry an explicit direction.
+          ...(conn.directed ? { markerEnd: { type: MarkerType.ArrowClosed, color: '#4ade80', width: 11, height: 11 } } : {}),
           zIndex: 20,
           data: {
             _sel: {
@@ -1119,13 +1121,15 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           if (addedEdgeIds.has(edgeId) || addedEdgePairs.has(pairKey)) continue;
           addedEdgeIds.add(edgeId);
           addedEdgePairs.add(pairKey);
+          const isFlowEdge = !!edge.label;
           baseEdges.push({
             id: edgeId, source: srcRf, target: tgtRf,
-            type: 'smoothstep', label: 'connects',
+            type: 'smoothstep',
+            ...(isFlowEdge
+              ? { label: edge.label, labelStyle: { fontSize: 9, fill: '#4ade80', fontFamily: 'monospace' }, labelBgStyle: { fill: '#040f08', fillOpacity: 0.88 } }
+              : {}),
             style:        { stroke: '#4ade80', strokeWidth: 1.5 },
-            labelStyle:   { fontSize: 9, fill: '#4ade80', fontFamily: 'monospace' },
-            labelBgStyle: { fill: '#040f08', fillOpacity: 0.88 },
-            markerEnd:    { type: MarkerType.ArrowClosed, color: '#4ade80', width: 10, height: 10 },
+            ...(isFlowEdge ? { markerEnd: { type: MarkerType.ArrowClosed, color: '#4ade80', width: 10, height: 10 } } : {}),
             zIndex: 8,
           });
         }

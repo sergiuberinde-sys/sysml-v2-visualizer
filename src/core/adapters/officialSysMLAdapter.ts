@@ -981,7 +981,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
         const conn = extractConnectionEndpoints(id);
         if (conn) {
           const flowName = gNode.label !== gNode.type ? gNode.label : undefined;
-          body.push({ ...conn, connType: flowName ?? conn.connType });
+          body.push({ ...conn, connType: flowName ?? conn.connType, directed: true });
         }
         continue;
       }
@@ -998,7 +998,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
       if (gNode.type === 'FlowUsage') {
         const conn = extractFlowEndpoints(id);
         if (conn) {
-          body.push(conn);
+          body.push({ ...conn, directed: true });
         } else if (occurrenceCtx) {
           const parts = extractMessageParticipants(id);
           if (parts) {

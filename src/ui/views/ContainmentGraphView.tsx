@@ -79,18 +79,23 @@ function buildLayout(graph: ContainmentGraph): { nodes: Node[]; edges: Edge[] } 
           markerEnd:    { type: MarkerType.ArrowClosed, color: '#06b6d4', width: 12, height: 12 },
         }
       : e.type === 'connection'
-        ? {
-            id:       e.id,
-            source:   e.source,
-            target:   e.target,
-            type:     'smoothstep',
-            animated: true,
-            style:    { stroke: '#22c55e', strokeWidth: 2 },
-            label:    'connect',
-            labelStyle:   { fontSize: 9, fill: '#22c55e', fontFamily: 'monospace' },
-            labelBgStyle: { fill: '#071a1a', fillOpacity: 0.88 },
-            markerEnd:    { type: MarkerType.ArrowClosed, color: '#22c55e', width: 12, height: 12 },
-          }
+        ? (() => {
+            // Structural connections (ConnectionUsage) have no label and are undirected.
+            // Flow connections carry a named label and get animated directed arrows.
+            const isFlow = !!e.label;
+            return {
+              id:       e.id,
+              source:   e.source,
+              target:   e.target,
+              type:     'smoothstep',
+              animated: isFlow,
+              style:    { stroke: '#22c55e', strokeWidth: 2 },
+              label:    e.label ?? 'connect',
+              labelStyle:   { fontSize: 9, fill: '#22c55e', fontFamily: 'monospace' },
+              labelBgStyle: { fill: '#071a1a', fillOpacity: 0.88 },
+              ...(isFlow ? { markerEnd: { type: MarkerType.ArrowClosed, color: '#22c55e', width: 12, height: 12 } } : {}),
+            };
+          })()
         : {
             id:     e.id,
             source: e.source,
