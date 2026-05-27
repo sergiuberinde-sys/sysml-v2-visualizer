@@ -166,6 +166,22 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     }
   }
 
+  // Synthetic PortUsage nodes for cross-file ports absent from the Phase 1 model.
+  // IDs use "{partId}.{portName}" dot-notation: the webview's buildChildrenMap
+  // derives parent-child purely from ID prefixes, so this is enough to place them
+  // as children of the PartUsage and have the wiring view render port squares.
+  const synthPortIds = new Map<string, string>(); // "{partId}:{portName}" → portId
+  function ensureSynthPort(partId: string, portName: string): string {
+    const key = `${partId}:${portName}`;
+    let portId = synthPortIds.get(key);
+    if (!portId) {
+      portId = `${partId}.${portName}`;
+      nodes.push({ id: portId, label: portName, type: 'PortUsage' });
+      synthPortIds.set(key, portId);
+    }
+    return portId;
+  }
+
   // Collect all FeatureChaining labels in DFS order within a subtree.
   function collectFeatureChainingNames(startId: string): string[] {
     const names: string[] = [];
@@ -243,11 +259,17 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     let sourceId = resolveChain(chainA);
     let targetId = resolveChain(chainB);
 
-    // When port nodes are absent (cross-file imports not in Phase 1 model), fall
-    // back to the PartUsage owner so the wiring view still draws the connection.
-    // chain[0] is the part name when the chain has 2+ segments (part.port).
-    if (!sourceId && chainA.length >= 2) sourceId = partsByName.get(chainA[0])?.[0] ?? null;
-    if (!targetId && chainB.length >= 2) targetId = partsByName.get(chainB[0])?.[0] ?? null;
+    // When port nodes are absent (cross-file imports not in Phase 1 model),
+    // synthesize a placeholder PortUsage as a child of the PartUsage so the
+    // wiring view renders a proper port square on the part box boundary.
+    if (!sourceId && chainA.length >= 2) {
+      const partId = partsByName.get(chainA[0])?.[0];
+      if (partId) sourceId = ensureSynthPort(partId, chainA[chainA.length - 1]);
+    }
+    if (!targetId && chainB.length >= 2) {
+      const partId = partsByName.get(chainB[0])?.[0];
+      if (partId) targetId = ensureSynthPort(partId, chainB[chainB.length - 1]);
+    }
 
     if (!sourceId || !targetId || sourceId === targetId) continue;
 
@@ -255,19 +277,7 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     if (seenConn.has(edgeId)) continue;
     seenConn.add(edgeId);
 
-    // When falling back to part-level endpoints, use the port name(s) as the
-    // edge label so the wiring view conveys what is actually being connected.
-    const nodeA = nodeById.get(sourceId);
-    const nodeB = nodeById.get(targetId);
-    const isPartFallback = nodeA?.type === 'PartUsage' || nodeB?.type === 'PartUsage';
-    let label = 'connect';
-    if (isPartFallback) {
-      const portA = chainA[chainA.length - 1];
-      const portB = chainB[chainB.length - 1];
-      label = portA === portB ? portA : `${portA} / ${portB}`;
-    }
-
-    edges.push({ id: edgeId, source: sourceId, target: targetId, type: 'connection', label });
+    edges.push({ id: edgeId, source: sourceId, target: targetId, type: 'connection' });
   }
 
   // ── Shared: PartUsage index + typedBy lookup + type-aware port resolution ─────

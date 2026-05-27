@@ -188,6 +188,11 @@ export function PortHandles(props: PortHandlesProps) {
 
         // Labels are positioned OUTSIDE the node boundary so they never overlap
         // items/actions content. The node must have overflow: visible.
+        // Place the label on whichever side the port square actually appears.
+        // If the square is forced exclusively to the right (showR && !showL), the
+        // label must go right even when `direction` has no explicit 'out' value
+        // (e.g. synthetic ports with unknown direction from cross-file models).
+        const labelGoesRight = d === 'out' || (showR && !showL);
         const labelStyle: CSSProperties = {
           position:  'absolute',
           fontSize:   9,
@@ -196,7 +201,7 @@ export function PortHandles(props: PortHandlesProps) {
           cursor:     onPortClick ? 'pointer' : 'default',
           whiteSpace: 'nowrap',
           zIndex:     10,
-          ...(d === 'out'
+          ...(labelGoesRight
             ? { right: -12, top: topPx, transform: 'translate(100%, -50%)' }
             : { left:  -12, top: topPx, transform: 'translate(-100%, -50%)' }
           ),

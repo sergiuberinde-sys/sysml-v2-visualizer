@@ -742,8 +742,10 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         const tgtRf   = portToRfId.get(conn.target)!;
         const srcNode = nodeById.get(conn.source);
         const tgtNode = nodeById.get(conn.target);
-        const label   = conn.label
-          ?? (srcNode && tgtNode ? `${srcNode.label} → ${tgtNode.label}` : 'connect');
+        // Structural connections (ConnectionUsage, no label) are undirected plain lines.
+        // Flow connections (FlowUsage etc.) carry a named label and get animated arrows.
+        const isStructural = !conn.label;
+        const label = conn.label;
 
         // Find the FlowUsage graph node for this edge (label match: exact or prefix before " : ")
         let flowNode = conn.label ? flowNodeByLabel.get(conn.label) : undefined;
@@ -763,7 +765,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           : {
               id:   `wconn-${conn.id}`,
               type: 'connection' as const,
-              name: label,
+              name: label ?? '',
               extra: {
                 fromPort: srcNode?.label ?? '',
                 toPort:   tgtNode?.label ?? '',
@@ -799,14 +801,16 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           sourceHandle:    srcHandle,
           targetHandle:    tgtHandle,
           type:            'smoothstep',
-          animated:        !isMsg,
+          animated:        !isMsg && !isStructural,
           label,
           // Label background prevents text landing directly on port glyphs or node text.
           labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace' },
           labelBgStyle:    { fill: '#030c06', fillOpacity: 0.95, rx: 3, ry: 3 },
           labelBgPadding:  [3, 4] as [number, number],
           style:           { stroke: edgeC, strokeWidth: highlightEdge ? 2.5 : 1.5, ...(isMsg ? { strokeDasharray: '6 3' } : {}) },
-          markerEnd:       { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 },
+          // Structural connections (ConnectionUsage) are undirected — no arrowhead.
+          // Flow connections carry direction (FlowUsage / FlowConnectionUsage).
+          ...(isStructural ? {} : { markerEnd: { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 } }),
           // Smooth rounded corners on the orthogonal bends
           pathOptions:     { borderRadius: 12 },
           data:            { _sel: edgeSel },
