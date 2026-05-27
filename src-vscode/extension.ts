@@ -12,7 +12,7 @@ import { ensureJava } from './javaInstaller';
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g15';
+const GRAPH_VERSION      = 'g16';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -203,6 +203,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
   }
 
+  /**
+   * True when the SysML source contains import statements.
+   * A file with imports is cross-file by definition: even when the JVM parser
+   * reports 0 diagnostics in Phase 1 (it silently accepts unresolved imports),
+   * the model is incomplete without the imported namespaces.
+   */
+  function hasImports(text: string): boolean {
+    return /(^|\n)\s*(?:private\s+)?import\b/.test(text);
+  }
+
   /** Read all .sysml files in the workspace except primaryUri. */
   async function collectContextFiles(primaryUri: vscode.Uri): Promise<{ name: string; text: string }[]> {
     const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
@@ -276,8 +286,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // Publish phase-1 result immediately so the UI is never blank while waiting.
       applyResult(document, phase1);
 
-      if (!hasResolveErrors(phase1)) {
-        // File is self-contained — no cross-file references. Cache and stop.
+      // Proceed to Phase 2 if Phase 1 has resolve errors OR the file imports other
+      // namespaces. The JVM parser silently accepts unresolved imports in Phase 1,
+      // so 0 diagnostics does not mean the file is self-contained when `import`
+      // statements are present.
+      const needsPhase2 = hasResolveErrors(phase1) || hasImports(primaryText);
+      if (!needsPhase2) {
+        // Truly self-contained. Cache and stop.
         if (!phase1FromCache) {
           parseCacheSet(primaryOnlyKey, phase1);
           void diskCacheSet(primaryOnlyKey, phase1);
@@ -287,8 +302,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       // ── Phase 2: re-parse with context (file has cross-file references) ──────
-      // Only reached when phase 1 produced "Couldn't resolve reference to" errors.
       const contextFiles   = await collectContextFiles(uri);
+      if (contextFiles.length === 0) {
+        // No other workspace files — Phase 1 is the best we can do.
+        if (!phase1FromCache) {
+          parseCacheSet(primaryOnlyKey, phase1);
+          void diskCacheSet(primaryOnlyKey, phase1);
+        }
+        console.log('[sysml-visualizer] parse done (phase 1, no context files available)');
+        return;
+      }
       const fullKey        = parseCacheKey(primaryText, contextFiles);
 
       let result = parseCacheGet(fullKey) ?? await diskCacheGet(fullKey);
