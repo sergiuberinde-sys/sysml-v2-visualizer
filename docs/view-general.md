@@ -32,56 +32,55 @@ Arrow notation (shown in the NOTATION legend):
 
 ## 2. Minimal working example
 
-The General view renders any package that contains definition elements — the
-same model used for the Interconnect view works directly:
+The General view renders any package that contains definition elements.  This
+example uses only definitions (no `connect` statements) so the diagram stays
+clean — connection arrows only appear when `connect` statements are present.
 
 ```sysml
-package SensorNetwork {
+package VehicleSystem {
 
-    item def Reading;
-    item def Command;
+    item def Speed;
+    item def Torque;
+    item def Pressure;
 
-    port def DataOutPort {
-        out value : Reading;
-    }
-    port def DataInPort {
-        in value : Reading;
-    }
-    port def ControlPort {
-        in  cmd    : Command;
-        out status : Reading;
+    port def DrivePort {
+        out torque : Torque;
+        in  speed  : Speed;
     }
 
-    part def Sensor {
-        port output  : DataOutPort;
+    port def SensorPort {
+        out pressure : Pressure;
     }
-    part def Logger {
-        port input   : DataInPort;
-        port control : ControlPort;
-    }
-    part def Monitor {
-        port feed    : DataInPort;
-    }
-    part def SensorNetwork {
-        part sensor  : Sensor;
-        part logger  : Logger;
-        part monitor : Monitor;
 
-        connect sensor.output  to logger.input;
-        connect sensor.output  to monitor.feed;
+    part def Engine {
+        port drive : DrivePort;
+    }
+
+    part def Transmission {
+        port input : DrivePort;
+    }
+
+    part def BrakeSensor {
+        port data  : SensorPort;
+    }
+
+    part def Vehicle {
+        part engine       : Engine;
+        part transmission : Transmission;
+        part brakeSensor  : BrakeSensor;
     }
 }
 ```
 
 ### What the plugin shows
 
-![General view — SensorNetwork package](img/general-overview.png)
+![General view — VehicleSystem package](img/general-overview.png)
 
 - Left column: port definitions (violet), with arrows to the part definitions
   that own a port of that type.
 - Centre column: part definitions (blue) and item definitions (gold).
 - Right column: part usages (green) — the concrete instances declared inside
-  `SensorNetwork` with their wiring visible as `ConnectionUsage` arrows.
+  `Vehicle` typed by the surrounding part definitions.
 - Bottom-right: NOTATION legend explaining each arrow type.
 
 ---

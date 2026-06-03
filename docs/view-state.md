@@ -10,6 +10,8 @@ transition arrows.
 > switches to the State view automatically.  Alternatively, switch to
 > standalone / developer mode where the **State** tab appears directly.
 
+![State view](img/state-overview.png)
+
 ---
 
 ## 1. SysML v2 elements used

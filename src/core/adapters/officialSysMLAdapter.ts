@@ -1095,6 +1095,46 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
 
   traverse(roots, '', false);
 
+  // ── Enrich stateDef bodies with transitions from behavior flows ───────────
+  // The containment graph does not carry source→target for TransitionUsage /
+  // SuccessionAsUsage inside state machines.  The behaviorBuilder already
+  // extracted these as BehaviorFlow items so we harvest them here.
+  const stateDefs = nodes.filter((n): n is Extract<typeof n, { kind: 'stateDef' }> => n.kind === 'stateDef');
+  if (stateDefs.length > 0 && parseResult.behavior?.flows?.length) {
+    // Build: stateName → stateDef (using the stateEntry children)
+    const stateOwner = new Map<string, typeof stateDefs[0]>();
+    for (const sd of stateDefs) {
+      for (const child of (sd as { body: SysMLNode[] }).body) {
+        if (child.kind === 'stateEntry') stateOwner.set(child.name, sd);
+      }
+    }
+
+    for (const flow of parseResult.behavior.flows) {
+      if (flow.type !== 'succession' && flow.type !== 'transition') continue;
+
+      const from = 'source' in flow ? flow.source : ('sourceName' in flow ? flow.sourceName : '');
+      const to   = 'target' in flow ? flow.target : ('targetName' in flow ? flow.targetName : '');
+      const guard = flow.type === 'transition' && 'guard' in flow ? (flow.guard ?? '') : '';
+
+      if (!to) continue;
+
+      // Initial transition: empty source, target is a known state
+      const targetDef = stateOwner.get(to);
+      if (!targetDef) continue;
+      // Regular: both source and target belong to the same stateDef
+      if (from && stateOwner.get(from) !== targetDef) continue;
+
+      const body = (targetDef as { body: SysMLNode[] }).body;
+      // Avoid duplicates (behaviour builder may emit the same transition twice)
+      const alreadyAdded = body.some(
+        c => c.kind === 'transition' && (c as { from: string; to: string }).from === from && (c as { from: string; to: string }).to === to,
+      );
+      if (!alreadyAdded) {
+        body.push({ kind: 'transition', from, to, event: guard, line: 0 });
+      }
+    }
+  }
+
   console.log('[convertGraph] nodes[]:', nodes.map(n => {
     const any = n as Record<string, unknown>;
     return `${n.kind}:${String(any['name'] ?? '?')}${any['type'] ? `:${any['type']}` : ''}`;
