@@ -87,15 +87,17 @@ const browser = await chromium.launch({ headless: true });
   await page.click('button:has-text("Fit")').catch(() => {});
   await page.waitForTimeout(700);
 
+  // Crop to nodes + generous padding so all elements (including right-side part usages) fit
   const rf    = page.locator('.react-flow').first();
   const rfBox = await rf.boundingBox();
-  const clip  = rfBox ? await cropToNodes(page, rfBox, 80) : null;
-  if (clip) {
+  const clip  = rfBox ? await cropToNodes(page, rfBox, 160) : null;
+  if (clip && clip.width > 100) {
     await page.screenshot({ path: `${OUT}/general-overview.png`, clip });
     console.log(`  saved: general-overview.png  (${Math.round(clip.width)}×${Math.round(clip.height)})`);
   } else {
     await rf.screenshot({ path: `${OUT}/general-overview.png` });
-    console.log('  saved: general-overview.png  (full RF)');
+    const b = await rf.boundingBox();
+    console.log(`  saved: general-overview.png  (full RF ${Math.round(b?.width ?? 0)}×${Math.round(b?.height ?? 0)})`);
   }
   await ctx.close();
 }

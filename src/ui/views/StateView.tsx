@@ -1,7 +1,7 @@
 import { useMemo, useCallback } from 'react';
 import {
-  ReactFlow, Background, Controls, MarkerType,
-  type Node, type Edge,
+  ReactFlow, Background, Controls, MarkerType, Handle, Position,
+  type Node, type Edge, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { FitPanel } from '../layout/FitPanel';
@@ -18,10 +18,10 @@ type Transition  = Extract<VizNode, { kind: 'transition' }>;
 
 const NODE_W    = 148;
 const NODE_H    = 54;
-const H_GAP     = 64;
-const V_GAP     = 24;
+const H_GAP     = 80;   // horizontal gap between columns (nodes at same level)
+const V_GAP     = 80;   // vertical gap between levels — wide enough for edge routing
 const START_X   = 80;
-const START_Y   = 40;
+const START_Y   = 80;   // leave room above first node for the initial pseudo-state
 const INIT_R    = 8;
 
 // ── Colours ───────────────────────────────────────────────────────────────────
@@ -43,6 +43,38 @@ function stateLabel(name: string) {
     </div>
   );
 }
+
+// ── Custom node with explicit handles ────────────────────────────────────────
+// Exposes top/bottom handles for forward transitions and left handles for
+// backward (loop-back) transitions, keeping all edges non-overlapping.
+
+const H_STYLE = { opacity: 0, pointerEvents: 'none' as const };
+
+function StateNodeComponent({ data }: NodeProps) {
+  return (
+    <>
+      <Handle type="target" position={Position.Top}    id="top"      style={H_STYLE} />
+      <Handle type="source" position={Position.Bottom} id="bottom"   style={H_STYLE} />
+      <Handle type="source" position={Position.Left}   id="left-out" style={H_STYLE} />
+      <Handle type="target" position={Position.Left}   id="left-in"  style={H_STYLE} />
+      {(data as { label: React.ReactNode }).label}
+    </>
+  );
+}
+
+// Initial pseudo-state: solid filled circle with a bottom handle
+function InitNodeComponent() {
+  return (
+    <div style={{
+      width: INIT_R * 2, height: INIT_R * 2, borderRadius: '50%',
+      background: ST_BORDER,
+    }}>
+      <Handle type="source" position={Position.Bottom} id="bottom" style={H_STYLE} />
+    </div>
+  );
+}
+
+const NODE_TYPES = { stateEntry: StateNodeComponent, initState: InitNodeComponent };
 
 // ── BFS level assignment (handles cycles by ignoring already-visited nodes) ───
 
@@ -103,16 +135,19 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
     const lvl = level.get(s.name) ?? 0;
     const idx = levelIdx.get(lvl) ?? 0;
     levelIdx.set(lvl, idx + 1);
+    // Vertical layout: levels advance downward (y), siblings spread right (x).
+    // This ensures forward transitions go straight down and backward loops
+    // route cleanly to the left without overlapping the forward edges.
     positions.set(s.name, {
-      x: START_X + lvl * (NODE_W + H_GAP),
-      y: START_Y + idx * (NODE_H + V_GAP),
+      x: START_X + idx * (NODE_W + H_GAP),
+      y: START_Y + lvl * (NODE_H + V_GAP),
     });
   }
 
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  // State nodes
+  // State nodes — use custom type so explicit handles are available
   for (const s of states) {
     const nodeId = `sstate-${sm.name}-${s.name}`;
     const sel: SelectionState = {
@@ -121,6 +156,7 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
     };
     nodes.push({
       id: nodeId,
+      type: 'stateEntry',
       position: positions.get(s.name)!,
       data: { label: stateLabel(s.name), _sel: sel },
       style: {
@@ -132,24 +168,18 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
     });
   }
 
-  // Initial pseudo-state indicator
+  // Initial pseudo-state indicator — centred above the start state
   const initTrans = transitions.find(t => t.from === '');
   if (initTrans && positions.has(initTrans.to)) {
     const initTargetPos = positions.get(initTrans.to)!;
     nodes.push({
       id: `sinit-${sm.name}`,
+      type: 'initState',
       position: {
-        x: initTargetPos.x - 44,
-        y: initTargetPos.y + NODE_H / 2 - INIT_R,
+        x: initTargetPos.x + NODE_W / 2 - INIT_R,
+        y: initTargetPos.y - 40,
       },
-      data: { label: '' },
-      style: {
-        width: INIT_R * 2, height: INIT_R * 2,
-        borderRadius: '50%',
-        background: ST_BORDER,
-        border: 'none',
-        minWidth: 0, padding: 0,
-      },
+      data: {},
       selectable: false,
       draggable: false,
     });
@@ -157,6 +187,7 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
       id: `sinit-edge-${sm.name}`,
       source: `sinit-${sm.name}`,
       target: `sstate-${sm.name}-${initTrans.to}`,
+      targetHandle: 'top',
       type: 'smoothstep',
       style: { stroke: ST_BORDER, strokeWidth: 1.5 },
       markerEnd: { type: MarkerType.ArrowClosed, color: ST_BORDER, width: 12, height: 12 },
@@ -164,6 +195,8 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
   }
 
   // Transition edges (skip the initial one — handled above)
+  // Forward transitions (source level < target level): bottom→top, go straight down.
+  // Backward transitions (source level ≥ target level): left-out→left-in, loop left.
   const stateSet = new Set(stateNames);
   transitions
     .filter(t => t.from !== '' && stateSet.has(t.from) && stateSet.has(t.to))
@@ -174,10 +207,15 @@ function buildGraph(sm: StateDef): { nodes: Node[]; edges: Edge[] } {
         name: t.event ? `${t.from} → ${t.to} [${t.event}]` : `${t.from} → ${t.to}`,
         extra: { from: t.from, to: t.to, event: t.event, stateMachine: sm.name },
       };
+      const fromLvl = level.get(t.from) ?? 0;
+      const toLvl   = level.get(t.to)   ?? 0;
+      const isBack  = fromLvl >= toLvl;
       edges.push({
         id: edgeId,
         source: `sstate-${sm.name}-${t.from}`,
         target: `sstate-${sm.name}-${t.to}`,
+        sourceHandle: isBack ? 'left-out' : 'bottom',
+        targetHandle: isBack ? 'left-in'  : 'top',
         type: 'smoothstep',
         label: t.event || undefined,
         style: { stroke: ST_BORDER, strokeWidth: 1.5 },
@@ -281,6 +319,7 @@ export default function StateView({ result, stateMachineName, selection, onSelec
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
+        nodeTypes={NODE_TYPES}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
         fitView

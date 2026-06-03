@@ -1112,25 +1112,33 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
     for (const flow of parseResult.behavior.flows) {
       if (flow.type !== 'succession' && flow.type !== 'transition') continue;
 
-      const from = 'source' in flow ? flow.source : ('sourceName' in flow ? flow.sourceName : '');
-      const to   = 'target' in flow ? flow.target : ('targetName' in flow ? flow.targetName : '');
+      let from = 'source' in flow ? flow.source : ('sourceName' in flow ? flow.sourceName : '');
+      let to   = 'target' in flow ? flow.target : ('targetName' in flow ? flow.targetName : '');
       const guard = flow.type === 'transition' && 'guard' in flow ? (flow.guard ?? '') : '';
+
+      // The SysML v2 pilot implementation emits `entry; then Red;` as a succession
+      // with endpoints reversed: { sourceName: "Red", targetName: "" }.
+      // Swap so the known state becomes the target of the initial transition.
+      if (!to && from && stateOwner.has(from)) { to = from; from = ''; }
 
       if (!to) continue;
 
-      // Initial transition: empty source, target is a known state
       const targetDef = stateOwner.get(to);
       if (!targetDef) continue;
-      // Regular: both source and target belong to the same stateDef
-      if (from && stateOwner.get(from) !== targetDef) continue;
+
+      const fromDef = from ? stateOwner.get(from) : undefined;
+      // Skip flows where 'from' is a state belonging to a DIFFERENT state machine.
+      if (from && fromDef && fromDef !== targetDef) continue;
+      // If 'from' is set but is not a known state (implicit entry pseudo-state),
+      // normalise to '' so the StateView renders the initial indicator.
+      const normalizedFrom = fromDef ? from : '';
 
       const body = (targetDef as { body: SysMLNode[] }).body;
-      // Avoid duplicates (behaviour builder may emit the same transition twice)
       const alreadyAdded = body.some(
-        c => c.kind === 'transition' && (c as { from: string; to: string }).from === from && (c as { from: string; to: string }).to === to,
+        c => c.kind === 'transition' && (c as { from: string; to: string }).from === normalizedFrom && (c as { from: string; to: string }).to === to,
       );
       if (!alreadyAdded) {
-        body.push({ kind: 'transition', from, to, event: guard, line: 0 });
+        body.push({ kind: 'transition', from: normalizedFrom, to, event: guard, line: 0 });
       }
     }
   }
