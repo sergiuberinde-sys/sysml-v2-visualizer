@@ -711,22 +711,29 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
   const portDefFlowInfo = new Map<string, { direction: 'in' | 'out' | 'inout'; itemType: string }>();
 
   function findItemFlowInDef(id: string): { direction: string; itemType: string } | null {
-    for (const kid of childrenOf.get(id) ?? []) {
-      const g = nodeIndex.get(kid);
-      if (!g) continue;
-      if (g.type === 'ItemUsage' && g.direction && g.direction !== 'none') {
-        // Use typedBy → FeatureTyping DFS → item label as successive fallbacks.
-        // For "in item SensorDataEntry;" the label IS the item name even though
-        // there's no FeatureTyping node, so the label is always a valid type hint.
-        const itemType = (typedByLabel.get(kid) ?? findTypeName(kid)) || g.label;
-        return { direction: g.direction, itemType };
-      }
-      if (TRANSPARENT_TYPES.has(g.type)) {
-        const found = findItemFlowInDef(kid);
-        if (found) return found;
+    // Collect all directed features (ItemUsage or AttributeUsage) in the def.
+    // A port def with both 'in' and 'out' features is inout.
+    const found: Array<{ direction: string; itemType: string }> = [];
+    function collect(nodeId: string): void {
+      for (const kid of childrenOf.get(nodeId) ?? []) {
+        const g = nodeIndex.get(kid);
+        if (!g) continue;
+        if ((g.type === 'ItemUsage' || g.type === 'AttributeUsage') && g.direction && g.direction !== 'none') {
+          const itemType = (typedByLabel.get(kid) ?? findTypeName(kid)) || g.label;
+          found.push({ direction: g.direction, itemType });
+        } else if (TRANSPARENT_TYPES.has(g.type)) {
+          collect(kid);
+        }
       }
     }
-    return null;
+    collect(id);
+    if (found.length === 0) return null;
+    if (found.length === 1) return found[0];
+    const dirs = new Set(found.map(i => i.direction));
+    if ((dirs.has('in') && dirs.has('out')) || dirs.has('inout')) {
+      return { direction: 'inout', itemType: found[0].itemType };
+    }
+    return found[0];
   }
 
   for (const gn of graph.nodes) {

@@ -263,16 +263,26 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     // is the primary resolver (*In → 'in', *Out → 'out', from_* → 'in', to_* → 'out').
     function resolvePortDir(port: GraphNode): string {
       if (port.direction) return port.direction;
-      // Follow typedBy edge to the PortDefinition and match item by label.
+      // Follow typedBy edge to the PortDefinition.
       const typedEdge = typedByEdges.find(e => e.source === port.id);
       if (typedEdge) {
         const portDef = nodeById.get(typedEdge.target);
         if (portDef) {
           const defKids = directSemanticChildren(portDef.id, childrenOf, nodeById);
-          const matchItem = defKids.find(n => n.type === 'ItemUsage' && n.label === port.label);
+          // Match by name first (unambiguous single feature case).
+          const matchItem = defKids.find(
+            n => n.label === port.label && n.direction,
+          );
           if (matchItem?.direction) return matchItem.direction;
-          const items = defKids.filter(n => n.type === 'ItemUsage' && n.direction);
-          if (items.length === 1) return items[0].direction ?? '';
+          // Aggregate all directed features: both in+out present → inout.
+          const dirFeatures = defKids.filter(n => n.direction);
+          if (dirFeatures.length === 1) return dirFeatures[0].direction ?? '';
+          if (dirFeatures.length > 1) {
+            const dirs = new Set(dirFeatures.map(f => f.direction));
+            if ((dirs.has('in') && dirs.has('out')) || dirs.has('inout')) return 'inout';
+            if (dirs.has('out')) return 'out';
+            if (dirs.has('in')) return 'in';
+          }
         }
       }
       // Fall back to shared name heuristic (*In → in, *Out → out, from_* → in, to_* → out).
@@ -280,7 +290,8 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     }
 
     function portDisplay(port: GraphNode): PortDisplay {
-      return makeBoundaryPortDisplay(port.id, port.label, resolvePortDir(port), '', port.direction ?? '');
+      const dir = resolvePortDir(port);
+      return makeBoundaryPortDisplay(port.id, port.label, dir, '', dir);
     }
 
     // ── Leaf-part view: scope has no nested PartUsages ──────────────────────────

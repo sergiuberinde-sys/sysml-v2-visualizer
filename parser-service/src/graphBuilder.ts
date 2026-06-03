@@ -581,3 +581,71 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
 
   return { nodes, edges };
 }
+
+// ── Context model enrichment ───────────────────────────────────────────────────
+
+/**
+ * Annotates synthetic PortUsage nodes in `graph` that have no direction by
+ * resolving their direction from the context models (imported files).
+ * Called after buildGraph() when the parse result includes contextModels.
+ */
+export function enrichWithContextModels(
+  graph: ContainmentGraph,
+  contextModels: ModelNode[][],
+): void {
+  if (!contextModels?.length) return;
+
+  const portDirIndex = new Map<string, string>();
+  for (const ctxModel of contextModels) {
+    const ctxGraph = buildGraph(ctxModel);
+    const ctxNodeById = new Map(ctxGraph.nodes.map(n => [n.id, n]));
+    const ctxTypedBy = new Map<string, string>();
+    const ctxChildrenOf = new Map<string, string[]>();
+    for (const n of ctxGraph.nodes) ctxChildrenOf.set(n.id, []);
+    for (const e of ctxGraph.edges) {
+      if (e.type === 'typedBy') ctxTypedBy.set(e.source, e.target);
+      if (e.type === 'contains') ctxChildrenOf.get(e.source)?.push(e.target);
+    }
+    for (const n of ctxGraph.nodes) {
+      if (n.type !== 'PortUsage' || n.label === n.type) continue;
+      if (n.direction) { portDirIndex.set(n.label, n.direction); continue; }
+      const defId = ctxTypedBy.get(n.id);
+      if (!defId) continue;
+      const defNode = ctxNodeById.get(defId);
+      if (!defNode || defNode.type !== 'PortDefinition') continue;
+      const dir = resolvePortDefDirection(defId, ctxChildrenOf, ctxNodeById);
+      if (dir) portDirIndex.set(n.label, dir);
+    }
+  }
+
+  for (const n of graph.nodes) {
+    if (n.type === 'PortUsage' && !n.direction && n.label !== n.type) {
+      const dir = portDirIndex.get(n.label);
+      if (dir) n.direction = dir;
+    }
+  }
+}
+
+function resolvePortDefDirection(
+  defId: string,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+): string {
+  const dirs: string[] = [];
+  function collect(id: string): void {
+    for (const kid of childrenOf.get(id) ?? []) {
+      const n = nodeById.get(kid);
+      if (!n) continue;
+      if (n.direction) dirs.push(n.direction);
+      if (MEMBERSHIP_WRAPPERS.has(n.type)) collect(kid);
+    }
+  }
+  collect(defId);
+  if (dirs.length === 0) return '';
+  if (dirs.length === 1) return dirs[0];
+  const set = new Set(dirs);
+  if ((set.has('in') && set.has('out')) || set.has('inout')) return 'inout';
+  if (set.has('out')) return 'out';
+  if (set.has('in')) return 'in';
+  return '';
+}

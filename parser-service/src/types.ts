@@ -69,6 +69,8 @@ export interface SysMLV2ParseResult {
   success: boolean;
   diagnostics: Diagnostic[];
   model?: ModelNode[];
+  /** Raw model trees for context (imported) files — used to resolve cross-file port directions. */
+  contextModels?: ModelNode[][];
   graph?: import('./graphBuilder').ContainmentGraph;
   behavior?: BehaviorData;
   rawResponse?: unknown;

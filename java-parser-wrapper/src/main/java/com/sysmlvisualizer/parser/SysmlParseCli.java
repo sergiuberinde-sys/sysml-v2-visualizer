@@ -316,6 +316,22 @@ public class SysmlParseCli {
                 model.add(buildNode(root, visited));
             }
 
+            // Also build models for context files that are already in the ResourceSet.
+            // These are returned as contextModels so the TypeScript side can resolve
+            // cross-file port directions without making additional parse requests.
+            List<List<Node>> contextModelsList = new ArrayList<>();
+            for (String ctxPath : contextPaths) {
+                URI ctxUri = URI.createFileURI(new File(ctxPath).getAbsolutePath());
+                Resource ctxResource = sysml.getResourceSet().getResource(ctxUri, false);
+                if (ctxResource == null || ctxResource.getContents().isEmpty()) continue;
+                Set<EObject> ctxVisited = Collections.newSetFromMap(new IdentityHashMap<>());
+                List<Node> ctxModel = new ArrayList<>();
+                for (EObject root : ctxResource.getContents()) {
+                    try { ctxModel.add(buildNode(root, ctxVisited)); } catch (Exception ignored) {}
+                }
+                if (!ctxModel.isEmpty()) contextModelsList.add(ctxModel);
+            }
+
             boolean hasStdlib = (System.getenv("SYSML_STDLIB_PATH") != null);
             boolean suppress  = hasStdlib || hasContext;
             List<Diag> diags = new ArrayList<>();
@@ -333,7 +349,7 @@ public class SysmlParseCli {
                 diags.add(new Diag("warning", d.getMessage(), d.getLine(), d.getColumn()));
             }
 
-            return toJson(trueErrors.isEmpty(), diags, model);
+            return toJson(trueErrors.isEmpty(), diags, model, contextModelsList);
         } catch (Exception e) {
             return wrapperErrorJson(e);
         }
@@ -823,6 +839,11 @@ public class SysmlParseCli {
     // ── JSON serialization — no external dependency ───────────────────────────
 
     private static String toJson(boolean success, List<Diag> diags, List<Node> model) {
+        return toJson(success, diags, model, List.of());
+    }
+
+    private static String toJson(boolean success, List<Diag> diags, List<Node> model,
+                                  List<List<Node>> contextModels) {
         var sb = new StringBuilder();
         sb.append("{\n  \"success\": ").append(success).append(",\n  \"diagnostics\": [");
         for (int i = 0; i < diags.size(); i++) {
@@ -841,7 +862,23 @@ public class SysmlParseCli {
             appendNode(sb, model.get(i), 2);
         }
         if (!model.isEmpty()) sb.append("\n  ");
-        return sb.append("]\n}").toString();
+        sb.append("]");
+        if (!contextModels.isEmpty()) {
+            sb.append(",\n  \"contextModels\": [");
+            for (int ci = 0; ci < contextModels.size(); ci++) {
+                if (ci > 0) sb.append(",");
+                sb.append("\n    [");
+                List<Node> cm = contextModels.get(ci);
+                for (int i = 0; i < cm.size(); i++) {
+                    if (i > 0) sb.append(",");
+                    appendNode(sb, cm.get(i), 3);
+                }
+                if (!cm.isEmpty()) sb.append("\n    ");
+                sb.append("]");
+            }
+            sb.append("\n  ]");
+        }
+        return sb.append("\n}").toString();
     }
 
     private static void appendNode(StringBuilder sb, Node node, int depth) {
