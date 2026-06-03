@@ -41,7 +41,7 @@ const GENERAL_EXAMPLE = `package VehicleSystem {
 }
 `;
 
-// State view — official SysML v2 syntax
+// State view — official SysML v2 syntax with guards
 const STATE_EXAMPLE = `package TrafficLight {
 
     state def TrafficLightController {
@@ -52,9 +52,9 @@ const STATE_EXAMPLE = `package TrafficLight {
 
         entry; then Red;
 
-        transition first Red    then Green;
-        transition first Green  then Yellow;
-        transition first Yellow then Red;
+        transition first Red    if timer then Green;
+        transition first Green  if timer then Yellow;
+        transition first Yellow if timer then Red;
     }
 }
 `;

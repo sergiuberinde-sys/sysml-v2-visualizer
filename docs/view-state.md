@@ -22,7 +22,7 @@ transition arrows.
 | `StateUsage` | `state` | An individual state |
 | Initial transition | `entry; then <State>;` | Marks the initial state |
 | `TransitionUsage` | `transition first X then Y;` | An unconditional transition |
-| Guarded transition | `transition first X accept when <trigger>; then Y;` | Transition with a trigger or guard |
+| Guarded transition | `transition first X if <guard> then Y;` | Transition with a guard expression |
 
 ---
 
@@ -41,16 +41,17 @@ package TrafficLight {
         // Initial transition — marks Red as the starting state.
         entry; then Red;
 
-        // Unconditional transitions (loop).
-        transition first Red    then Green;
-        transition first Green  then Yellow;
-        transition first Yellow then Red;
+        // Guarded transitions (loop).  The guard name appears on the arrow.
+        transition first Red    if timer then Green;
+        transition first Green  if timer then Yellow;
+        transition first Yellow if timer then Red;
     }
 }
 ```
 
-The `transition first X then Y` form creates a `TransitionUsage` (a
-subtype of `SuccessionUsage`) that connects two states.
+The `transition first X if <guard> then Y` form creates a `TransitionUsage`
+(a subtype of `SuccessionUsage`) that connects two states.  The guard
+expression label is rendered on the transition arrow.
 
 ---
 
