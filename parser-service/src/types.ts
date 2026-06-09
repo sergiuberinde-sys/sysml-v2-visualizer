@@ -15,6 +15,12 @@ export interface ModelNode {
   children: ModelNode[];
 }
 
+export interface ActionPort {
+  name: string;
+  direction: 'in' | 'out';
+  itemType?: string;
+}
+
 export interface BehaviorAction {
   id: string;
   name: string;
@@ -25,19 +31,22 @@ export interface BehaviorAction {
   conditionalId?: string;
   /** which branch this action belongs to, if inside a conditional */
   branch?: 'then' | 'else' | 'loop';
-  /** For ActionDefinition entries: name of the directly enclosing structural definition (e.g. "Controller") */
+  /** Name of the directly enclosing structural definition (e.g. "Controller"); set for ActionDefinition and ActionUsage entries inside PartDefinition etc. */
   owningDefName?: string;
-  /** For ActionDefinition entries: EMF type of the enclosing structural definition (e.g. "PartDefinition") */
+  /** EMF type of the enclosing structural definition (e.g. "PartDefinition") */
   owningDefType?: string;
   /** For ActionUsage/PerformActionUsage: resolved type name from FeatureTyping (e.g. "ReadSensor") */
   actionType?: string;
+  /** In/out item ports (parameters) on this action */
+  ports?: ActionPort[];
 }
 
 export type BehaviorFlow =
   | { id: string; source: string; target: string; type: 'succession' }
   | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true }
   | { id: string; source: string; target: string; type: 'transition'; guard?: string }
-  | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true };
+  | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true }
+  | { id: string; source: string; sourcePort: string; target: string; targetPort: string; type: 'itemFlow' };
 
 /**
  * Represents a discovered conditional / loop construct.

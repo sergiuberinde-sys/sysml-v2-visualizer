@@ -7,17 +7,18 @@
  * Renders:
  *   behavior.actions       (ActionUsage nodes)        → ReactFlow nodes
  *   behavior.flows         (succession / transition)  → ReactFlow edges
+ *   behavior.flows         (itemFlow)                 → port-to-port edges
  *   behavior.conditionals  (IfActionUsage / WhileLoop) → condition nodes + branch edges
  */
 
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
-  useReactFlow, applyNodeChanges,
+  useReactFlow, applyNodeChanges, Handle, Position,
   type Node, type Edge, type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { BehaviorData } from '../../core/sysmlv2Official';
+import type { BehaviorData, ActionPort } from '../../core/sysmlv2Official';
 import type { SelectionState } from '../../app/selection';
 import { applyBehaviorLayout } from '../layout/graphLayout';
 import { FitPanel } from '../layout/FitPanel';
@@ -32,6 +33,21 @@ const BEHAV_V_PAD  = 12;   // 2 × 6 px
 const LINE_H_NAME  = 18;   // 12.5px font × 1.35 line-height
 const LINE_H_SMALL = 14;   // 9–10 px stereotype / type label
 const BADGE_H      = 20;   // branch badge row height
+
+// ── Port/pin layout constants ─────────────────────────────────────────────────
+
+const PORT_PIN_SIZE  = 7;    // visible pin square size (px)
+const PORT_PIN_GAP   = 4;    // gap between pin and label text
+const PORT_ROW_H     = 18;   // height of each port row in the port section
+const PORT_LABEL_FS  = 8;    // port label font size (px)
+const PORT_DIVIDER_H = 9;    // 1px border-top + 4px padding-top + 4px slack
+
+// Y-offset from node container top of the center of port row `idx`.
+// hasType = action has an actionType ': Foo' label below the name.
+const PORT_SECTION_TOP_BASE = 6 + 14 + 20 + 4 + 1 + 4; // pad + stereo + name + margin + border + padding
+function portHandleTop(hasType: boolean, idx: number): number {
+  return PORT_SECTION_TOP_BASE + (hasType ? 14 : 0) + idx * PORT_ROW_H + PORT_ROW_H / 2;
+}
 
 // ── Color palette ─────────────────────────────────────────────────────────────
 
@@ -60,7 +76,156 @@ const CTRL_BORDER = '#2dd4bf';    // teal
 const CTRL_STEREO = '#5eead4';
 const CTRL_NAME   = '#ccfbf1';
 
+const PIN_COLOR        = '#38bdf8';  // same as ACT_BORDER — item port pins
+const PORT_TEXT_COLOR  = '#7dc8e8';
+const PORT_TYPE_COLOR  = '#4a9fc0';
+const ITEM_FLOW_COLOR  = '#22d3ee';  // cyan — item flow edges
+
 const CTRL_FLOW_TYPES = new Set(['DecisionNode', 'MergeNode', 'ForkNode', 'JoinNode']);
+
+// ── Custom port-action node ───────────────────────────────────────────────────
+
+interface PortActionNodeData {
+  name:       string;
+  stereotype: string;
+  stereoClr:  string;
+  nameClr:    string;
+  actionType?: string;
+  ports:      ActionPort[];
+  isBranch:   boolean;
+  targets:    string[];
+  _sel:       SelectionState;
+}
+
+function PortActionNode({ data }: { data: PortActionNodeData }) {
+  const inPorts  = data.ports.filter(p => p.direction === 'in');
+  const outPorts = data.ports.filter(p => p.direction === 'out');
+  const hasPorts = inPorts.length > 0 || outPorts.length > 0;
+  const hasType  = !!data.actionType;
+
+  const header = (
+    <>
+      <div style={{ fontSize: 9, color: data.stereoClr, letterSpacing: '0.4px', textAlign: 'center' }}>
+        {data.stereotype}
+      </div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: data.nameClr, textAlign: 'center', lineHeight: 1.35 }}>
+        {data.name}
+      </div>
+      {hasType && (
+        <div style={{ fontSize: 10, color: PORT_TYPE_COLOR, marginTop: 1, textAlign: 'center' }}>
+          : {data.actionType}
+        </div>
+      )}
+      {data.isBranch && (
+        <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+          <span style={{ display: 'inline-block', width: 6, height: 6, background: BRANCH_COLOR, transform: 'rotate(45deg)' }} />
+          <span style={{ fontSize: 8.5, color: BRANCH_COLOR, letterSpacing: '0.3px' }}>
+            {data.targets.length} branches
+          </span>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', boxSizing: 'border-box' }}>
+      {/* Invisible succession handles at top/bottom */}
+      <Handle type="target" position={Position.Top}    id="ctrl-in"
+        style={{ width: 1, height: 1, background: 'transparent', border: 'none', minWidth: 0, minHeight: 0 }} />
+      <Handle type="source" position={Position.Bottom} id="ctrl-out"
+        style={{ width: 1, height: 1, background: 'transparent', border: 'none', minWidth: 0, minHeight: 0 }} />
+
+      {/* Visible port-pin handles */}
+      {inPorts.map((p, i) => (
+        <Handle key={`h-in-${p.name}`} type="target" position={Position.Left} id={`in-${p.name}`}
+          style={{
+            top:          portHandleTop(hasType, i),
+            width:        PORT_PIN_SIZE,
+            height:       PORT_PIN_SIZE,
+            background:   PIN_COLOR,
+            border:       `1px solid ${PIN_COLOR}`,
+            borderRadius: 1,
+          }} />
+      ))}
+      {outPorts.map((p, i) => (
+        <Handle key={`h-out-${p.name}`} type="source" position={Position.Right} id={`out-${p.name}`}
+          style={{
+            top:          portHandleTop(hasType, i),
+            width:        PORT_PIN_SIZE,
+            height:       PORT_PIN_SIZE,
+            background:   PIN_COLOR,
+            border:       `1px solid ${PIN_COLOR}`,
+            borderRadius: 1,
+          }} />
+      ))}
+
+      {hasPorts ? (
+        <div style={{ padding: '6px 10px', height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ marginBottom: 4 }}>{header}</div>
+          <div style={{
+            borderTop: '1px solid #1e3a5f',
+            paddingTop: 4,
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 4,
+          }}>
+            {/* In-ports column */}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {inPorts.map(p => (
+                <div key={p.name} style={{
+                  height: PORT_ROW_H,
+                  display: 'flex',
+                  alignItems: 'center',
+                  paddingLeft: PORT_PIN_SIZE + PORT_PIN_GAP,
+                  fontSize: PORT_LABEL_FS,
+                  color: PORT_TEXT_COLOR,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {p.name}
+                  {p.itemType && <span style={{ color: PORT_TYPE_COLOR }}>:{p.itemType}</span>}
+                </div>
+              ))}
+            </div>
+            {/* Out-ports column */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+              {outPorts.map(p => (
+                <div key={p.name} style={{
+                  height: PORT_ROW_H,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  paddingRight: PORT_PIN_SIZE + PORT_PIN_GAP,
+                  fontSize: PORT_LABEL_FS,
+                  color: PORT_TEXT_COLOR,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {p.name}
+                  {p.itemType && <span style={{ color: PORT_TYPE_COLOR }}>:{p.itemType}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          padding: '6px 10px',
+          height: '100%',
+          boxSizing: 'border-box',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexDirection: 'column',
+          lineHeight: 1.35,
+        }}>
+          {header}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stable nodeTypes reference (must be outside the component to avoid remounting).
+const PORT_NODE_TYPES = { portAction: PortActionNode } as const;
 
 // ── Per-node dimension helper ─────────────────────────────────────────────────
 
@@ -69,17 +234,32 @@ function behaviorNodeDims(
   actionType: string | undefined | null,
   isBranch:   boolean,
   stereoText: string,
+  inPorts:    ActionPort[] = [],
+  outPorts:   ActionPort[] = [],
 ): { w: number; h: number } {
   const rows: TextRow[] = [
     { text: stereoText, font: '9px sans-serif' },
     { text: name,       font: '600 12.5px sans-serif' },
     ...(actionType ? [{ text: ': ' + actionType, font: '10px sans-serif' } as TextRow] : []),
   ];
-  const w         = fitNodeWidth(rows, BEHAV_H_PAD, NODE_W);
-  const nameLines = estimateWrapLines(name, '600 12.5px sans-serif', w - BEHAV_H_PAD);
+  const w0        = fitNodeWidth(rows, BEHAV_H_PAD, NODE_W);
+  const nameLines = estimateWrapLines(name, '600 12.5px sans-serif', w0 - BEHAV_H_PAD);
   let h = BEHAV_V_PAD + LINE_H_SMALL + nameLines * LINE_H_NAME;
   if (actionType) h += LINE_H_SMALL;
   if (isBranch)   h += BADGE_H;
+
+  const maxPorts = Math.max(inPorts.length, outPorts.length);
+  let w = w0;
+  if (maxPorts > 0) {
+    h += PORT_DIVIDER_H + maxPorts * PORT_ROW_H;
+    // Estimate width to accommodate port labels at 8px font (~4.5px/char)
+    const label = (p: ActionPort) => p.name.length + (p.itemType ? p.itemType.length + 1 : 0);
+    const longestIn  = inPorts.reduce((m, p) => Math.max(m, label(p)), 0);
+    const longestOut = outPorts.reduce((m, p) => Math.max(m, label(p)), 0);
+    const portsW = (longestIn + longestOut) * 4.5 + (PORT_PIN_SIZE + PORT_PIN_GAP + 6) * 2 + 16;
+    w = Math.max(w, Math.ceil(portsW), 180);
+  }
+
   return { w, h: Math.max(NODE_H, h) };
 }
 
@@ -132,13 +312,92 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
   const { rfNodes, rfEdges } = useMemo(() => {
     if (!behavior || !behaviorName) return { rfNodes: [], rfEdges: [] };
 
+    type ControlFlowItem = Extract<(typeof behavior)['flows'][number], { source: string; type: 'succession' | 'transition' }>;
+    type ItemFlowItem    = Extract<(typeof behavior)['flows'][number], { type: 'itemFlow' }>;
+
+    // ── PartDefinition container (no ActionDefinition wrapper) ────────────────
+    const PART_DEF_PREFIX = 'part def::';
+    if (behaviorName.startsWith(PART_DEF_PREFIX)) {
+      const partDefName = behaviorName.slice(PART_DEF_PREFIX.length);
+
+      // Typed usages: action init : Init;
+      const typedUsages = behavior.actions.filter(
+        a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') &&
+             a.owningDefName === partDefName && !a.ownerId,
+      );
+      // Inline bodies: action init { ... } parsed as ActionDefinition by the pilot parser.
+      // Exclude any ActionDef that is referenced by a typed usage above (those are proper defs).
+      const referencedTypeNames = new Set(typedUsages.map(a => a.actionType).filter(Boolean) as string[]);
+      const inlineDefs = behavior.actions.filter(
+        a => a.type === 'ActionDefinition' && a.owningDefName === partDefName &&
+             !referencedTypeNames.has(a.name),
+      );
+      const actionUsages = [...typedUsages, ...inlineDefs];
+      if (actionUsages.length === 0) return { rfNodes: [], rfEdges: [] };
+
+      const actionNameSet = new Set(actionUsages.map(a => a.name));
+      const outgoing = new Map<string, string[]>();
+      const resolvedFlows = behavior.flows.filter(
+        (f): f is ControlFlowItem =>
+          (f.type === 'succession' || f.type === 'transition') &&
+          'source' in f && actionNameSet.has(f.source) && actionNameSet.has(f.target),
+      );
+      for (const f of resolvedFlows) {
+        if (!outgoing.has(f.source)) outgoing.set(f.source, []);
+        outgoing.get(f.source)!.push(f.target);
+      }
+
+      const partNodes: Node[] = actionUsages.map(a => {
+        const nodeId  = `oact-${behaviorName}-${a.name}`;
+        const targets = outgoing.get(a.name) ?? [];
+        const dims    = behaviorNodeDims(a.name, a.actionType, targets.length > 1, '«action»');
+        return {
+          id:       nodeId,
+          position: { x: 0, y: 0 },
+          data: {
+            label: (
+              <div style={{ textAlign: 'center', lineHeight: 1.35 }}>
+                <div style={{ fontSize: 9, color: ACT_STEREO, letterSpacing: '0.4px' }}>«action»</div>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: ACT_NAME }}>{a.name}</div>
+                {a.actionType && (
+                  <div style={{ fontSize: 10, color: '#4a9fc0', marginTop: 1 }}>: {a.actionType}</div>
+                )}
+              </div>
+            ),
+            _sel: {
+              id: nodeId, type: 'actionInst', name: a.name,
+              extra: { behavior: behaviorName, ...(a.actionType ? { actionType: a.actionType } : {}) },
+            } satisfies SelectionState,
+          },
+          style: {
+            background: ACT_BG, border: `1px solid ${ACT_BORDER}`, borderRadius: 7,
+            padding: '6px 10px', width: dims.w, height: dims.h,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          },
+        };
+      });
+
+      const partEdges: Edge[] = resolvedFlows.map(f => ({
+        id:        `oflow-${behaviorName}-${f.source}-${f.target}`,
+        source:    `oact-${behaviorName}-${f.source}`,
+        target:    `oact-${behaviorName}-${f.target}`,
+        type:      'smoothstep',
+        style:     { stroke: ACT_BORDER, strokeWidth: 1.5 },
+        markerEnd: { type: MarkerType.ArrowClosed, color: ACT_BORDER, width: 14, height: 14 },
+      }));
+
+      return { rfNodes: partNodes, rfEdges: partEdges };
+    }
+
+    // ── ActionDefinition-based behavior ───────────────────────────────────────
+
     // behaviorName may be 'Controller::Startup' (qualified) or 'Startup' (unqualified).
     const colonIdx  = behaviorName.indexOf('::');
     const ownerPart = colonIdx >= 0 ? behaviorName.slice(0, colonIdx) : null;
     const defPart   = colonIdx >= 0 ? behaviorName.slice(colonIdx + 2) : behaviorName;
 
     const def = behavior.actions.find(a =>
-      a.type === 'ActionDefinition' &&
+      (a.type === 'ActionDefinition' || a.type === 'ActionUsage' || a.type === 'PerformActionUsage') &&
       a.name === defPart &&
       (ownerPart === null || a.owningDefName === ownerPart),
     );
@@ -163,9 +422,13 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     // action names (e.g. CheckBothGroup0AndGroup1Filled in Group0 vs Group1 defs) and
     // name-based filtering would let both defs' flows bleed in.
     const defPrefix = `flow:${def.id}.`;
-    type ResolvedFlow = Extract<NonNullable<typeof behavior>['flows'][number], { source: string }>;
     const resolvedFlows = behavior.flows.filter(
-      (f): f is ResolvedFlow => 'source' in f && f.id.startsWith(defPrefix),
+      (f): f is ControlFlowItem =>
+        (f.type === 'succession' || f.type === 'transition') &&
+        'source' in f && f.id.startsWith(defPrefix),
+    );
+    const itemFlows = behavior.flows.filter(
+      (f): f is ItemFlowItem => f.type === 'itemFlow' && f.id.startsWith(defPrefix),
     );
 
     // Synthetic edges from each conditional node to its branch actions.
@@ -213,7 +476,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const targets   = outgoing.get(a.name) ?? [];
       const isBranch  = !isCtrl && targets.length > 1;
       const stereoTxt = isCtrl ? (CTRL_STEREO_MAP[a.type] ?? '«control»') : '«action»';
-      nodeDims.set(a.name, behaviorNodeDims(a.name, isCtrl ? undefined : a.actionType, isBranch, stereoTxt));
+      const inPorts   = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'in');
+      const outPorts  = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'out');
+      nodeDims.set(a.name, behaviorNodeDims(a.name, isCtrl ? undefined : a.actionType, isBranch, stereoTxt, inPorts, outPorts));
     }
     for (const c of ownedConditionals) {
       const isLoop   = c.type === 'whileLoop';
@@ -235,27 +500,27 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const stereo    = isCtrl ? (CTRL_STEREO_MAP[a.type] ?? '«control»') : '«action»';
       const nameClr   = isCtrl ? CTRL_NAME   : ACT_NAME;
       const stereoClr = isCtrl ? CTRL_STEREO : ACT_STEREO;
+
+      const inPorts  = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'in');
+      const outPorts = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'out');
+
+      // Use custom portAction node type for all action nodes so that ctrl-in/ctrl-out
+      // handles are always available for succession edge routing.
+      const nodeType = 'portAction';
+
       return {
         id:       nodeId,
         position: DUMMY_POS,
+        type:     nodeType,
         data: {
-          label: (
-            <div style={{ textAlign: 'center', lineHeight: 1.35 }}>
-              <div style={{ fontSize: 9, color: stereoClr, letterSpacing: '0.4px' }}>{stereo}</div>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: nameClr }}>{a.name}</div>
-              {!isCtrl && a.actionType && (
-                <div style={{ fontSize: 10, color: '#4a9fc0', marginTop: 1 }}>: {a.actionType}</div>
-              )}
-              {!isCtrl && isBranch && (
-                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
-                  <span style={{ display: 'inline-block', width: 6, height: 6, background: BRANCH_COLOR, transform: 'rotate(45deg)' }} />
-                  <span style={{ fontSize: 8.5, color: BRANCH_COLOR, letterSpacing: '0.3px' }}>
-                    {targets.length} branches
-                  </span>
-                </div>
-              )}
-            </div>
-          ),
+          name:       a.name,
+          stereotype: stereo,
+          stereoClr,
+          nameClr,
+          actionType: isCtrl ? undefined : a.actionType,
+          ports:      [...inPorts, ...outPorts],
+          isBranch:   !isCtrl && isBranch,
+          targets,
           _sel: {
             id:   nodeId,
             type: 'actionInst',
@@ -266,11 +531,10 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
               ...(targets.length > 0 ? { outgoingTargets: targets.join(',') } : {}),
             },
           } satisfies SelectionState,
-        },
+        } satisfies PortActionNodeData,
         style: {
           background: bg, border: `1px solid ${border}`, borderRadius: isCtrl ? 3 : 7,
-          padding: '6px 10px', width: dims.w, height: dims.h,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: dims.w, height: dims.h,
         },
       };
     });
@@ -280,8 +544,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     // ── Succession / transition edges ──────────────────────────────────────────
 
     const flowEdges: Edge[] = resolvedFlows.map(f => {
-      const srcId = `oact-${behaviorName}-${f.source}`;
-      const tgtId = `oact-${behaviorName}-${f.target}`;
+      const srcId     = `oact-${behaviorName}-${f.source}`;
+      const tgtId     = `oact-${behaviorName}-${f.target}`;
       const srcBranch = (outgoing.get(f.source)?.length ?? 0) > 1;
       const isGuarded = f.type === 'transition' && 'guard' in f && f.guard !== undefined;
       const guardText = isGuarded ? (f as { guard: string }).guard : undefined;
@@ -289,18 +553,47 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const guardColor = isNegated ? ELSE_COLOR : THEN_COLOR;
       const edgeColor = isGuarded ? guardColor : (srcBranch ? BRANCH_COLOR : ACT_BORDER);
       return {
-        id:        `oflow-${behaviorName}-${f.source}-${f.target}`,
-        source:    srcId,
-        target:    tgtId,
-        type:      'smoothstep',
+        id:           `oflow-${behaviorName}-${f.source}-${f.target}`,
+        source:       srcId,
+        target:       tgtId,
+        sourceHandle: 'ctrl-out',
+        targetHandle: 'ctrl-in',
+        type:         'smoothstep',
         ...(guardText !== undefined ? {
           label:        `[${guardText}]`,
           labelStyle:   { fill: guardColor, fontSize: 10, fontWeight: 600, fontFamily: 'monospace' },
           labelBgStyle: { fill: isNegated ? '#1f0a0a' : '#0b1e0b', fillOpacity: 0.9, rx: 3, ry: 3 },
         } : {}),
-        style:     { stroke: edgeColor, strokeWidth: 1.5 },
+        style:     { stroke: edgeColor, strokeWidth: 1.5, strokeDasharray: '6 3' },
         markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor, width: 14, height: 14 },
       };
+    });
+
+    // ── Item flow edges ────────────────────────────────────────────────────────
+
+    const actionByName = new Map(actionUsages.map(a => [a.name, a]));
+    const itemFlowEdges: Edge[] = itemFlows.flatMap(f => {
+      const srcId = `oact-${behaviorName}-${f.source}`;
+      const tgtId = `oact-${behaviorName}-${f.target}`;
+      // Only render if both endpoints are visible in this behavior view.
+      if (!actNodeIds.has(srcId) || !actNodeIds.has(tgtId)) return [];
+      // Look up item type from the source action's port definition.
+      const srcAction = actionByName.get(f.source);
+      const srcPort   = srcAction?.ports?.find(p => p.name === f.sourcePort);
+      const itemType  = srcPort?.itemType ?? f.sourcePort;
+      return [{
+        id:           `oiflow-${behaviorName}-${f.source}.${f.sourcePort}-${f.target}.${f.targetPort}`,
+        source:       srcId,
+        target:       tgtId,
+        sourceHandle: `out-${f.sourcePort}`,
+        targetHandle: `in-${f.targetPort}`,
+        type:         'smoothstep',
+        label:        itemType,
+        labelStyle:   { fill: ITEM_FLOW_COLOR, fontSize: 8, fontWeight: 500, fontFamily: 'monospace' },
+        labelBgStyle: { fill: '#041e26', fillOpacity: 0.9, rx: 3, ry: 3 },
+        style:        { stroke: ITEM_FLOW_COLOR, strokeWidth: 1.5 },
+        markerEnd:    { type: MarkerType.ArrowClosed, color: ITEM_FLOW_COLOR, width: 12, height: 12 },
+      } satisfies Edge];
     });
 
     // ── Conditional nodes ──────────────────────────────────────────────────────
@@ -349,6 +642,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         id:           `ocond-edge-${behaviorName}-${e.condId}-${e.targetName}`,
         source:       `ocond-${behaviorName}-${e.condId}`,
         target:       `oact-${behaviorName}-${e.targetName}`,
+        targetHandle: 'ctrl-in',
         type:         'smoothstep',
         label:        e.label,
         labelStyle:   { fill: e.color, fontSize: 10, fontWeight: 600, fontFamily: 'monospace' },
@@ -359,7 +653,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
 
     return {
       rfNodes: [...actNodes, ...condNodes],
-      rfEdges: [...flowEdges, ...condBranchEdges],
+      rfEdges: [...flowEdges, ...itemFlowEdges, ...condBranchEdges],
     };
   }, [behavior, behaviorName]);
 
@@ -428,7 +722,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       fontSize:      12,
       flexShrink:    0,
     }}>
-      <span style={{ color: '#64748b' }}>Action def:</span>
+      <span style={{ color: '#64748b' }}>Behavior:</span>
       <select
         value={behaviorName}
         onChange={e => onBehaviorChange?.(e.target.value)}
@@ -444,9 +738,13 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
           maxWidth:     320,
         }}
       >
-        {behaviorNames.map(name => (
-          <option key={name} value={name}>{name}</option>
-        ))}
+        {behaviorNames.map(name => {
+          const PART_DEF_PREFIX = 'part def::';
+          const display = name.startsWith(PART_DEF_PREFIX)
+            ? `${name.slice(PART_DEF_PREFIX.length)} (part def)`
+            : name;
+          return <option key={name} value={name}>{display}</option>;
+        })}
       </select>
       <span style={{ color: '#334155', fontSize: 11 }}>
         {rfNodes.length > 0
@@ -499,6 +797,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         <ReactFlow
           nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
           edges={rfEdges}
+          nodeTypes={PORT_NODE_TYPES}
           onNodeClick={handleNodeClick}
           onNodesChange={handleNodesChange}
           onInit={inst => { rfInstanceRef.current = inst as ReturnType<typeof useReactFlow>; }}

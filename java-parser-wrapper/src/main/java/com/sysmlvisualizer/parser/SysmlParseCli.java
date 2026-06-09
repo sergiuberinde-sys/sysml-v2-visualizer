@@ -734,6 +734,14 @@ public class SysmlParseCli {
         if ("Subsetting".equals(emfType) && name == null) {
             name = crossRefName(obj, "subsettedFeature");
         }
+        // Redefinition.redefinedFeature names the redefined port in flow endpoint chains.
+        // Example: `flow from receiveSensorData.rawSensorReading` produces a FlowEnd whose
+        // ReferenceUsage (for rawSensorReading) carries a Redefinition child pointing to the
+        // external feature.  Extracting the name here makes extractFlowEndpointPair find it.
+        if ("Redefinition".equals(emfType) && name == null) {
+            name = crossRefName(obj, "redefinedFeature");
+            if (name == null) name = crossRefName(obj, "subsettedFeature");
+        }
 
         // Feature.direction attribute (FeatureDirectionKind enum: in, out, inout, none).
         // Emit when explicitly set to a directional value; omit for "none" (unset).

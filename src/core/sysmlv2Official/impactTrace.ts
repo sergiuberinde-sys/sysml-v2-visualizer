@@ -26,7 +26,7 @@ export interface ImpactedElement {
 export interface ImpactedFlow {
   source: string;
   target: string;
-  flowType: 'succession' | 'transition';
+  flowType: 'succession' | 'transition' | 'itemFlow';
   guard?: string;
   /** Qualified name of the ActionDefinition this flow belongs to — used for click navigation. */
   behaviorContext?: string;

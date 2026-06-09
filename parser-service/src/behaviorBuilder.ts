@@ -30,7 +30,7 @@
  */
 
 import type {
-  ModelNode, BehaviorAction, BehaviorFlow, BehaviorConditional, BehaviorData,
+  ModelNode, BehaviorAction, BehaviorFlow, BehaviorConditional, BehaviorData, ActionPort,
 } from './types';
 
 const ACTION_USAGE_TYPES   = new Set(['ActionUsage', 'PerformActionUsage']);
@@ -116,6 +116,56 @@ function extractEndpointNames(node: ModelNode): string[] {
   return refs;
 }
 
+// ── Implicit succession resolver ──────────────────────────────────────────────
+//
+// `then action X` emits a SuccessionAsUsage whose EndFeatureMembership children
+// hold ReferenceUsage nodes named 'earlierOccurrence' / 'laterOccurrence' instead
+// of concrete action names.  To resolve these we look at the sibling list: the
+// action immediately before the succession node is the source, and the one
+// immediately after is the target.
+//
+// Returns: Map<childIndex, [sourceName, targetName]>
+
+function resolveImplicitSucc(children: ModelNode[]): Map<number, [string, string]> {
+  const result = new Map<number, [string, string]>();
+
+  // Unwrap a single-child membership wrapper to reach the inner node.
+  const innerOf = (c: ModelNode): ModelNode => (c.children.length === 1 ? c.children[0] : c);
+
+  // Collect (childIndex, actionName) pairs in document order.
+  const actionOrder: { idx: number; name: string }[] = [];
+  for (let i = 0; i < children.length; i++) {
+    const inner = innerOf(children[i]);
+    if (ACTION_USAGE_TYPES.has(inner.type) && inner.name != null) {
+      actionOrder.push({ idx: i, name: inner.name });
+    }
+  }
+
+  // For each SuccessionAsUsage with implicit (earlierOccurrence/laterOccurrence) refs,
+  // resolve by adjacent action names.
+  for (let i = 0; i < children.length; i++) {
+    const inner = innerOf(children[i]);
+    if (!SUCCESSION_TYPES.has(inner.type)) continue;
+    if (extractEndpointNames(inner).length >= 2) continue; // already explicit
+
+    const isImplicit = inner.children.some(efm =>
+      efm.type === 'EndFeatureMembership' &&
+      efm.children.some(ru =>
+        ru.type === 'ReferenceUsage' &&
+        (ru.name === 'earlierOccurrence' || ru.name === 'laterOccurrence'),
+      ),
+    );
+    if (!isImplicit) continue;
+
+    const beforeI = actionOrder.filter(a => a.idx < i);
+    const prev = beforeI[beforeI.length - 1];
+    const next = actionOrder.find(a => a.idx > i);
+    if (prev && next) result.set(i, [prev.name, next.name]);
+  }
+
+  return result;
+}
+
 // ── Condition extraction ──────────────────────────────────────────────────────
 
 interface ConditionInfo {
@@ -142,9 +192,73 @@ function extractCondition(paramMembership: ModelNode | undefined): ConditionInfo
   return { kind: 'Expression' };
 }
 
+// ── Port collection ───────────────────────────────────────────────────────────
+//
+// Extracts `in item` / `out item` parameters from an ActionUsage node's children.
+// Structure: FeatureMembership → ItemUsage (direction='in'/'out') → FeatureTyping
+
+function collectPorts(node: ModelNode): ActionPort[] {
+  const ports: ActionPort[] = [];
+  for (const child of node.children) {
+    const inner = (
+      child.children.length === 1 &&
+      (child.type === 'FeatureMembership' || child.type === 'OwningMembership' ||
+       child.type === 'ParameterMembership' || child.type === 'ReturnParameterMembership')
+    ) ? child.children[0] : child;
+
+    if ((inner.type === 'ItemUsage' || inner.type === 'ActionUsage' || inner.type === 'ReferenceUsage') &&
+        inner.name != null && (inner.direction === 'in' || inner.direction === 'out')) {
+      const ft = inner.children.find(c => c.type === 'FeatureTyping');
+      ports.push({ name: inner.name, direction: inner.direction as 'in' | 'out', itemType: ft?.name ?? undefined });
+    }
+  }
+  return ports;
+}
+
+// ── Flow-endpoint extraction ───────────────────────────────────────────────────
+//
+// For `flow from A.p to B.q`, each EndFeatureMembership child of the FlowUsage
+// contains a chain: ReferenceSubsetting(action) + ReferenceUsage(port).
+// Returns [actionName, portName] or null if the chain can't be resolved.
+
+function extractFlowEndpointPair(efm: ModelNode): [string, string] | null {
+  const names: string[] = [];
+  function collect(n: ModelNode): void {
+    if (
+      (n.type === 'ReferenceSubsetting' || n.type === 'FeatureChaining' ||
+       n.type === 'ReferenceUsage'       || n.type === 'Redefinition') &&
+      n.name != null && n.name !== n.type &&
+      n.name !== 'earlierOccurrence' && n.name !== 'laterOccurrence'
+    ) {
+      names.push(n.name);
+    } else {
+      for (const c of n.children) collect(c);
+    }
+  }
+  for (const c of efm.children) collect(c);
+  return names.length >= 2 ? [names[0], names[1]] : null;
+}
+
+// ── Cross-file ActionDefinition port scanner ──────────────────────────────────
+//
+// Scans a model tree for ActionDefinition nodes and populates `out` with their
+// ports.  Used to resolve typed action usages whose definition lives in another
+// file (context model).
+
+function scanActionDefPorts(nodes: ModelNode[], out: Map<string, ActionPort[]>): void {
+  function scan(node: ModelNode): void {
+    if (node.type === 'ActionDefinition' && node.name) {
+      const ports = collectPorts(node);
+      if (ports.length > 0 && !out.has(node.name)) out.set(node.name, ports);
+    }
+    for (const c of node.children) scan(c);
+  }
+  for (const root of nodes) scan(root);
+}
+
 // ── Core traversal ────────────────────────────────────────────────────────────
 
-export function buildBehavior(roots: ModelNode[]): BehaviorData {
+export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = []): BehaviorData {
   const actions:      BehaviorAction[]     = [];
   const flows:        BehaviorFlow[]       = [];
   const conditionals: BehaviorConditional[] = [];
@@ -185,9 +299,17 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
         defEntry.owningDefName = ownerCtx.name;
         defEntry.owningDefType = ownerCtx.type;
       }
+      const defPorts = collectPorts(node);
+      if (defPorts.length > 0) defEntry.ports = defPorts;
       actions.push(defEntry);
+      const implicitDef = resolveImplicitSucc(node.children);
       for (let i = 0; i < node.children.length; i++) {
-        visit(node.children[i], `${path}.${i}`, path, undefined, undefined, ownerCtx);
+        if (implicitDef.has(i)) {
+          const [source, target] = implicitDef.get(i)!;
+          flows.push({ id: `flow:${path}.${i}.0`, source, target, type: 'succession' });
+        } else {
+          visit(node.children[i], `${path}.${i}`, path, undefined, undefined, ownerCtx);
+        }
       }
       return;
     }
@@ -209,9 +331,36 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
       if (ownerDefId !== null) action.ownerId = ownerDefId;
       if (conditionalId)       action.conditionalId = conditionalId;
       if (branch)              action.branch = branch;
+      // Structural owner context (e.g. PartDefinition directly containing this ActionUsage).
+      if (ownerCtx && ownerDefId === null) {
+        action.owningDefName = ownerCtx.name;
+        action.owningDefType = ownerCtx.type;
+      }
       const ft = node.children.find(c => c.type === 'FeatureTyping');
       if (ft?.name) action.actionType = ft.name;
+      const ports = collectPorts(node);
+      if (ports.length > 0) action.ports = ports;
       actions.push(action);
+
+      // If this ActionUsage has an inline body (grandchildren include ActionUsage or
+      // SuccessionAsUsage nodes), recurse into it using this usage's path as the owning
+      // scope — same pattern as ActionDefinition.
+      const hasInlineBody = node.children.some(c =>
+        c.children.some(gc =>
+          ACTION_USAGE_TYPES.has(gc.type) || SUCCESSION_TYPES.has(gc.type) || CONTROL_FLOW_TYPES.has(gc.type),
+        ),
+      );
+      if (hasInlineBody) {
+        const implicitUsage = resolveImplicitSucc(node.children);
+        for (let i = 0; i < node.children.length; i++) {
+          if (implicitUsage.has(i)) {
+            const [source, target] = implicitUsage.get(i)!;
+            flows.push({ id: `flow:${path}.${i}.0`, source, target, type: 'succession' });
+          } else {
+            visit(node.children[i], `${path}.${i}`, path, undefined, undefined, null);
+          }
+        }
+      }
       return;
     }
 
@@ -265,6 +414,26 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
         flows.push({ id: flowId, source: sourceName, target: targetName, type: 'transition' as const, ...(guard !== undefined ? { guard } : {}) });
       } else {
         flows.push({ id: flowId, sourceName: sourceName ?? '', targetName: targetName ?? '', type: 'transition' as const, ...(guard !== undefined ? { guard } : {}), unresolved: true as const });
+      }
+      return;
+    }
+
+    // ── FlowUsage (item flow: flow from A.p to B.q) ────────────────────────
+    if (node.type === 'FlowUsage') {
+      const efms = node.children.filter(c => c.type === 'EndFeatureMembership');
+      if (efms.length >= 2) {
+        const src = extractFlowEndpointPair(efms[0]);
+        const tgt = extractFlowEndpointPair(efms[1]);
+        if (src && tgt) {
+          flows.push({
+            id:         `flow:${path}`,
+            source:     src[0],
+            sourcePort: src[1],
+            target:     tgt[0],
+            targetPort: tgt[1],
+            type:       'itemFlow',
+          });
+        }
       }
       return;
     }
@@ -349,5 +518,27 @@ export function buildBehavior(roots: ModelNode[]): BehaviorData {
   }
 
   roots.forEach((root, i) => visit(root, String(i), null));
+
+  // Inherit ports onto typed ActionUsages from their ActionDefinition.
+  // Primary model first, then context files (cross-file defs don't override local ones).
+  const defPortsByName = new Map<string, ActionPort[]>();
+  for (const a of actions) {
+    if (a.type === 'ActionDefinition' && a.ports?.length) {
+      defPortsByName.set(a.name, a.ports);
+    }
+  }
+  for (const ctxRoots of contextRoots) {
+    scanActionDefPorts(ctxRoots, defPortsByName);
+  }
+  for (const a of actions) {
+    if (
+      (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') &&
+      a.actionType && !a.ports?.length
+    ) {
+      const inherited = defPortsByName.get(a.actionType);
+      if (inherited) a.ports = inherited;
+    }
+  }
+
   return { actions, flows, conditionals };
 }

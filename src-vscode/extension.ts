@@ -12,7 +12,7 @@ import { ensureJava } from './javaInstaller';
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g18';
+const GRAPH_VERSION      = 'g24';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -281,7 +281,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (phase1.model && !phase1.graph) {
         phase1.graph    = buildGraph(phase1.model);
         if (phase1.contextModels?.length) enrichWithContextModels(phase1.graph, phase1.contextModels);
-        phase1.behavior = buildBehavior(phase1.model);
+        phase1.behavior = buildBehavior(phase1.model, phase1.contextModels ?? []);
       }
 
       // Publish phase-1 result immediately so the UI is never blank while waiting.
@@ -326,7 +326,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (result.model && !result.graph) {
         result.graph    = buildGraph(result.model);
         if (result.contextModels?.length) enrichWithContextModels(result.graph, result.contextModels);
-        result.behavior = buildBehavior(result.model);
+        result.behavior = buildBehavior(result.model, result.contextModels ?? []);
       }
 
       applyResult(document, result);

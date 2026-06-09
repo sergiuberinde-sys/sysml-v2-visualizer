@@ -488,3 +488,76 @@ describe('ActionUsage typed by ActionDefinition — actionType field', () => {
     expect(activate?.actionType).toBeUndefined();
   });
 });
+
+// ── 10. ActionUsage / ActionDefinition directly inside PartDefinition ─────────
+//
+// part def VehicleController {
+//   action init { action loadConfig; action selfTest; first loadConfig then selfTest; }
+//   action sense { ... }
+//   first init then sense;
+// }
+//
+// The pilot parser may emit `action init { ... }` (usage with inline body) as either
+// ActionUsage or ActionDefinition. Both cases must produce owningDefName='VehicleController'.
+
+describe('ActionUsage inside PartDefinition', () => {
+  const partDef = (name: string, children: ModelNode[]): ModelNode =>
+    n('PartDefinition', name, children);
+
+  // Case A: pilot emits inline body as ActionUsage (no separate def)
+  const rootA = partDef('VehicleController', [
+    fm(actionUsage('init',  [fm(actionUsage('loadConfig')), fm(actionUsage('selfTest')), fm(successionNode('loadConfig', 'selfTest'))])),
+    fm(actionUsage('sense', [])),
+    fm(successionNode('init', 'sense')),
+  ]);
+  const { actions: actionsA, flows: flowsA } = buildBehavior([rootA]);
+
+  it('A: emits ActionUsage with owningDefName set to PartDefinition name', () => {
+    const init = actionsA.find(a => a.name === 'init');
+    expect(init).toBeDefined();
+    expect(init?.owningDefName).toBe('VehicleController');
+    expect(init?.owningDefType).toBe('PartDefinition');
+    expect(init?.ownerId).toBeUndefined();
+  });
+
+  it('A: recurses into inline body and emits sub-actions with ownerId', () => {
+    const initId = actionsA.find(a => a.name === 'init')?.id;
+    const loadConfig = actionsA.find(a => a.name === 'loadConfig');
+    const selfTest   = actionsA.find(a => a.name === 'selfTest');
+    expect(loadConfig).toBeDefined();
+    expect(loadConfig?.ownerId).toBe(initId);
+    expect(selfTest).toBeDefined();
+    expect(selfTest?.ownerId).toBe(initId);
+  });
+
+  it('A: emits succession flow at the PartDef level', () => {
+    const flow = flowsA.find(f => 'source' in f && f.source === 'init' && f.target === 'sense');
+    expect(flow).toBeDefined();
+  });
+
+  // Case B: pilot emits inline body as ActionDefinition
+  const rootB = partDef('VehicleController', [
+    fm(actionDef('init',  [fm(actionUsage('loadConfig')), fm(actionUsage('selfTest')), fm(successionNode('loadConfig', 'selfTest'))])),
+    fm(actionDef('sense', [])),
+    fm(successionNode('init', 'sense')),
+  ]);
+  const { actions: actionsB, flows: flowsB } = buildBehavior([rootB]);
+
+  it('B: emits ActionDefinition with owningDefName set', () => {
+    const init = actionsB.find(a => a.name === 'init' && a.type === 'ActionDefinition');
+    expect(init).toBeDefined();
+    expect(init?.owningDefName).toBe('VehicleController');
+  });
+
+  it('B: recurses into ActionDefinition body and emits sub-actions with ownerId', () => {
+    const defId = actionsB.find(a => a.name === 'init')?.id;
+    const loadConfig = actionsB.find(a => a.name === 'loadConfig');
+    expect(loadConfig).toBeDefined();
+    expect(loadConfig?.ownerId).toBe(defId);
+  });
+
+  it('B: emits succession flow at the PartDef level', () => {
+    const flow = flowsB.find(f => 'source' in f && f.source === 'init' && f.target === 'sense');
+    expect(flow).toBeDefined();
+  });
+});

@@ -7,6 +7,12 @@ import type { ContainmentGraph } from './ContainmentGraph';
 // parser-service/src/behaviorBuilder.ts.  Kept as a plain object shape so the
 // frontend can work with JSON directly without a runtime schema check.
 
+export interface ActionPort {
+  name: string;
+  direction: 'in' | 'out';
+  itemType?: string;
+}
+
 export interface BehaviorAction {
   id: string;
   name: string;
@@ -24,13 +30,16 @@ export interface BehaviorAction {
   owningDefType?: string;
   /** For ActionUsage/PerformActionUsage: resolved type name from FeatureTyping (e.g. "ReadSensor") */
   actionType?: string;
+  /** In/out item ports (parameters) on this action */
+  ports?: ActionPort[];
 }
 
 export type BehaviorFlow =
   | { id: string; source: string; target: string; type: 'succession' }
   | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true }
   | { id: string; source: string; target: string; type: 'transition'; guard?: string }
-  | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true };
+  | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true }
+  | { id: string; source: string; sourcePort: string; target: string; targetPort: string; type: 'itemFlow' };
 
 /**
  * A conditional or loop construct discovered in the model.

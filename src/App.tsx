@@ -408,13 +408,44 @@ export default function App() {
     if (!officialParseResult?.behavior) return [];
     const beh = officialParseResult.behavior;
     const CTRL = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
-    return beh.actions
-      .filter(a => a.type === 'ActionDefinition')
+    // Include both ActionDefinition entries and ActionUsage entries that have an inline
+    // body (detected by having sub-actions with ownerId pointing to them).
+    const actionDefEntries = beh.actions
+      .filter(a =>
+        a.type === 'ActionDefinition' ||
+        ((a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.owningDefName),
+      )
       .filter(def => beh.actions.some(a =>
         (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL.has(a.type)) &&
         a.ownerId === def.id,
       ))
       .map(a => a.owningDefName ? `${a.owningDefName}::${a.name}` : a.name);
+    // PartDefs that contain action usages (typed) or inline action bodies.
+    // When `action init { ... }` is written inside a part def, the pilot parser emits it as
+    // ActionDefinition (not ActionUsage). Detect this case: an ActionDefinition inside a
+    // structural def that is NOT referenced by a typed usage in the same structural def.
+    const referencedDefNames = new Set(
+      beh.actions
+        .filter(a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') &&
+                     a.owningDefName && !a.ownerId && a.actionType)
+        .map(a => `${a.owningDefName}::${a.actionType}`),
+    );
+    const seen = new Set<string>();
+    const partDefEntries: string[] = [];
+    for (const a of beh.actions) {
+      // Typed usage: action init : Init;
+      if ((a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.owningDefName && !a.ownerId) {
+        const key = `part def::${a.owningDefName}`;
+        if (!seen.has(key)) { seen.add(key); partDefEntries.push(key); }
+      }
+      // Inline body: action init { ... } parsed as ActionDefinition
+      if (a.type === 'ActionDefinition' && a.owningDefName &&
+          !referencedDefNames.has(`${a.owningDefName}::${a.name}`)) {
+        const key = `part def::${a.owningDefName}`;
+        if (!seen.has(key)) { seen.add(key); partDefEntries.push(key); }
+      }
+    }
+    return [...actionDefEntries, ...partDefEntries];
   }, [officialParseResult]);
 
   const stateMachineNames = useMemo(

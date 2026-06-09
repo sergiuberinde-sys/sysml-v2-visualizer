@@ -1,5 +1,7 @@
 package SequenceDiagramTest {
 
+    private import ExecSpecTypes::*;
+
     attribute credentialsValid : ScalarValues::Boolean;
 
     part def Client_Participant {
@@ -105,5 +107,60 @@ package SequenceDiagramTest {
         message dataResponse
             from dataService.returnData
             to client.receiveData;
+    }
+
+    // Actions view test — two variants of port declaration syntax.
+    //
+    // VehicleController  → uses explicit "in item" / "out item" keywords
+    // VehicleController2 → uses bare "in" / "out" (standard idiomatic SysML v2 form)
+    //
+    // In the Actions view, select:
+    //   • "VehicleController::updateOutputProcedure"  — explicit in/out item ports
+    //   • "VehicleController2::updateOutputProcedure" — bare in/out ports
+    // Both should show port pins and the two item-flow arrows.
+
+    part def VehicleController {
+
+        port sensorInput   : SensorDataPort;
+        port controlOutput : ActuatorPort;
+
+        action updateOutputProcedure {
+
+            action receiveSensorData : RCVSENS;
+
+            then action processSensorData {
+                in  item inRawReading  : SensorReading;
+                out item outControlCmd : ControlCommand;
+            }
+
+            then action sendControlCommand {
+                in item controlCmd : ControlCommand;
+            }
+
+            flow from receiveSensorData.rawSensorReading to processSensorData.inRawReading;
+            flow from processSensorData.outControlCmd    to sendControlCommand.controlCmd;
+        }
+    }
+
+    part def VehicleController2 {
+
+        action updateOutputProcedure {
+
+            action receiveSensorData2 {
+                out rawSensorReading : SensorReading;
+            }
+
+            then action processSensorData2 {
+                in  inRawReading  : SensorReading;
+                out outControlCmd : ControlCommand;
+            }
+
+            then action sendControlCommand2 {
+                in controlCmd : ControlCommand;
+            }
+
+            flow from receiveSensorData2.rawSensorReading to processSensorData2.inRawReading;
+            flow from processSensorData2.outControlCmd    to sendControlCommand2.controlCmd;
+        }
     }
 }
