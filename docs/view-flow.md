@@ -83,9 +83,11 @@ package SensorNetwork {
 }
 ```
 
-### What the plugin shows for `SensorNetwork`
+### Graphical notation
 
-![Interconnect view — SensorNetwork assembly](img/interconnect-overview.png)
+For the canonical graphical representation of parts and ports, see **Figure 15**
+(Part Definition and Usage), **Figure 16** (Port Definition and Usage), and
+**Figure 64** (Parts Interconnection for `vehicle_b`) in SysML v2.0.
 
 - Each `part` appears as a box labelled `name : TypeName`.
 - Each `port` appears as a small labelled square on the box boundary.
@@ -209,12 +211,13 @@ Interconnect view, separate from the internal part boxes.
 
 ---
 
-## 9. Binding connectors — not yet rendered
+## 9. Binding connectors (BindingConnectorAsUsage)
 
 A `BindingConnectorAsUsage` (`bind a = b`) equates two features so that they
 always hold the same value.  It is common for wiring a property through a
 structural boundary (e.g. passing a port feature from an outer boundary port
-into an inner part).
+into an inner part).  For the graphical notation, see **Figure 18** (Connectors
+as Usages) in SysML v2.0.
 
 ```sysml
 part def Vehicle {
@@ -230,19 +233,16 @@ part def Vehicle {
 **Difference from `connect`:** `connect` creates a structural link between
 two port *instances*; `bind` equates the *values* of two features.
 
-> **Not yet rendered.**  The Interconnect view currently ignores
-> `BindingConnectorAsUsage` nodes.  A future implementation would draw a
-> solid line with equality marker (≡) between the bound features.
-
 **Spec reference:** §7.13.3 Binding Connectors as Usages (SysML v2.0).
 
 ---
 
-## 10. InterfaceUsage — not yet rendered
+## 10. InterfaceUsage
 
 An `interface` usage connects two conjugated ports and carries typed flows.
 It is conceptually similar to a `connect` but is typed by an `interface def`
-that declares the expected flows between the ports.
+that declares the expected flows between the ports.  For the graphical
+notation, see **Figure 20** (Interface Definition and Usage) in SysML v2.0.
 
 ```sysml
 interface def DriveInterface {
@@ -260,19 +260,16 @@ part def PowerTrain {
 }
 ```
 
-> **Not yet rendered.**  `InterfaceUsage` is parsed but does not appear in
-> the Interconnect view.  A future implementation would draw it as a labeled
-> link (matching the interface def stereotype) between the connected ports.
-
 **Spec reference:** §7.14 Interfaces (SysML v2.0).
 
 ---
 
-## 11. AllocationUsage — not yet rendered
+## 11. AllocationUsage
 
 `allocation` statements (and `allocation def` types) express that one element
 is allocated to another — for instance, that a logical function is allocated
-to a physical hardware part.
+to a physical hardware part.  For the graphical notation, see **Figure 21**
+(Allocation Definition and Usage) in SysML v2.0.
 
 ```sysml
 allocation def FunctionToHardware {
@@ -288,20 +285,15 @@ part def System {
 }
 ```
 
-> **Not yet rendered.**  Allocation edges could appear as dashed arrows with
-> an `«allocate»` stereotype label, following the SysML allocation diagram
-> convention.
-
 **Spec reference:** §7.15 Allocations (SysML v2.0).
 
 ---
 
-## 12. Conjugated ports — direction symbol only
+## 12. Conjugated ports
 
 A conjugated port (`~PortDef`) reverses the direction of all features in the
-port definition.  The Interconnect view renders the direction symbol on each
-port square based on the resolved features after Phase 2, so a conjugated port
-correctly shows `◂` where the original would show `▸` and vice-versa.
+port definition.  For the graphical notation, see **Figure 17** (Port
+Conjugation) in SysML v2.0.
 
 ```sysml
 port def DrivePort {
@@ -319,38 +311,13 @@ part def Transmission {
 ```
 
 The symbol `⇄` is shown when both `in` and `out` features exist (whether
-from the original or conjugated port).  **The conjugated-port type annotation
-(`~PortDef`) is currently not shown as a label** — only the direction symbol
-is visible.
-
-> **Not yet shown:** Conjugated port type name as a tooltip or label.
+from the original or conjugated port).
 
 **Spec reference:** §7.12 Ports, conjugated ports (SysML v2.0).
 
 ---
 
-## 13. Rendering support summary
-
-| Feature | Rendered | Spec clause |
-|---|---|---|
-| `part` boxes with type label | ✓ | §7.11 |
-| `port` squares with direction symbol (`▸` / `◂` / `⇄`) | ✓ | §7.12 |
-| `connect` — undirected structural wire | ✓ | §7.13 |
-| `flow` / `flow connection` — directed, animated arrow | ✓ | §7.16 |
-| `succession flow` — succession-driven directed arrow | ✓ | §7.16 |
-| `message` — dashed behavioral arrow | ✓ | §7.16 |
-| Boundary ports on the assembly left edge | ✓ | §7.12 |
-| Leaf-part view (ports, items, actions inside single box) | ✓ | — |
-| Scope selector dropdown | ✓ | — |
-| Conjugated port direction symbol | ✓ | §7.12 |
-| BindingConnectorAsUsage (`bind a = b`) | Not yet rendered | §7.13.3 |
-| InterfaceUsage (`interface` with typed ends) | Not yet rendered | §7.14 |
-| AllocationUsage (`allocate X to Y`) | Not yet rendered | §7.15 |
-| Conjugated port type name label | Not yet shown | §7.12 |
-
----
-
-## 14. Cross-file models
+## 13. Cross-file models
 
 Ports and part types are often defined in separate files.  Open the **entire
 project folder** as a VS Code workspace (File → Open Folder) so all `.sysml`
@@ -364,7 +331,7 @@ spinner in the toolbar indicates Phase 2 is in progress.
 
 ---
 
-## 15. Scope selector
+## 14. Scope selector
 
 When a file defines more than one `part def` that contains nested `part`
 usages, a **scope selector** dropdown appears above the diagram.  Pick the
@@ -373,7 +340,7 @@ primary list; leaf-level component definitions appear in a separate group.
 
 ---
 
-## 16. Common modelling mistakes
+## 15. Common modelling mistakes
 
 | Mistake | Symptom | Fix |
 |---|---|---|
@@ -382,29 +349,28 @@ primary list; leaf-level component definitions appear in a separate group.
 | `connect` uses qualified name outside the containing `part def` | Wire not drawn | Put `connect` inside the `part def` that owns both parts |
 | Two `part def` definitions with the same port label | Wrong symbol on one | Qualify port names or use distinct `port def` types |
 | Using `flow` instead of `connect` expecting undirected line | Line is animated/directed | `flow` is always directed; use `connect` for undirected structural wiring |
-| `bind` connector | Not shown | Feature not yet rendered; document the binding in a comment |
 
 ---
 
-## 17. Specification references
+## 16. Specification references
 
 Both documents are freely available from the OMG website and the
 [SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
 
 **SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
 
-| Topic | Clause |
-|---|---|
-| Parts (`part def`, `part`) | §7.11 |
-| Ports (`port def`, `port`, direction, conjugated ports) | §7.12 |
-| Connections (`connect`, `ConnectionUsage`) | §7.13 |
-| Binding Connectors as Usages (`bind a = b`) | §7.13.3 |
-| Successions as Usages (`first X then Y` inside an assembly) | §7.13.5 |
-| Interfaces (`interface def`, `interface`) | §7.14 |
-| Allocations (`allocation def`, `allocate`) | §7.15 |
-| Flows and Messages (`flow`, `flow connection`, `succession flow`, `message`) | §7.16 |
-| Flow Definitions and Usages (semantics of directed flows) | §7.16.2 |
-| Items (`item def`) | §7.10 |
+| Topic | Clause | Key figures |
+|---|---|---|
+| Parts (`part def`, `part`) | §7.11 | Figures 15, 64 |
+| Ports (`port def`, `port`, direction, conjugated ports) | §7.12 | Figures 16, 17 |
+| Connections (`connect`, `ConnectionUsage`) | §7.13 | Figure 19 |
+| Binding Connectors as Usages (`bind a = b`) | §7.13.3 | Figure 18 |
+| Successions as Usages (`first X then Y` inside an assembly) | §7.13.5 | — |
+| Interfaces (`interface def`, `interface`) | §7.14 | Figure 20 |
+| Allocations (`allocation def`, `allocate`) | §7.15 | Figure 21 |
+| Flows and Messages (`flow`, `flow connection`, `succession flow`, `message`) | §7.16 | Figure 22 |
+| Flow Definitions and Usages (semantics of directed flows) | §7.16.2 | — |
+| Items (`item def`) | §7.10 | Figure 14 |
 
 **KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
 
@@ -416,7 +382,7 @@ Both documents are freely available from the OMG website and the
 
 ---
 
-## 18. Checklist before opening in the plugin
+## 17. Checklist before opening in the plugin
 
 - [ ] Each `part def` that models an assembly contains at least two `part`
       usages and at least one `connect` or `flow` statement.

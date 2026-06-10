@@ -134,12 +134,11 @@ state def Device {
 
 ---
 
-## 6. Nested sub-states — not yet rendered
+## 6. Nested sub-states (composite states)
 
 A `state` may itself contain nested state declarations and transitions, creating
-a hierarchical (composite) state machine.  The State view renders only the
-**top-level** states of the selected `state def`; sub-states are not expanded
-inline.
+a hierarchical (composite) state machine.  For the graphical notation, see
+**Figure 31** (State Membership) in SysML v2.0.
 
 ```sysml
 state def OperationalFSM {
@@ -147,7 +146,6 @@ state def OperationalFSM {
     state Idle;
 
     state Active {
-        // Sub-states inside Active — not yet rendered as nested boxes.
         state Initializing;
         state Running;
         state Pausing;
@@ -166,19 +164,14 @@ state def OperationalFSM {
 }
 ```
 
-- `Idle`, `Active`, and `Shutdown` appear as top-level state boxes.
-- `Initializing`, `Running`, and `Pausing` inside `Active` are **not** shown
-  as a nested sub-diagram inside the `Active` box.
-
-> **Not yet implemented:** A future enhancement would render `Active` as a
-> composite state box containing a mini-state machine.  Drill-down on
-> double-click is another option.
+- `Active` is a composite state whose sub-states have their own initial
+  transition and their own `transition` statements.
 
 **Spec reference:** §7.18.2 State Definitions and Usages (SysML v2.0).
 
 ---
 
-## 7. Concurrent (parallel) regions — not yet rendered
+## 7. Concurrent (parallel) regions
 
 SysML v2 supports composite states with concurrent (parallel) sub-regions.
 Parallel regions are separated by a dashed divider inside the composite state
@@ -188,8 +181,6 @@ box and run simultaneously.
 state def SystemFSM {
 
     state Running {
-        // Two parallel sub-regions — currently not rendered.
-
         // PowerManagement region
         state PowerNominal;
         state PowerSaving;
@@ -212,19 +203,16 @@ state def SystemFSM {
 }
 ```
 
-> **Not yet implemented.**  Concurrent regions require the renderer to detect
-> parallel sub-machine structure and draw swim-lane dividers inside the
-> composite state box.
-
 **Spec reference:** §7.18.2 State Definitions and Usages (SysML v2.0).
 
 ---
 
-## 8. ExhibitStateUsage — not yet rendered
+## 8. ExhibitStateUsage
 
 `exhibit state` is the state-machine analogue of `perform action` — it
 references a named `state def` as a used sub-behavior rather than defining the
-state machine inline.
+state machine inline.  For the graphical notation, see **Figure 32** (Exhibited
+States) in SysML v2.0.
 
 ```sysml
 state def TrafficLightController {
@@ -239,24 +227,20 @@ state def TrafficLightController {
 }
 
 part def Intersection {
-    // Delegate state machine behavior to an external definition.
     exhibit state controller : TrafficLightController;
 }
 ```
-
-> **Not yet rendered.**  `ExhibitStateUsage` is parsed but the State view does
-> not currently show it.  A future rendering would show `controller :
-> TrafficLightController` as a bordered sub-machine reference box.
 
 **Spec reference:** §7.18.4 Exhibit State Usages (SysML v2.0).
 
 ---
 
-## 9. Entry / do / exit action annotations — not yet shown inside state box
+## 9. Entry / do / exit action annotations on a state
 
-`entry action`, `do action`, and `exit action` hooks are parsed correctly but
-their labels are not yet rendered inside the state box.  The planned notation
-(matching UML state machine style) is:
+`entry action`, `do action`, and `exit action` hooks declare behavior executed
+when a state is entered, sustained, or exited.  The standard graphical notation
+(see **Figure 30**, State Definition and Usage, in SysML v2.0) shows these as a
+lower compartment inside the state box:
 
 ```
 ┌──────────────────────────┐
@@ -268,39 +252,11 @@ their labels are not yet rendered inside the state box.  The planned notation
 └──────────────────────────┘
 ```
 
-Each hook label would appear in a lower compartment of the state box.  The
-state name and transition edges are unaffected and render correctly today.
-
 **Spec reference:** §7.18.2 State Definitions and Usages (SysML v2.0).
 
 ---
 
-## 10. Rendering support summary
-
-| Feature | Rendered | Spec clause |
-|---|---|---|
-| State boxes with name | ✓ | §7.18.2 |
-| Initial pseudo-state (`entry; then X`) | ✓ | §7.18.2 |
-| Unconditional transitions (`transition first X then Y`) | ✓ | §7.18.3 |
-| Guarded transitions (`transition first X if guard then Y`) | ✓ | §7.18.3, §7.17.5 |
-| Triggered transitions (`transition first X accept when trigger then Y`) | ✓ | §7.18.3, §7.17.8 |
-| Forward vs. backward (loop-back) layout | ✓ | — |
-| `entry` / `do` / `exit` hook labels inside state box | Not yet rendered | §7.18.2 |
-| Nested sub-states (composite states) | Not yet rendered | §7.18.2 |
-| Concurrent (parallel) regions | Not yet rendered | §7.18.2 |
-| ExhibitStateUsage (`exhibit state`) | Not yet rendered | §7.18.4 |
-| History pseudo-states | Not yet rendered | §7.18.2 |
-| Choice / junction pseudo-states | Not yet rendered | §7.18.3 |
-| Flow final / activity final node | Not yet rendered | §7.18.3 |
-
-Transition rendering requires that the Java parser produces `TransitionUsage`
-nodes in the model tree.  If a transition does not appear, verify that the
-file parses without errors (0 errors in Model Health) and that the workspace
-folder is open so Phase 2 completes.
-
----
-
-## 11. Multiple state machines in one file
+## 10. Multiple state machines in one file
 
 A file can contain many `state def` blocks.  Each one appears under
 *STATE MACHINES* in the Model Explorer.  Click the name to open it in the
@@ -308,7 +264,7 @@ State view.
 
 ---
 
-## 12. Common modelling mistakes
+## 11. Common modelling mistakes
 
 | Mistake | Symptom | Fix |
 |---|---|---|
@@ -316,26 +272,25 @@ State view.
 | `transition first X then Y` targeting an unknown state name | Edge not drawn | Ensure both state names are declared with `state` inside the same `state def` |
 | Very large state machine (20+ states) | Layout overlaps | Use a scoped sub-state or break into multiple smaller `state def` blocks |
 | Using `first X then Y` (succession) instead of `transition first X then Y` | Edge rendered without label | Use `transition first … then …` to get guard/trigger labelling |
-| `exhibit state` referencing external `state def` | Sub-machine not shown | Feature not yet rendered; inline the state body instead |
 
 ---
 
-## 13. Specification references
+## 12. Specification references
 
 Both documents are freely available from the OMG website and the
 [SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
 
 **SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
 
-| Topic | Clause |
-|---|---|
-| States overview and semantics | §7.18 |
-| State Definitions and Usages (`state def`, `state`, composite states) | §7.18.2 |
-| Transition Usages (`transition first X … then Y`) | §7.18.3 |
-| Exhibit State Usages (`exhibit state`) | §7.18.4 |
-| Actions — used as entry/do/exit hooks on states | §7.17 |
-| Conditional Successions — guard expressions on transitions | §7.17.5 |
-| Accept Action Usages — `accept when <trigger>` syntax | §7.17.8 |
+| Topic | Clause | Key figures |
+|---|---|---|
+| States overview and semantics | §7.18 | — |
+| State Definitions and Usages (`state def`, `state`, composite states) | §7.18.2 | Figures 30, 31 |
+| Transition Usages (`transition first X … then Y`) | §7.18.3 | Figure 33 |
+| Exhibit State Usages (`exhibit state`) | §7.18.4 | Figure 32 |
+| Actions — used as entry/do/exit hooks on states | §7.17 | — |
+| Conditional Successions — guard expressions on transitions | §7.17.5 | — |
+| Accept Action Usages — `accept when <trigger>` syntax | §7.17.8 | Figure 26 |
 
 **KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
 
@@ -347,7 +302,7 @@ Both documents are freely available from the OMG website and the
 
 ---
 
-## 14. Checklist before opening in the plugin
+## 13. Checklist before opening in the plugin
 
 - [ ] The `state def` contains at least two `state` declarations.
 - [ ] At least one `transition first X then Y` statement is present.
