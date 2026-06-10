@@ -302,7 +302,298 @@ inspect.  Only top-level `action def` elements appear in the list.
 
 ---
 
-## 10. Common modelling mistakes
+## 10. PerformActionUsage — delegating to an external action definition
+
+A `perform action` usage invokes an action defined elsewhere.  The step appears
+in the Actions view as a normal action box; the type name shown below the step
+label identifies which external `action def` is being performed.
+
+```sysml
+package SystemBoot {
+
+    action def PowerOnSequence {
+        action startPSU;
+        action runPOST;
+        action loadFirmware;
+
+        first startPSU  then runPOST;
+        first runPOST   then loadFirmware;
+    }
+
+    action def FullBoot {
+        action initHardware;
+
+        // Delegates execution to the externally-defined PowerOnSequence.
+        perform action powerOn : PowerOnSequence;
+
+        action launchOS;
+
+        first initHardware then powerOn;
+        first powerOn      then launchOS;
+    }
+}
+```
+
+- The step `powerOn` renders as `«action» powerOn` with `PowerOnSequence`
+  shown below the label.
+- Ports declared on `PowerOnSequence` are inherited onto `powerOn` after Phase
+  2 resolves the cross-file type.
+
+---
+
+## 11. Nested action bodies
+
+An `action` step may contain its own sub-body with nested steps and successions.
+**The Actions view renders only the top-level steps** of the selected definition;
+nested bodies are not unrolled into the diagram.
+
+```sysml
+action def ComplexProcess {
+
+    // step1 has an internal sub-body — shown as a single box in the diagram.
+    action step1 {
+        action substep1a;
+        action substep1b;
+        first substep1a then substep1b;
+    }
+
+    action step2;
+
+    first step1 then step2;
+}
+```
+
+- `step1` renders as a single `«action» step1` box.  Its sub-steps
+  (`substep1a`, `substep1b`) are **not** expanded.
+- This matches standard UML activity diagram conventions where a composite
+  action is an atomic step at the parent level.
+
+> **Not yet implemented:** There is no drill-down capability.  Clicking a
+> composite step does not open its sub-body.  A future enhancement could
+> render nested bodies on double-click or in a separate panel.
+
+---
+
+## 12. Loop actions — not yet rendered
+
+The SysML v2 spec defines three `LoopActionUsage` forms (§7.17.12).  The Java
+parser produces `LoopActionUsage` nodes, but the Actions view does **not yet
+visualize** them as loop regions.
+
+### Until loop
+
+```sysml
+action def RepeatUntil {
+    attribute x         : Real;
+    attribute y         : Real;
+    attribute increment : Real;
+
+    action loop1 loop {
+        assign y := 2 * x;
+        then assign x := x + increment;
+    } until x >= 10;
+}
+```
+
+### While loop
+
+```sysml
+action def WhileLoop {
+    attribute x : Real;
+    attribute y : Real;
+
+    action loop2 while x < 10 {
+        assign y := 2 * x;
+        then assign x := x + 1;
+    }
+}
+```
+
+### For loop
+
+```sysml
+action def ForLoop {
+    attribute n : Integer;
+    attribute y : Real;
+
+    action forLoop1 for i : Integer in 1..n {
+        assign y := y + i;
+    }
+}
+```
+
+> **Planned rendering:** Loop nodes could appear as a UML activity loop region
+> (back-edge arrow with the exit guard label on the arc).
+
+**Spec reference:** §7.17.12 Loop Action Usages (SysML v2.0).
+
+---
+
+## 13. Send and Accept actions — not yet rendered
+
+### SendActionUsage (§7.17.7)
+
+Sends a value or object via a port.
+
+```sysml
+action def ProduceAndSend {
+    out port displayPort;
+
+    attribute picture : Picture;
+
+    action capturePicture;
+    action send1 send picture via displayPort;
+
+    first capturePicture then send1;
+}
+```
+
+### AcceptActionUsage (§7.17.8)
+
+Waits for an incoming event or value on a port.  Also used in state machine
+transitions (`accept when <trigger>`).
+
+```sysml
+action def ReceiveScene {
+    in port viewPort;
+
+    action trigger1 accept scene : Scene via viewPort;
+    action processScene;
+
+    first trigger1 then processScene;
+}
+```
+
+> **Not yet rendered.**  A future implementation could use the UML activity
+> notation: filled-pentagon for Send, concave-pentagon (signal receipt) for
+> Accept.
+
+**Spec references:** §7.17.7 Send Action Usages, §7.17.8 Accept Action Usages
+(SysML v2.0).
+
+---
+
+## 14. Assignment actions — not yet rendered
+
+`AssignmentActionUsage` (`assign x := value`) sets a feature value.  Assignment
+steps appear inside loop bodies, if-branches, and entry/exit actions.
+
+```sysml
+action def Counter {
+    attribute counter : Integer;
+    attribute limit   : Integer;
+
+    action init      { assign counter := 0; }
+    action increment { assign counter := counter + 1; }
+    action check;
+    action done;
+
+    first init      then check;
+    first check if counter < limit     then increment;
+    first check if not counter < limit then done;
+    first increment then check;
+}
+```
+
+The `assign` steps inside the composite bodies are parsed but not displayed
+as individual nodes — only the outer named steps (`init`, `increment`, `check`,
+`done`) appear in the diagram.
+
+> **Not yet rendered.**  Assignment steps could appear as small tagged boxes
+> (`«assign»`) or as inline annotations on composite action nodes.
+
+**Spec reference:** §7.17.9 Assignment Action Usages (SysML v2.0).
+
+---
+
+## 15. Terminate actions — not yet rendered
+
+A `terminate` action (§7.17.10) stops the enclosing behavior.  It is
+referenced via `then terminate;` in a succession.
+
+```sysml
+action def EmergencyShutdown {
+    attribute emergency : Boolean;
+
+    action monitor;
+    action safeShutdown;
+
+    first monitor    if emergency     then safeShutdown;
+    first monitor    if not emergency then monitor;      // self-loop
+    first safeShutdown then terminate;
+}
+```
+
+The `then terminate;` currently produces no visible terminal node in the
+diagram — the preceding step shows no outgoing arrow.  A future enhancement
+would render it as a UML activity flow-final node (filled circle with outer
+ring).
+
+**Spec reference:** §7.17.10 Terminate Action Usages (SysML v2.0).
+
+---
+
+## 16. Inline IfActionUsage — not yet rendered
+
+Beyond the guarded succession pattern (§3), SysML v2 supports inline
+structured `if-then-else` action bodies within a step (§7.17.11):
+
+```sysml
+action def ThresholdCheck {
+    attribute a : Real;
+    attribute b : Real;
+
+    action classify {
+        // Structured if inside a composite step — not unrolled in the diagram.
+        if a >= 20 {
+            assign b := 100;
+        } else {
+            assign b := 0;
+        }
+    }
+
+    action report;
+
+    first classify then report;
+}
+```
+
+**Distinction from guarded successions:** This is a self-contained
+`IfActionUsage` *inside* an action body, not a `TransitionUsage` connecting
+two named steps.  The outer `classify` box is shown; its internal if-else
+structure is currently not expanded.
+
+**Spec reference:** §7.17.11 If Action Usages (SysML v2.0).
+
+---
+
+## 17. Rendering support summary
+
+| Feature | Rendered | Spec clause |
+|---|---|---|
+| `action` steps as boxes | ✓ | §7.17.2 |
+| `first X then Y` (SuccessionAsUsage) | ✓ | §7.17.4 |
+| Guarded flow (`first X if guard then Y`) | ✓ | §7.17.5 |
+| `fork` / `join` nodes | ✓ | §7.17.3 |
+| `decide` / `merge` nodes | ✓ | §7.17.3 |
+| `perform action` (PerformActionUsage) | ✓ | §7.17.6 |
+| Port pins (`in` / `out` features on steps) | ✓ | §7.6.4, §7.16.2 |
+| Item flow arrows (`flow from A.p to B.q`) | ✓ | §7.16 |
+| Cross-file port inheritance | ✓ | §7.5 |
+| `action def` and `part def` containers | ✓ | §7.17.2, §7.11 |
+| Entry / terminal pseudo-state circles | ✓ | — |
+| Nested action body | Shown as single opaque box | §7.17.2 |
+| LoopActionUsage (`loop` / `while` / `for`) | Not yet rendered | §7.17.12 |
+| SendActionUsage (`send X via port`) | Not yet rendered | §7.17.7 |
+| AcceptActionUsage (`accept X via port`) | Not yet rendered | §7.17.8 |
+| AssignmentActionUsage (`assign x := v`) | Not yet rendered | §7.17.9 |
+| TerminateActionUsage (`then terminate`) | Not yet rendered | §7.17.10 |
+| Inline IfActionUsage (structured if body) | Not yet rendered | §7.17.11 |
+| Nested sub-action drill-down | Not yet implemented | §7.17.2 |
+
+---
+
+## 18. Common modelling mistakes
 
 | Mistake | Symptom | Fix |
 |---|---|---|
@@ -315,7 +606,7 @@ inspect.  Only top-level `action def` elements appear in the list.
 
 ---
 
-## 11. Specification references
+## 19. Specification references
 
 Both documents are freely available from the OMG website and the
 [SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
@@ -330,7 +621,12 @@ Both documents are freely available from the OMG website and the
 | Succession Shorthands (`first X then Y`) | §7.17.4 |
 | Conditional Successions (`first X if guard then Y`) | §7.17.5 |
 | Perform Action Usages (`perform action`) | §7.17.6 |
-| If Action Usages (`if … else …`) | §7.17.11 |
+| Send Action Usages (`send X via port`) | §7.17.7 |
+| Accept Action Usages (`accept X via port`) | §7.17.8 |
+| Assignment Action Usages (`assign x := v`) | §7.17.9 |
+| Terminate Action Usages (`then terminate`) | §7.17.10 |
+| If Action Usages (structured inline `if … else …`) | §7.17.11 |
+| Loop Action Usages (`loop` / `while` / `for`) | §7.17.12 |
 | Flows and Messages — `flow from A.p to B.q` between actions | §7.16 |
 | Flow Definitions and Usages (port-to-port item flows) | §7.16.2 |
 | Reference Usages — bare `in`/`out` port syntax | §7.6.4 |
@@ -348,7 +644,7 @@ Both documents are freely available from the OMG website and the
 
 ---
 
-## 12. Checklist before opening in the plugin
+## 20. Checklist before opening in the plugin
 
 - [ ] The `action def` contains at least two `action` steps.
 - [ ] Each step is connected by at least one `first … then …` succession.

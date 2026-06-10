@@ -176,7 +176,150 @@ part def Vehicle {
 
 ---
 
-## 8. Filtering elements
+## 8. EnumerationDefinition — not yet shown as a distinct node type
+
+`EnumerationDefinition` (`enum def`) is a classifier that lists a fixed set of
+named values (enum literals).  It is parsed and included in the model tree but
+currently rendered with the same blue `«part def»` styling rather than a
+distinct `«enum def»` box.
+
+```sysml
+package Signals {
+
+    enum def TrafficColor {
+        enum Red;
+        enum Yellow;
+        enum Green;
+    }
+
+    attribute def SignalState {
+        attribute color : TrafficColor;
+    }
+}
+```
+
+> **Not yet distinct.**  A future rendering would show `«enum def»` nodes in
+> a separate color (e.g. yellow-green) with enum literals listed inside the
+> box, matching standard UML enumeration notation.
+
+**Spec reference:** §7.8 Enumerations (SysML v2.0).
+
+---
+
+## 9. ConstraintDefinition — not yet shown
+
+`ConstraintDefinition` (`constraint def`) declares a Boolean constraint that
+can be attached to parts, attributes, or the system boundary.  It is not yet
+rendered in the General view.
+
+```sysml
+package Physics {
+
+    attribute def Mass { attribute value : Real; }
+    attribute def Force { attribute value : Real; }
+    attribute def Acceleration { attribute value : Real; }
+
+    constraint def NewtonsSecondLaw {
+        attribute m : Mass;
+        attribute a : Acceleration;
+        attribute f : Force;
+
+        // f = m * a
+        f.value == m.value * a.value
+    }
+}
+```
+
+> **Not yet rendered.**  Constraint definitions could appear as a distinct
+> `«constraint def»` node (e.g. in pink/rose) with a text body showing the
+> constraint expression.
+
+**Spec reference:** §7.20 Constraints (SysML v2.0).
+
+---
+
+## 10. BindingConnectorAsUsage — not yet shown as an edge
+
+`bind a = b` creates a `BindingConnectorAsUsage` that equates two feature
+values.  In the General view, this would appear as a solid line with an
+equality marker between the bound features.
+
+```sysml
+part def Vehicle {
+    part fuelTank : FuelTank;
+    part engine   : Engine;
+
+    bind fuelTank.fuelFlowOut = engine.fuelIn;
+}
+```
+
+> **Not yet rendered.**  A future implementation would add a `≡` (binding
+> equals) edge in the General view between the two equated features, similar
+> to how `connect` edges already appear.
+
+**Spec reference:** §7.13.3 Binding Connectors as Usages (SysML v2.0).
+
+---
+
+## 11. VariationUsage / variant modeling — not yet shown
+
+SysML v2 supports product-line variation modeling through `variation` and
+`variant` keywords.  A `variation` feature owns mutually exclusive `variant`
+usages; only one variant applies in each configuration.
+
+```sysml
+part def Engine {
+    variation part powerUnit {
+        variant part gasolineEngine : GasolineEngine;
+        variant part electricMotor  : ElectricMotor;
+        variant part hybridPower    : HybridSystem;
+    }
+}
+```
+
+> **Not yet rendered.**  Variation/variant nodes and their mutual-exclusion
+> relationships are not currently shown in the General view.
+
+**Spec reference:** §7.6.7 Variation and Variant Usages (SysML v2.0).
+
+---
+
+## 12. Rendering support summary
+
+| Element | Rendered | Visual style | Spec clause |
+|---|---|---|---|
+| `PartDefinition` | ✓ | Blue `«part def»` | §7.11 |
+| `InterfaceDefinition` / `ConnectionDefinition` | ✓ | Violet `«interface def»` | §7.14 |
+| `PortDefinition` | ✓ | Indigo `«port def»` | §7.12 |
+| `ItemDefinition` | ✓ | Amber `«item def»` | §7.10 |
+| `AttributeDefinition` | ✓ | Cyan `«attribute def»` | §7.7 |
+| `ActionDefinition` / `BehaviorDefinition` / `StateDefinition` | ✓ | Lime-green `«action def»` | §7.17, §7.18 |
+| `RequirementDefinition` | ✓ | Blue `«part def»` | §7.21 |
+| `AllocationDefinition` | ✓ | Blue `«part def»` | §7.15 |
+| `UseCaseDefinition` | ✓ | Blue `«part def»` | §7.25 |
+| `ViewDefinition` / `ViewpointDefinition` | ✓ | Blue `«part def»` | §7.26 |
+| `MetadataDefinition` | ✓ | Blue `«part def»` | §7.27 |
+| `PartUsage` | ✓ | Green `«part»` | §7.11 |
+| `ItemUsage` | ✓ | Amber `«item»` | §7.10 |
+| `OccurrenceDefinition` (structural) | ✓ | Green `«occurrence def»` | §7.9 |
+| `OccurrenceDefinition` (no body) | ✓ | Orange `«scenario»` | §7.9 |
+| FeatureTyping arrow (gray) | ✓ | `: TypeName` | §7.6 |
+| Specialization arrow (indigo) | ✓ | `:> SuperName` | §7.6 |
+| Subsetting arrow (violet) | ✓ | `:>> OtherUsage` | §7.6 |
+| ConnectionUsage arrow (green) | ✓ | `connect` | §7.13 |
+| FlowUsage / FlowConnectionUsage arrow (blue/teal) | ✓ | `flow` | §7.16 |
+| SuccessionItemFlow arrow (light-blue dashed) | ✓ | `succession flow` | §7.16 |
+| Message arrow (teal dashed) | ✓ | `message` | §7.16 |
+| Composite membership (filled diamond) | ✓ | `part` inside def | — |
+| Non-composite reference (open diamond) | ✓ | `ref part` | — |
+| `EnumerationDefinition` (`enum def`) | Not distinct | Rendered as `«part def»` | §7.8 |
+| `ConstraintDefinition` (`constraint def`) | Not yet shown | — | §7.20 |
+| `BindingConnectorAsUsage` (`bind a = b`) | Not yet shown | — | §7.13.3 |
+| VariationUsage / variant | Not yet shown | — | §7.6.7 |
+
+---
+
+## 13. Filtering elements
 
 The **— Show all elements —** dropdown at the top-left lets you hide element
 types you are not interested in (e.g. show only `part def` nodes to focus on
@@ -184,7 +327,7 @@ the structural decomposition).
 
 ---
 
-## 9. Cross-file models
+## 14. Cross-file models
 
 When a workspace folder is open in VS Code the plugin performs a two-phase
 parse.  After Phase 2 completes, type edges that cross file boundaries (e.g. a
@@ -193,7 +336,7 @@ normal `FeatureTyping` arrows.
 
 ---
 
-## 10. Specification references
+## 15. Specification references
 
 Both documents are freely available from the OMG website and the
 [SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
@@ -205,19 +348,23 @@ Both documents are freely available from the OMG website and the
 | Namespaces, packages, and imports | §7.5 |
 | Definition and Usage (general pattern, FeatureTyping) | §7.6 |
 | Reference Usages (bare `in`/`out` on a feature) | §7.6.4 |
+| Variation and Variant Usages | §7.6.7 |
 | Attributes (`attribute def`, `attribute`) | §7.7 |
+| Enumerations (`enum def`) | §7.8 |
 | Occurrences (`occurrence def`, `event occurrence`) | §7.9 |
 | Items (`item def`, `item`) | §7.10 |
 | Parts (`part def`, `part`) | §7.11 |
 | Ports (`port def`, `port`, conjugated ports) | §7.12 |
 | Connections (`connect`, `ConnectionUsage`, `SuccessionAsUsage`) | §7.13 |
+| Binding Connectors as Usages (`bind a = b`) | §7.13.3 |
 | Interfaces (`interface def`) | §7.14 |
 | Allocations (`allocation def`) | §7.15 |
 | Flows and Messages (`flow`, `flow connection`, `message`) | §7.16 |
 | States (`state def`) | §7.18 |
+| Constraints (`constraint def`) | §7.20 |
 | Requirements (`requirement def`) | §7.21 |
 | Use Cases (`use case def`) | §7.25 |
-| Views and Viewpoints (`view def`) | §7.26 |
+| Views and Viewpoints (`view def`, `viewpoint def`) | §7.26 |
 | Metadata (`metadata def`) | §7.27 |
 
 **KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
@@ -234,7 +381,7 @@ Both documents are freely available from the OMG website and the
 
 ---
 
-## 11. Checklist before opening in the plugin
+## 16. Checklist before opening in the plugin
 
 - [ ] The model contains at least one definition element (`part def`,
       `port def`, `item def`, etc.).
