@@ -1,40 +1,82 @@
 # General View — Element Type Hierarchy
 
 The **General** tab renders all named element definitions in the model and the
-typing relationships between them.  It gives a bird's-eye, class-diagram-style
+relationships between them: typing, composition, specialization, subsetting,
+connections, and item flows.  It gives a bird's-eye, class-diagram-style
 overview of what a package or file defines and how those definitions relate.
 
 ---
 
 ## 1. SysML v2 elements shown
 
+### Definitions (center column)
+
 | Element | Keyword | Visual style |
 |---|---|---|
-| `PartDefinition` | `part def` | Blue box labelled `«part def»` |
-| `PortDefinition` | `port def` | Violet box labelled `«port def»` |
-| `ItemDefinition` | `item def` | Gold box labelled `«item def»` |
-| `AttributeDefinition` | `attribute def` | Shown as attribute node |
-| `ActionDefinition` | `action def` | Blue box labelled `«action def»` |
-| `StateDefinition` | `state def` | Blue box labelled `«state def»` |
-| `OccurrenceDefinition` | `occurrence def` | Blue box |
-| `PartUsage` (inside an assembly) | `part` | Green box labelled `«part»` |
+| `PartDefinition` | `part def` | Blue box — `«part def»` |
+| `InterfaceDefinition` | `interface def` | Violet box — `«interface def»` |
+| `ConnectionDefinition` | `connection def` | Violet box — `«interface def»` |
+| `PortDefinition` | `port def` | Indigo box — `«port def»` |
+| `ItemDefinition` | `item def` | Amber/gold box — `«item def»` |
+| `AttributeDefinition` | `attribute def` | Cyan box — `«attribute def»` |
+| `ActionDefinition` | `action def` | Lime-green box — `«action def»` |
+| `BehaviorDefinition` | `behavior def` | Lime-green box — `«action def»` |
+| `StateDefinition` | `state def` | Lime-green box — `«action def»` |
+| `RequirementDefinition` | `requirement def` | Blue box — `«part def»` |
+| `AllocationDefinition` | `allocation def` | Blue box — `«part def»` |
+| `UseCaseDefinition` | `use case def` | Blue box — `«part def»` |
+| `ViewDefinition` | `view def` | Blue box — `«part def»` |
+| `MetadataDefinition` | `metadata def` | Blue box — `«part def»` |
 
-Arrow notation (shown in the NOTATION legend):
+### Usages and instances (left / right columns)
 
-| Arrow | Meaning |
-|---|---|
-| Gray `→` | `FeatureTyping` — a usage is typed by a definition |
-| Green `→` | `ConnectionUsage` — a structural connection |
-| Gray `◆→` | Composite feature membership |
-| Gray `◇→` | Non-composite feature membership |
+| Element | Keyword | Visual style |
+|---|---|---|
+| `PortDefinition` | `port def` | Left column — indigo |
+| `InterfaceDefinition` | `interface def` | Left column — violet |
+| `PartUsage` (inside assembly) | `part` | Right column — green `«part»` |
+| `ItemUsage` (inline) | `item` | Right column — amber `«item»` |
+| `OccurrenceDefinition` (structural) | `occurrence def` | Right column — green `«occurrence def»` |
+| `OccurrenceDefinition` (no body) | `occurrence def` | Right column — orange `«scenario»` |
 
 ---
 
-## 2. Minimal working example
+## 2. Relationship arrows
 
-The General view renders any package that contains definition elements.  This
-example uses only definitions (no `connect` statements) so the diagram stays
-clean — connection arrows only appear when `connect` statements are present.
+| Arrow | Color | Meaning | SysML keyword |
+|---|---|---|---|
+| Solid line + hollow triangle | Gray | `FeatureTyping` — usage typed by a definition | `: TypeName` |
+| Solid line + hollow triangle | Indigo | `Specialization` — sub-definition inherits from super | `:> SuperName` |
+| Solid line + hollow triangle | Violet | `Subsetting` — usage subsets another usage | `:>> OtherUsage` |
+| Solid line + open arrowhead | Green | `ConnectionUsage` — structural wiring | `connect A::p to B::q` |
+| Directed solid arrow | Blue/teal | `FlowUsage` / `FlowConnectionUsage` — directed item flow | `flow` / `flow connection` |
+| Directed dashed arrow | Light-blue | `SuccessionItemFlow` — succession-driven item transfer | `succession flow` |
+| Directed arrow + message label | Teal | Behavioral message (participant → participant) | `message M from A to B` |
+| Filled diamond + solid line | Gray | Composite feature membership — part owned by container | `part` inside a def body |
+| Open diamond + solid line | Gray | Non-composite membership — referenced, not owned | `ref part` |
+
+The NOTATION legend in the bottom-right corner of the diagram explains each arrow
+type with a mini-sample.
+
+---
+
+## 3. Three-column layout
+
+The General view arranges nodes in three columns automatically:
+
+| Column | Contents |
+|---|---|
+| Left | `PortDefinition` and `InterfaceDefinition` nodes |
+| Centre | All definition types (`part def`, `item def`, `attribute def`, `action def`, …) |
+| Right | Part usages, item usages, occurrence defs, and scenario nodes |
+
+Typing arrows flow left-to-right (usage → definition).  Specialization and
+subsetting arrows flow within the centre column.  Connection / flow arrows are
+routed by ELK between whichever nodes they link.
+
+---
+
+## 4. Minimal working example
 
 ```sysml
 package VehicleSystem {
@@ -76,7 +118,7 @@ package VehicleSystem {
 
 ![General view — VehicleSystem package](img/general-overview.png)
 
-- Left column: port definitions (violet), with arrows to the part definitions
+- Left column: port definitions (indigo), with arrows to the part definitions
   that own a port of that type.
 - Centre column: part definitions (blue) and item definitions (gold).
 - Right column: part usages (green) — the concrete instances declared inside
@@ -85,7 +127,56 @@ package VehicleSystem {
 
 ---
 
-## 3. Filtering elements
+## 5. Specialization (`part def A :> B`)
+
+When one definition specializes another with `:>`, the view draws an indigo
+hollow-triangle arrow from the sub-definition to the super-definition.
+
+```sysml
+part def Sensor;
+part def TemperatureSensor :> Sensor;
+part def PressureSensor    :> Sensor;
+```
+
+Both `TemperatureSensor` and `PressureSensor` show an indigo arrow pointing to
+`Sensor`.
+
+---
+
+## 6. Subsetting (`part A :>> B`)
+
+When a usage subsets another usage with `:>>`, the view draws a violet
+hollow-triangle arrow from the subsetting usage to the subsetted usage.
+
+```sysml
+part def System {
+    part primary   : Sensor;
+    part redundant : Sensor :>> primary;
+}
+```
+
+`redundant` shows a violet arrow pointing to `primary`.
+
+---
+
+## 7. Connections and item flows
+
+`connect`, `flow`, and `flow connection` statements appear as directed arrows
+between the port usages they link.  The arrow label shows the flow name and
+payload type when declared.
+
+```sysml
+part def Vehicle {
+    part engine       : Engine;
+    part transmission : Transmission;
+
+    connect engine::drive to transmission::input;
+}
+```
+
+---
+
+## 8. Filtering elements
 
 The **— Show all elements —** dropdown at the top-left lets you hide element
 types you are not interested in (e.g. show only `part def` nodes to focus on
@@ -93,7 +184,7 @@ the structural decomposition).
 
 ---
 
-## 4. Cross-file models
+## 9. Cross-file models
 
 When a workspace folder is open in VS Code the plugin performs a two-phase
 parse.  After Phase 2 completes, type edges that cross file boundaries (e.g. a
@@ -102,9 +193,11 @@ normal `FeatureTyping` arrows.
 
 ---
 
-## 5. Checklist before opening in the plugin
+## 10. Checklist before opening in the plugin
 
 - [ ] The model contains at least one definition element (`part def`,
       `port def`, `item def`, etc.).
 - [ ] The file (or its imports) is inside the open VS Code workspace folder.
 - [ ] The **General** tab is selected in the visualizer panel.
+- [ ] For specialization / subsetting arrows, use the `:>` / `:>>` keywords
+      inside the same package so both ends are visible in the same graph.
