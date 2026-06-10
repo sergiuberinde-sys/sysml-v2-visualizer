@@ -11,7 +11,8 @@ item-flow arrows connecting them.
 
 | Element | Keyword | What it models |
 |---|---|---|
-| `ActionDefinition` | `action def` | The behavior container |
+| `ActionDefinition` | `action def` | The behavior container (full support: ports, item flows, control nodes) |
+| `PartDefinition` | `part def` | Alternative container — shows `action` usages and successions only |
 | `ActionUsage` | `action` | A named step |
 | `PerformActionUsage` | `perform action` | Invoke another action definition |
 | `SuccessionAsUsage` | `first X then Y` | Unconditional flow |
@@ -158,7 +159,37 @@ action def ConditionalFlow {
 
 ---
 
-## 6. Port pins and item flows
+## 6. Action usages inside a `part def`
+
+The Actions view is not limited to `action def` containers.  When a `part def`
+directly owns `action` usages (typed or inline), those steps and their
+successions are also rendered — the `part def` appears in the selector dropdown
+labelled `"partDefName (part def)"`.
+
+```sysml
+part def Controller {
+
+    // Typed action usage — step typed by an external action def.
+    action init    : Initialise;
+    action process : ProcessData;
+    action shutdown : Shutdown;
+
+    first init    then process;
+    first process then shutdown;
+}
+```
+
+- Each `action` usage becomes an `«action»` box; the type name (`Initialise`,
+  `ProcessData`, …) is shown below the step name.
+- Succession arrows are drawn exactly as in the `action def` case.
+
+**Limitations compared to `action def` containers:**  Port pins and item flows
+(`flow from A.p to B.q`) are only rendered when the container is an `action def`.
+A `part def` container shows steps and control flow only.
+
+---
+
+## 7. Port pins and item flows
 
 When action steps exchange data, you can declare ports on each step and connect
 them with `flow` statements.  The Actions view renders these as small coloured
@@ -228,7 +259,7 @@ for your model.
 
 ---
 
-## 7. Cross-file port inheritance
+## 8. Cross-file port inheritance
 
 If an action step is typed by an `action def` declared in another file, the
 plugin automatically inherits that definition's ports onto the step.
@@ -263,7 +294,7 @@ folder and Phase 2 resolution handles the rest automatically.
 
 ---
 
-## 8. Multiple behaviors in one file
+## 9. Multiple behaviors in one file
 
 A file can contain many `action def` blocks.  The Actions view shows a
 selector dropdown above the diagram; choose the definition you want to
@@ -271,7 +302,7 @@ inspect.  Only top-level `action def` elements appear in the list.
 
 ---
 
-## 9. Common modelling mistakes
+## 10. Common modelling mistakes
 
 | Mistake | Symptom | Fix |
 |---|---|---|
@@ -284,7 +315,7 @@ inspect.  Only top-level `action def` elements appear in the list.
 
 ---
 
-## 10. Specification references
+## 11. Specification references
 
 Both documents are freely available from the OMG website and the
 [SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
@@ -303,7 +334,7 @@ Both documents are freely available from the OMG website and the
 | Flows and Messages — `flow from A.p to B.q` between actions | §7.16 |
 | Flow Definitions and Usages (port-to-port item flows) | §7.16.2 |
 | Reference Usages — bare `in`/`out` port syntax | §7.6.4 |
-| Parts (`part`) — for typed action steps | §7.11 |
+| Parts (`part def` as container, `part` for typed steps) | §7.11 |
 | Namespaces/imports — `private import` for cross-file types | §7.5 |
 
 **KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
@@ -317,7 +348,7 @@ Both documents are freely available from the OMG website and the
 
 ---
 
-## 11. Checklist before opening in the plugin
+## 12. Checklist before opening in the plugin
 
 - [ ] The `action def` contains at least two `action` steps.
 - [ ] Each step is connected by at least one `first … then …` succession.
