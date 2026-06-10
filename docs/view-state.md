@@ -21,8 +21,10 @@ transition arrows.
 | `StateDefinition` | `state def` | The state machine container |
 | `StateUsage` | `state` | An individual state |
 | Initial transition | `entry; then <State>;` | Marks the initial state |
-| `TransitionUsage` | `transition first X then Y;` | An unconditional transition |
-| Guarded transition | `transition first X if <guard> then Y;` | Transition with a guard expression |
+| `SuccessionAsUsage` | `first X then Y;` | Unconditional transition |
+| `TransitionUsage` (guarded) | `transition first X if <guard> then Y;` | Transition with a Boolean guard label |
+| `TransitionUsage` (triggered) | `transition first X accept when <trigger> then Y;` | Transition with an event trigger label |
+| Entry/do/exit hooks | `entry action` / `do action` / `exit action` | Behavior hooks on a state (parsed; not yet rendered visually) |
 
 ---
 
@@ -85,15 +87,30 @@ state def ConnectionFSM {
 }
 ```
 
-- `accept when <trigger>` attaches a trigger to the transition, which the
-  plugin renders as the edge label.
-- Trigger names appear above the transition arrow.
+- `accept when <trigger>` attaches an event trigger to the transition; the
+  plugin renders the trigger name as the edge label.
+- `if <guard>` attaches a Boolean condition; the plugin renders the attribute
+  name as the edge label.
 - Multiple outgoing transitions from the same state are drawn as separate
   edges.
 
 ---
 
-## 4. Entry, do, and exit actions on a state
+## 4. Layout: forward vs. backward transitions
+
+The view assigns each state a vertical level based on the succession graph and
+lays them out top-to-bottom:
+
+- **Forward transitions** (source level < target level) are drawn straight
+  downward — bottom of source box to top of target box.
+- **Backward transitions** (loop-backs, source level ≥ target level) are
+  routed to the left, exiting and entering on the left side of each box.
+
+This keeps the diagram clean even for machines with cycle transitions.
+
+---
+
+## 5. Entry, do, and exit actions on a state
 
 ```sysml
 state def Device {
@@ -111,12 +128,13 @@ state def Device {
 
 - `entry action`, `do action`, and `exit action` declare behavior hooks on
   a state.
-- These are recognised by the SysML v2 parser but may be rendered as
-  annotations inside the state box depending on the plugin version.
+- These are parsed and appear in the containment graph but are **not yet
+  rendered** as annotations inside the state box.  The state name is still
+  shown correctly; only the hook labels are absent.
 
 ---
 
-## 5. Multiple state machines in one file
+## 6. Multiple state machines in one file
 
 A file can contain many `state def` blocks.  Each one appears under
 *STATE MACHINES* in the Model Explorer.  Click the name to open it in the
@@ -124,15 +142,17 @@ State view.
 
 ---
 
-## 6. Current rendering support
+## 7. Current rendering support
 
 | Feature | Supported |
 |---|---|
 | State boxes with name | ✓ |
 | Initial pseudo-state (`entry; then X`) | ✓ |
-| Transition edges with labels | ✓ (via transition trigger label) |
-| Guard expressions on transitions | Partial — guard label may not appear |
-| `entry`/`do`/`exit` action annotations | Not yet rendered |
+| Transition edges with trigger / guard labels | ✓ |
+| Forward vs. backward (loop-back) layout | ✓ |
+| `entry`/`do`/`exit` action annotations inside state box | Not yet rendered |
+| Concurrent (parallel) regions | Not yet rendered |
+| Nested sub-states | Not yet rendered |
 
 Transition rendering requires that the Java parser produces `TransitionUsage`
 nodes in the model tree.  If a transition does not appear, verify that the
@@ -141,17 +161,18 @@ folder is open so Phase 2 completes.
 
 ---
 
-## 7. Common modelling mistakes
+## 8. Common modelling mistakes
 
 | Mistake | Symptom | Fix |
 |---|---|---|
 | `state def` missing `entry; then X;` | No initial state indicator | Add `entry; then <FirstStateName>;` |
 | `transition first X then Y` targeting an unknown state name | Edge not drawn | Ensure both state names are declared with `state` inside the same `state def` |
 | Very large state machine (20+ states) | Layout overlaps | Use a scoped sub-state or break into multiple smaller `state def` blocks |
+| Using `first X then Y` (succession) instead of `transition first X then Y` | Edge rendered without label | Use `transition first … then …` to get guard/trigger labelling |
 
 ---
 
-## 8. Checklist before opening in the plugin
+## 9. Checklist before opening in the plugin
 
 - [ ] The `state def` contains at least two `state` declarations.
 - [ ] At least one `transition first X then Y` statement is present.
