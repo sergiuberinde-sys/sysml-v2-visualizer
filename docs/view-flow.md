@@ -244,7 +244,35 @@ primary list; leaf-level component definitions appear in a separate group.
 
 ---
 
-## 12. Checklist before opening in the plugin
+## 12. Specification references
+
+Both documents are freely available from the OMG website and the
+[SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
+
+**SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
+
+| Topic | Clause |
+|---|---|
+| Parts (`part def`, `part`) | §7.11 |
+| Ports (`port def`, `port`, direction, conjugated ports) | §7.12 |
+| Connections (`connect`, `ConnectionUsage`) | §7.13 |
+| Successions as Usages (`first X then Y` inside an assembly) | §7.13.5 |
+| Interfaces (`interface def`) | §7.14 |
+| Flows and Messages (`flow`, `flow connection`, `succession flow`, `message`) | §7.16 |
+| Flow Definitions and Usages (semantics of directed flows) | §7.16.2 |
+| Items (`item def`) | §7.10 |
+
+**KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
+
+| Topic | Clause |
+|---|---|
+| Connectors (structural wiring) | §7.4.6 |
+| Succession Declaration (ordering) | §7.4.6.4 |
+| Interactions and Flows (payload semantics) | §8.3.4.9 |
+
+---
+
+## 13. Checklist before opening in the plugin
 
 - [ ] Each `part def` that models an assembly contains at least two `part`
       usages and at least one `connect` or `flow` statement.

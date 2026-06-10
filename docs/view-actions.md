@@ -284,7 +284,40 @@ inspect.  Only top-level `action def` elements appear in the list.
 
 ---
 
-## 10. Checklist before opening in the plugin
+## 10. Specification references
+
+Both documents are freely available from the OMG website and the
+[SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
+
+**SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
+
+| Topic | Clause |
+|---|---|
+| Actions overview and execution semantics | §7.17 |
+| Action Definitions and Usages (`action def`, `action`) | §7.17.2 |
+| Control Nodes (`fork`, `join`, `decide`, `merge`) | §7.17.3 |
+| Succession Shorthands (`first X then Y`) | §7.17.4 |
+| Conditional Successions (`first X if guard then Y`) | §7.17.5 |
+| Perform Action Usages (`perform action`) | §7.17.6 |
+| If Action Usages (`if … else …`) | §7.17.11 |
+| Flows and Messages — `flow from A.p to B.q` between actions | §7.16 |
+| Flow Definitions and Usages (port-to-port item flows) | §7.16.2 |
+| Reference Usages — bare `in`/`out` port syntax | §7.6.4 |
+| Parts (`part`) — for typed action steps | §7.11 |
+| Namespaces/imports — `private import` for cross-file types | §7.5 |
+
+**KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
+
+| Topic | Clause |
+|---|---|
+| Behaviors and Steps (action execution model) | §7.4.7 |
+| Succession Declaration (ordering between steps) | §7.4.6.4 |
+| Feature Typing (`: TypeName` on a step or port) | §8.2.4.3.2 |
+| Subsetting / Redefinition (`:>>`) on ports | §8.2.4.3.3, §8.2.4.3.4 |
+
+---
+
+## 11. Checklist before opening in the plugin
 
 - [ ] The `action def` contains at least two `action` steps.
 - [ ] Each step is connected by at least one `first … then …` succession.

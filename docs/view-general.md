@@ -193,7 +193,48 @@ normal `FeatureTyping` arrows.
 
 ---
 
-## 10. Checklist before opening in the plugin
+## 10. Specification references
+
+Both documents are freely available from the OMG website and the
+[SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
+
+**SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
+
+| Topic | Clause |
+|---|---|
+| Namespaces, packages, and imports | §7.5 |
+| Definition and Usage (general pattern, FeatureTyping) | §7.6 |
+| Reference Usages (bare `in`/`out` on a feature) | §7.6.4 |
+| Attributes (`attribute def`, `attribute`) | §7.7 |
+| Occurrences (`occurrence def`, `event occurrence`) | §7.9 |
+| Items (`item def`, `item`) | §7.10 |
+| Parts (`part def`, `part`) | §7.11 |
+| Ports (`port def`, `port`, conjugated ports) | §7.12 |
+| Connections (`connect`, `ConnectionUsage`, `SuccessionAsUsage`) | §7.13 |
+| Interfaces (`interface def`) | §7.14 |
+| Allocations (`allocation def`) | §7.15 |
+| Flows and Messages (`flow`, `flow connection`, `message`) | §7.16 |
+| States (`state def`) | §7.18 |
+| Requirements (`requirement def`) | §7.21 |
+| Use Cases (`use case def`) | §7.25 |
+| Views and Viewpoints (`view def`) | §7.26 |
+| Metadata (`metadata def`) | §7.27 |
+
+**KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
+
+| Topic | Clause |
+|---|---|
+| Specialization (`:>`) — concrete syntax | §8.2.4.1.2 |
+| Subclassification between classifiers | §8.2.4.2.2 |
+| Feature Typing (`: TypeName`) | §8.2.4.3.2 |
+| Subsetting (`:>>`) | §8.2.4.3.3 |
+| Redefinition | §8.2.4.3.4 |
+| Connectors and Successions | §7.4.6 |
+| Behaviors and Steps | §7.4.7 |
+
+---
+
+## 11. Checklist before opening in the plugin
 
 - [ ] The model contains at least one definition element (`part def`,
       `port def`, `item def`, etc.).

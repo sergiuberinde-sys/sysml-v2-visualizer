@@ -189,7 +189,34 @@ cannot be resolved appear with their declared name only.
 
 ---
 
-## 9. Checklist before opening in the plugin
+## 9. Specification references
+
+Both documents are freely available from the OMG website and the
+[SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
+
+**SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
+
+| Topic | Clause |
+|---|---|
+| Occurrences (`occurrence def`) | §7.9 |
+| Event Occurrence Usages (`event occurrence`) | §7.9.5 |
+| Parts as participants (`part def`, `part`) | §7.11 |
+| Flows and Messages — `message` keyword and syntax | §7.16 |
+| Flow Definitions and Usages (including `message` form) | §7.16.2 |
+| Actions as interaction containers (`action def`) | §7.17 |
+| If Action Usages (`if … else …` → `alt` fragment) | §7.17.11 |
+| Conditional Successions (`if guard then`) | §7.17.5 |
+
+**KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
+
+| Topic | Clause |
+|---|---|
+| Interactions (message exchange semantics) | §8.3.4.9 |
+| Behaviors and Steps (action execution model) | §7.4.7 |
+
+---
+
+## 10. Checklist before opening in the plugin
 
 - [ ] Each participant is declared as a `part` usage inside the `action def`.
 - [ ] Each participant type has `event occurrence` members for every

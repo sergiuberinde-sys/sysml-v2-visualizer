@@ -172,7 +172,34 @@ folder is open so Phase 2 completes.
 
 ---
 
-## 9. Checklist before opening in the plugin
+## 9. Specification references
+
+Both documents are freely available from the OMG website and the
+[SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
+
+**SysML v2.0** — OMG formal/2026-03-02 · https://www.omg.org/spec/SysML/2.0/
+
+| Topic | Clause |
+|---|---|
+| States overview and semantics | §7.18 |
+| State Definitions and Usages (`state def`, `state`) | §7.18.2 |
+| Transition Usages (`transition first X … then Y`) | §7.18.3 |
+| Exhibit State Usages (`exhibit state`) | §7.18.4 |
+| Actions — used as entry/do/exit hooks on states | §7.17 |
+| Conditional Successions — guard expressions on transitions | §7.17.5 |
+| Accept Action Usages — `accept when <trigger>` syntax | §7.17.8 |
+
+**KerML v1.0** — OMG formal/2026-03-01 · https://www.omg.org/spec/KerML/1.0/
+
+| Topic | Clause |
+|---|---|
+| Succession Declaration (ordering between steps/states) | §7.4.6.4 |
+| Behaviors and Steps (execution model underlying states) | §7.4.7 |
+| Transition Performances (formal semantics of transitions) | KerML §9.2.10 |
+
+---
+
+## 10. Checklist before opening in the plugin
 
 - [ ] The `state def` contains at least two `state` declarations.
 - [ ] At least one `transition first X then Y` statement is present.
