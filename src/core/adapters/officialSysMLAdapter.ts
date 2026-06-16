@@ -184,7 +184,25 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
       }
       for (const kid of childrenOfContainment.get(nodeId) ?? []) dfs(kid);
     }
+    // DFS fallback for single-step direct references (boundary ports).
+    // These produce a ReferenceSubsetting node instead of FeatureChaining, and it
+    // sits at least two levels deep under EndFeatureMembership (behind an anonymous
+    // Feature/ReferenceUsage wrapper), so a shallow direct-children search misses it.
+    function findRefSubsettingLabel(startId: string): string | null {
+      for (const kid of childrenOfContainment.get(startId) ?? []) {
+        const cn = nodeById.get(kid);
+        if (!cn) continue;
+        if (cn.type === 'ReferenceSubsetting' && cn.label !== cn.type) return cn.label;
+        const found = findRefSubsettingLabel(kid);
+        if (found !== null) return found;
+      }
+      return null;
+    }
     dfs(id);
+    if (names.length === 0) {
+      const name = findRefSubsettingLabel(id);
+      if (name) names.push(name);
+    }
     return names;
   }
 
@@ -336,7 +354,7 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
     return chains;
   }
 
-  function resolveFlowChainBCG(chain: string[]): string | null {
+  function resolveFlowChainBCG(chain: string[], scopeDefId?: string | null): string | null {
     if (chain.length === 0) return null;
     const portName   = chain[chain.length - 1];
     const candidates = portUsagesByName.get(portName);
@@ -361,7 +379,33 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
       }
     }
 
+    // 1-element chain with ambiguous name: prefer the candidate that lives directly
+    // inside the enclosing scope PartDef (boundary-port disambiguation).
+    if (scopeDefId) {
+      for (const portId of candidates) {
+        let id: string | undefined = parentOf.get(portId);
+        while (id !== undefined) {
+          if (id === scopeDefId) return portId;
+          const n = nodeById.get(id);
+          if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
+          id = parentOf.get(id);
+        }
+      }
+    }
+
     return candidates[0];
+  }
+
+  function findEnclosingPartDefBCG(startId: string): string | null {
+    let id = parentOf.get(startId);
+    while (id !== undefined) {
+      const n = nodeById.get(id);
+      if (!n) return null;
+      if (n.type === 'PartDefinition') return id;
+      if (MEMBERSHIP_WRAPPERS.has(n.type)) { id = parentOf.get(id); continue; }
+      return null;
+    }
+    return null;
   }
 
   for (const n of nodes) {
@@ -385,6 +429,35 @@ export function buildContainmentGraph(roots: ModelNode[]): ContainmentGraph {
     seenFlow.add(edgeId);
 
     edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
+  }
+
+  // ── InterfaceUsage connection edges ──────────────────────────────────────────
+  //
+  // 'interface X connect A.portA to B.portB' produces InterfaceUsage nodes with the
+  // same EndFeatureMembership+FeatureChaining structure as ConnectionUsage. Pass 3
+  // only handles 'ConnectionUsage' so these were silently skipped. We use the
+  // full-chain resolver here (same as Pass 5) to disambiguate port names that are
+  // reused across multiple PartDefs, but we omit the label so the wiring view
+  // renders these as undirected structural wires (same as plain 'connect').
+
+  const seenIface = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'InterfaceUsage') continue;
+
+    const chains = collectEndpointFullChains(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    const scopeDefId = findEnclosingPartDefBCG(n.id);
+    const srcId = resolveFlowChainBCG(chainA, scopeDefId);
+    const tgtId = resolveFlowChainBCG(chainB, scopeDefId);
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const edgeId = `iface:${srcId}:${tgtId}`;
+    if (seenIface.has(edgeId)) continue;
+    seenIface.add(edgeId);
+
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'interconnect' });
   }
 
   // ── Pass 6: message-style FlowUsage → 'message' edges ───────────────────────
@@ -993,11 +1066,10 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
         continue;
       }
 
-      // ConnectionUsage: extract chained endpoints before any child traversal.
-      if (gNode.type === 'ConnectionUsage') {
+      // ConnectionUsage / InterfaceUsage: extract chained endpoints.
+      if (gNode.type === 'ConnectionUsage' || gNode.type === 'InterfaceUsage') {
         const conn = extractConnectionEndpoints(id);
         if (conn) body.push(conn);
-        // else: skip silently (endpoints not resolvable via FeatureChaining)
         continue;
       }
 

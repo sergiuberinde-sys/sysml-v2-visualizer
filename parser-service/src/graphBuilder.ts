@@ -22,6 +22,7 @@ export interface GraphNode {
   type: string;
   direction?: string;
   isComposite?: boolean;
+  isConjugated?: boolean;
   startLine?: number;
   endLine?: number;
 }
@@ -30,7 +31,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: 'contains' | 'typedBy' | 'connection' | 'message' | 'specialization' | 'subsetting';
+  type: 'contains' | 'typedBy' | 'connection' | 'message' | 'specialization' | 'subsetting' | 'interconnect' | 'redefinition';
   label?: string;
 }
 
@@ -102,6 +103,24 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     }
   }
 
+  // ConjugatedPortDefinition: synthesized sibling of a PortDefinition.
+  // Map conjDefId → owning PortDefinition id, and conjLabel → conjDefId.
+  const conjToPortDef = new Map<string, string>(); // conjDefId → portDefId
+  const conjDefByName = new Map<string, string>(); // label → conjDefId
+  for (const n of nodes) {
+    if (n.type !== 'ConjugatedPortDefinition') continue;
+    conjDefByName.set(n.label, n.id);
+    // Walk up through wrappers to find the enclosing PortDefinition.
+    let pid = parentOf.get(n.id);
+    while (pid !== undefined) {
+      const pn = nodeById.get(pid);
+      if (!pn) break;
+      if (pn.type === 'PortDefinition') { conjToPortDef.set(n.id, pid); break; }
+      if (!MEMBERSHIP_WRAPPERS.has(pn.type)) break;
+      pid = parentOf.get(pid);
+    }
+  }
+
   function findUsageAncestor(startId: string): string | null {
     let id = parentOf.get(startId);
     while (id !== undefined) {
@@ -121,6 +140,22 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
 
     const usageId = findUsageAncestor(n.id);
     if (!usageId) continue;
+
+    // Check for ConjugatedPortDefinition first (typed by ~SomeDef).
+    const conjId = conjDefByName.get(n.label);
+    if (conjId !== undefined) {
+      const basePortDefId = conjToPortDef.get(conjId);
+      if (basePortDefId) {
+        const edgeId = `${usageId}->typedBy->${basePortDefId}`;
+        if (!seenTypedBy.has(edgeId)) {
+          seenTypedBy.add(edgeId);
+          edges.push({ id: edgeId, source: usageId, target: basePortDefId, type: 'typedBy' });
+        }
+        const usageNode = nodeById.get(usageId);
+        if (usageNode) usageNode.isConjugated = true;
+      }
+      continue;
+    }
 
     const defId = defByName.get(n.label);
     if (!defId) continue;
@@ -202,10 +237,30 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
   // Returns one chain per end (0, 1, or 2 entries).
   function collectEndpointChains(connId: string): string[][] {
     const chains: string[][] = [];
+
+    // DFS fallback for single-step direct references (boundary ports).
+    // These produce a ReferenceSubsetting node instead of FeatureChaining, and it
+    // sits at least two levels deep under EndFeatureMembership (behind an anonymous
+    // Feature/ReferenceUsage wrapper), so a shallow direct-children search misses it.
+    function findRefSubsettingLabel(startId: string): string | null {
+      for (const cid of childrenOf.get(startId) ?? []) {
+        const cn = nodeById.get(cid);
+        if (!cn) continue;
+        if (cn.type === 'ReferenceSubsetting' && cn.label !== cn.type) return cn.label;
+        const found = findRefSubsettingLabel(cid);
+        if (found !== null) return found;
+      }
+      return null;
+    }
+
     for (const kid of childrenOf.get(connId) ?? []) {
       const n = nodeById.get(kid);
       if (!n || n.type !== 'EndFeatureMembership') continue;
-      const chain = collectFeatureChainingNames(kid);
+      let chain = collectFeatureChainingNames(kid);
+      if (chain.length === 0) {
+        const name = findRefSubsettingLabel(kid);
+        if (name) chain = [name];
+      }
       if (chain.length > 0) chains.push(chain);
     }
     return chains;
@@ -313,7 +368,9 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
 
   // Type-aware chain resolution: disambiguates same-named ports across PartDefs
   // by following PartUsage → typedBy → PartDef → PortUsage ancestry.
-  function resolveFlowChain(chain: string[]): string | null {
+  // scopeDefId: when provided, 1-element chains prefer the candidate that is a
+  // direct semantic child of that PartDef (boundary-port disambiguation).
+  function resolveFlowChain(chain: string[], scopeDefId?: string | null): string | null {
     if (chain.length === 0) return null;
     const portName = chain[chain.length - 1];
     const candidates = portUsagesByName.get(portName);
@@ -338,7 +395,36 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
       }
     }
 
+    // 1-element chain with ambiguous name: prefer the candidate that lives directly
+    // inside the enclosing scope PartDef. This handles boundary ports that share a
+    // name with same-named ports on sub-parts (e.g. BatterySupply_In on both the
+    // scope PartDef and the SignalConversion sub-PartDef).
+    if (scopeDefId) {
+      for (const portId of candidates) {
+        let id: string | undefined = parentOf.get(portId);
+        while (id !== undefined) {
+          if (id === scopeDefId) return portId;
+          const n = nodeById.get(id);
+          if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
+          id = parentOf.get(id);
+        }
+      }
+    }
+
     return candidates[0]; // fallback
+  }
+
+  // Walk up through membership wrappers to find the nearest enclosing PartDefinition.
+  function findEnclosingPartDef(startId: string): string | null {
+    let id = parentOf.get(startId);
+    while (id !== undefined) {
+      const n = nodeById.get(id);
+      if (!n) return null;
+      if (n.type === 'PartDefinition') return id;
+      if (MEMBERSHIP_WRAPPERS.has(n.type)) { id = parentOf.get(id); continue; }
+      return null;
+    }
+    return null;
   }
 
   // ── Pass 4: connection edges via FlowUsage (FlowEnd endpoints) ───────────────
@@ -436,6 +522,36 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'connection', label });
   }
 
+  // ── InterfaceUsage connection edges ──────────────────────────────────────────
+  //
+  // 'interface X connect A.portA to B.portB' produces InterfaceUsage nodes with the
+  // same EndFeatureMembership+FeatureChaining structure as ConnectionUsage. Pass 3
+  // only processes 'ConnectionUsage' (exact type match) so InterfaceUsage was silently
+  // skipped. Use resolveFlowChain here (same as Pass 5) for type-aware disambiguation
+  // of port names that appear in multiple PartDefs. No label → treated as structural.
+
+  const seenIface = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'InterfaceUsage') continue;
+
+    const chains = collectEndpointChains(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    // Pass the enclosing PartDef so 1-element boundary-port chains are resolved
+    // to the scope's own port rather than a same-named port in a sub-PartDef.
+    const scopeDefId = findEnclosingPartDef(n.id);
+    const srcId = resolveFlowChain(chainA, scopeDefId);
+    const tgtId = resolveFlowChain(chainB, scopeDefId);
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const edgeId = `iface:${srcId}:${tgtId}`;
+    if (seenIface.has(edgeId)) continue;
+    seenIface.add(edgeId);
+
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'interconnect' });
+  }
+
   // ── Pass 6: specialization edges (Superclassing between PartDefinitions) ─────
   //
   // `part def A :> B` → PartDefinition A has a Superclassing child whose label
@@ -477,6 +593,17 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
   // parser now sets to b's name.  Emit source=a, target=b.
   // Excludes ReferenceSubsetting (different EMF type, handled in Pass 3/4).
 
+  // All named usage nodes: for subsetting / redefinition target resolution.
+  const allUsagesByName = new Map<string, string[]>();
+  for (const n of nodes) {
+    if (n.label === n.type || !n.label) continue;
+    if (TYPED_USAGE_TYPES.has(n.type)) {
+      const list = allUsagesByName.get(n.label) ?? [];
+      list.push(n.id);
+      allUsagesByName.set(n.label, list);
+    }
+  }
+
   const seenSub = new Set<string>();
   for (const n of nodes) {
     if (n.type !== 'Subsetting') continue;
@@ -485,7 +612,8 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     const subId = findUsageAncestor(n.id);
     if (!subId) continue;
 
-    const superCandidates = partUsagesByName.get(n.label);
+    // Prefer PartUsage; fall back to any named usage.
+    const superCandidates = partUsagesByName.get(n.label) ?? allUsagesByName.get(n.label);
     if (!superCandidates?.length) continue;
     const superId = superCandidates[0];
     if (superId === subId) continue;
@@ -495,6 +623,31 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     seenSub.add(edgeId);
 
     edges.push({ id: edgeId, source: subId, target: superId, type: 'subsetting' });
+  }
+
+  // ── Pass 7.5: redefinition edges (Redefinition between features) ──────────────
+  //
+  // `feature redefines other` creates a Redefinition node (EMF subtype of Subsetting).
+  // We emit a 'redefinition' edge so the validator can distinguish it from subsetting.
+
+  const seenRedef = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'Redefinition') continue;
+    if (n.label === n.type) continue;
+
+    const redefId = findUsageAncestor(n.id);
+    if (!redefId) continue;
+
+    const targetCandidates = allUsagesByName.get(n.label) ?? partUsagesByName.get(n.label);
+    if (!targetCandidates?.length) continue;
+    const targetId = targetCandidates[0];
+    if (targetId === redefId) continue;
+
+    const edgeId = `${redefId}->redefines->${targetId}`;
+    if (seenRedef.has(edgeId)) continue;
+    seenRedef.add(edgeId);
+
+    edges.push({ id: edgeId, source: redefId, target: targetId, type: 'redefinition' });
   }
 
   // ── Pass 8: message-style FlowUsage → 'message' edges ───────────────────────

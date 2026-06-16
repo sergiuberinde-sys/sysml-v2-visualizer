@@ -32,12 +32,19 @@ const PART_MIN_W    = 192;
 const WIRING_H_PAD  = 24;  // 2 × 12 px from padding: '8px 12px'
 const PART_BASE_H   = 72;
 const PORT_ROW_H    = 17;
-const H_GAP         = 140; // horizontal gap between rank columns (wider for edge-label room)
-const V_GAP         = 44;  // vertical gap between nodes in the same rank column
-const Y_PARTS       = 60;
-const SCOPE_PORT_X  = -(PART_MIN_W + 80);
-const SCOPE_PORT_H  = 40;
-const SCOPE_PORT_GAP = 8;
+const H_GAP         = 240; // horizontal gap between rank columns (wider for edge-label room)
+const V_GAP         = 80;  // vertical gap between directly-connected nodes in the same rank column
+const V_GAP_SPLIT   = 200; // larger gap between disconnected groups in the same rank column
+const Y_PARTS       = 60;  // min-y used as base in the rank-centering formula
+
+// IBD outer-frame (scope container) geometry
+const SCOPE_PAD_TOP     = 52;  // space for the «part def» + name header
+const SCOPE_PAD_BOTTOM  = 80;
+const SCOPE_PAD_LEFT    = 220; // gap between left frame edge and first rank column
+const SCOPE_PAD_RIGHT   = 220;
+const SCOPE_PORT_NODE_W = 9;   // boundary port node width — sqR center lands at x=9 (inner face of sqL square)
+const SCOPE_PORT_NODE_H = 10;  // boundary port node height (port-square height)
+const MIN_PORT_SPACING  = 20;  // minimum px between adjacent boundary port squares
 
 // ── Colour palette ────────────────────────────────────────────────────────────
 
@@ -55,6 +62,7 @@ const CONN_C      = '#22c55e';
 const MSG_C       = '#7dd3fc';
 const EDGE_SEL_C  = '#89b4fa'; // selected edge / port highlight colour
 const DIM         = '#334155';
+const SCOPE_FRAME_BDR = '#1e3a5f';
 
 const FLOW_NODE_TYPES = new Set(['FlowUsage', 'FlowConnectionUsage', 'SuccessionItemFlow']);
 
@@ -173,8 +181,49 @@ function WiringLeafNode({ data }: NodeProps) {
   );
 }
 
+// ── IBD outer frame: the scope PartDef rendered as a non-interactive container ─
+
+function WiringScopeContainerNode({ data }: NodeProps) {
+  const scopeName = data['scopeName'] as string;
+  return (
+    <div style={{ width: '100%', height: '100%', fontFamily: 'monospace', pointerEvents: 'none', userSelect: 'none' }}>
+      <div style={{ position: 'absolute', top: 10, left: 14 }}>
+        <div style={{ fontSize: 9, color: '#22c55e44', letterSpacing: '0.3px' }}>«part def»</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: PART_NAME, marginTop: 2 }}>{scopeName}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── IBD boundary port: small 18×10 node straddling the container frame edge ───
+
+function WiringScopePortNode({ data }: NodeProps) {
+  const port         = data['port']         as PortDisplay;
+  const onPortSelect = data['onPortSelect'] as ((p: PortDisplay, e: React.MouseEvent) => void) | undefined;
+  return (
+    <>
+      <Handle type="target" id="__target" position={Position.Left}  style={{ opacity: 0 }} />
+      <Handle type="source" id="__source" position={Position.Right} style={{ opacity: 0 }} />
+      <PortHandles
+        ports={[port]}
+        isLR={true}
+        sourcePos={Position.Right}
+        targetPos={Position.Left}
+        nodeH={SCOPE_PORT_NODE_H}
+        portAreaTop={0}
+        onPortClick={onPortSelect}
+      />
+    </>
+  );
+}
+
 // Stable reference — defined at module level so React Flow doesn't remount nodes.
-const WIRING_NODE_TYPES = { wiringPart: WiringPartNode, wiringLeaf: WiringLeafNode } as const;
+const WIRING_NODE_TYPES = {
+  wiringPart:           WiringPartNode,
+  wiringLeaf:           WiringLeafNode,
+  wiringScopeContainer: WiringScopeContainerNode,
+  wiringScopePort:      WiringScopePortNode,
+} as const;
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -476,15 +525,19 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
 
     // Connection edges within this scope (structural port-to-port + behavioral message part-to-part)
     const inScopeConns = graph.edges.filter(
-      e => (e.type === 'connection' || e.type === 'message') && portOwner.has(e.source) && portOwner.has(e.target),
+      e => (e.type === 'connection' || e.type === 'message' || e.type === 'interconnect') && portOwner.has(e.source) && portOwner.has(e.target),
     );
 
-
-    // Which canonical port IDs appear as source vs target across in-scope edges.
-    // Non-canonical IDs (parser duplicates) are resolved to canonical so the
-    // showLeft/showRight flags on the deduplicated data.ports entries are correct.
-    const portsAsSource = new Set(inScopeConns.map(e => canonicalPortId.get(e.source) ?? e.source));
-    const portsAsTarget = new Set(inScopeConns.map(e => canonicalPortId.get(e.target) ?? e.target));
+    // Returns V_GAP_SPLIT when the two adjacent parts in a column share no direct connection,
+    // V_GAP when they do — visually groups connected parts and separates unrelated ones.
+    function gapBetween(aId: string, bId: string): number {
+      for (const conn of inScopeConns) {
+        const src = portOwner.get(conn.source);
+        const tgt = portOwner.get(conn.target);
+        if ((src === aId && tgt === bId) || (src === bId && tgt === aId)) return V_GAP;
+      }
+      return V_GAP_SPLIT;
+    }
 
     // ── Rank-based layout (Sugiyama-style, synchronous) ─────────────────────────
     // Build part-to-part directed graph from in-scope connections via portOwner.
@@ -559,6 +612,31 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     for (const p of partUsages) { if (!topo.includes(p.id)) rank.set(p.id, maxRankReached + 1); }
     const finalMaxRank = partUsages.reduce((m, p) => Math.max(m, rank.get(p.id) ?? 0), 0);
 
+    // Port side assignment: for each in-scope connection, decide which side of the part
+    // node each port's handle square should appear on.  Backward edges (source rank >
+    // target rank) flip the sides so the edge travels straight across instead of
+    // routing all the way around the shapes.
+    const portsShowLeft  = new Set<string>();
+    const portsShowRight = new Set<string>();
+    for (const conn of inScopeConns) {
+      const srcPartId  = portOwner.get(conn.source);
+      const tgtPartId  = portOwner.get(conn.target);
+      // rank.get returns undefined for scopeDef.id → treated as -1 (boundary)
+      const srcRankVal = srcPartId ? (rank.get(srcPartId) ?? -1) : -1;
+      const tgtRankVal = tgtPartId ? (rank.get(tgtPartId) ?? -1) : -1;
+      const srcCanon   = canonicalPortId.get(conn.source) ?? conn.source;
+      const tgtCanon   = canonicalPortId.get(conn.target) ?? conn.target;
+      if (srcRankVal >= 0 && tgtRankVal >= 0 && srcRankVal > tgtRankVal) {
+        // Backward edge: source exits left, target enters from right
+        portsShowLeft.add(srcCanon);
+        portsShowRight.add(tgtCanon);
+      } else {
+        // Forward, same-rank, or boundary connection: source exits right, target enters left
+        portsShowRight.add(srcCanon);
+        portsShowLeft.add(tgtCanon);
+      }
+    }
+
     // Group parts by rank; within each rank the initial order follows model order.
     const byRank: string[][] = Array.from({ length: finalMaxRank + 1 }, () => []);
     for (const p of partUsages) byRank[rank.get(p.id)!].push(p.id);
@@ -590,10 +668,13 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       }, PART_MIN_W),
     );
 
-    // Column heights: sum of node heights + inter-node V_GAP.
-    const colHeight = byRank.map(ids =>
-      ids.reduce((s, id) => s + nodeHeightOf(id), 0) + Math.max(0, ids.length - 1) * V_GAP,
-    );
+    // Column heights: sum of node heights + variable inter-node gaps.
+    const colHeight = byRank.map(ids => {
+      if (ids.length === 0) return 0;
+      let h = nodeHeightOf(ids[0]);
+      for (let i = 1; i < ids.length; i++) h += gapBetween(ids[i - 1], ids[i]) + nodeHeightOf(ids[i]);
+      return h;
+    });
 
     // Center all columns at the same vertical midpoint so connected nodes are
     // roughly horizontally aligned even when column heights differ.
@@ -605,11 +686,96 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     for (let r = 0; r <= finalMaxRank; r++) {
       const startY = globalMidY - colHeight[r] / 2;
       let rowY = startY;
-      for (const id of byRank[r]) {
+      for (let j = 0; j < byRank[r].length; j++) {
+        const id = byRank[r][j];
         layoutPos.set(id, { x: colX, y: rowY });
-        rowY += nodeHeightOf(id) + V_GAP;
+        if (j < byRank[r].length - 1) rowY += nodeHeightOf(id) + gapBetween(id, byRank[r][j + 1]);
       }
       colX += colWidth[r] + H_GAP;
+    }
+
+    // ── IBD container geometry ────────────────────────────────────────────────
+    // innerW = total width of columns+inter-column gaps (no trailing H_GAP).
+    const innerW     = colX - H_GAP;
+    const maxColH    = colHeight.length > 0 ? Math.max(...colHeight) : 0;
+    const containerW = SCOPE_PAD_LEFT + innerW + SCOPE_PAD_RIGHT;
+    const containerH = SCOPE_PAD_TOP  + maxColH + SCOPE_PAD_BOTTOM;
+
+    // Shift all part positions so they sit inside the container frame.
+    // Y_PARTS is the current top baseline; SCOPE_PAD_TOP is the target.
+    const xOffset = SCOPE_PAD_LEFT;
+    const yOffset = SCOPE_PAD_TOP - Y_PARTS;
+    for (const [id, pos] of layoutPos) {
+      layoutPos.set(id, { x: pos.x + xOffset, y: pos.y + yOffset });
+    }
+
+    // ── Smart boundary port Y positioning ────────────────────────────────────
+    // Anchor each boundary port at the average Y of its connected internal ports,
+    // then enforce minimum spacing with a forward/backward sweep.
+    const PORT_AREA_TOP = 42; // matches portAreaTop={42} in WiringPartNode
+    const scopeDefIdStr = scopeDef.id; // captured for use inside nested closures
+
+    function internalPortAbsY(portId: string): number | null {
+      const canonId = canonicalPortId.get(portId) ?? portId;
+      const partId  = portOwner.get(portId);
+      if (!partId || partId === scopeDefIdStr) return null;
+      const pos     = layoutPos.get(partId);
+      if (!pos) return null;
+      const ports   = partPorts.get(partId) ?? [];
+      const idx     = ports.findIndex(p => p.id === canonId);
+      if (idx < 0) return null;
+      const nodeH   = nodeHeightOf(partId);
+      const topPx   = PORT_AREA_TOP + ((idx + 1) / (ports.length + 1)) * (nodeH - PORT_AREA_TOP);
+      return pos.y + topPx;
+    }
+
+    function preferredScopePortY(sp: GraphNode): number | null {
+      const ys: number[] = [];
+      for (const conn of inScopeConns) {
+        const internalId = conn.source === sp.id ? conn.target
+                         : conn.target === sp.id ? conn.source : null;
+        if (!internalId) continue;
+        const y = internalPortAbsY(internalId);
+        if (y !== null) ys.push(y);
+      }
+      if (ys.length === 0) return null;
+      return ys.reduce((a, b) => a + b, 0) / ys.length;
+    }
+
+    function assignScopePortYs(ports: GraphNode[]): number[] {
+      if (ports.length === 0) return [];
+      const preferred = ports.map(p => preferredScopePortY(p));
+      // Sort by preferred Y; unconnected ports (null) go last in model order.
+      const order = ports.map((_, i) => i).sort((a, b) => {
+        const pa = preferred[a], pb = preferred[b];
+        if (pa === null && pb === null) return a - b;
+        if (pa === null) return 1;
+        if (pb === null) return -1;
+        return pa - pb;
+      });
+      const usableH    = containerH - SCOPE_PAD_TOP - SCOPE_PAD_BOTTOM;
+      const defaultStep = usableH / (ports.length + 1);
+      const lo = SCOPE_PAD_TOP + MIN_PORT_SPACING;
+      const hi = containerH - SCOPE_PAD_BOTTOM - MIN_PORT_SPACING;
+      const sortedY: number[] = order.map((origIdx, k) => {
+        const pref = preferred[origIdx];
+        const def  = SCOPE_PAD_TOP + defaultStep * (k + 1);
+        return Math.max(lo, Math.min(hi, pref ?? def));
+      });
+      // Forward pass: enforce minimum spacing.
+      for (let k = 1; k < sortedY.length; k++) {
+        sortedY[k] = Math.max(sortedY[k], sortedY[k - 1] + MIN_PORT_SPACING);
+      }
+      // Backward pass: pull up any ports pushed past hi by the forward pass.
+      for (let k = sortedY.length - 2; k >= 0; k--) {
+        sortedY[k] = Math.min(sortedY[k], sortedY[k + 1] - MIN_PORT_SPACING);
+      }
+      // Map sorted positions back to original port order, subtracting half node height.
+      const result = new Array<number>(ports.length);
+      for (let k = 0; k < order.length; k++) {
+        result[order[k]] = sortedY[k] - SCOPE_PORT_NODE_H / 2;
+      }
+      return result;
     }
 
     // Part nodes — layoutVersion in dep triggers position reset when user clicks Reset
@@ -633,15 +799,15 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           partLbl:  part.label,
           typeName: typeName ?? null,
           ports:    ports.map(p => {
-            const pd = portDisplay(p);
-            const usedAsSource = portsAsSource.has(p.id);
-            const usedAsTarget = portsAsTarget.has(p.id);
+            const pd         = portDisplay(p);
+            const showsLeft  = portsShowLeft.has(p.id);
+            const showsRight = portsShowRight.has(p.id);
             const isPortSel = selection?.extra?.graphId === p.id
                            || (selection?.type === 'port' && selection?.name === p.label);
             const selStyle = isPortSel ? { color: EDGE_SEL_C, fontWeight: 600 } : undefined;
             return {
               ...pd,
-              ...(usedAsSource || usedAsTarget ? { showLeft: usedAsTarget, showRight: usedAsSource } : {}),
+              ...(showsLeft || showsRight ? { showLeft: showsLeft, showRight: showsRight } : {}),
               ...(selStyle ? { labelStyle: { ...pd.labelStyle, ...selStyle } } : {}),
             };
           }),
@@ -676,26 +842,30 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       });
     }
 
-    // Scope boundary port nodes (ports that belong to the PartDef itself)
-    const rfScopePortNodes: Node[] = scopePorts.map((port, i) => {
-      const id    = `wsport-${port.id}`;
-      const isSel = selection?.extra?.graphId === port.id
-                 || (selection?.type === 'port' && selection?.name === port.label);
+    // ── IBD boundary port nodes: in/inout on left frame edge, out on right ──────
+    // Port square straddles the frame edge: left-side nodes at x=0 (sqL handle
+    // has `left: -9` so its center lands at the container left at x=0), right-side
+    // nodes at x = containerW - SCOPE_PORT_NODE_W (sqR center at x=containerW).
+    const leftScopePorts  = scopePorts.filter(p => resolvePortDir(p) !== 'out');
+    const rightScopePorts = scopePorts.filter(p => resolvePortDir(p) === 'out');
+
+    function makeScopePortNode(port: GraphNode, y: number, isRight: boolean): Node {
+      const id  = `wsport-${port.id}`;
+      const dir = resolvePortDir(port);
+      // One visible square per boundary port: left-side ports show sqL (on left boundary),
+      // right-side ports show sqR (on right boundary). The hidden handle stays in the DOM
+      // so React Flow can still route edges to/from it.
+      const pd: PortDisplay = { ...makeBoundaryPortDisplay(port.id, port.label, dir, '', dir), showLeft: !isRight, showRight: isRight };
       return {
         id,
+        type: 'wiringScopePort',
         position: {
-          x: SCOPE_PORT_X,
-          y: Y_PARTS + i * (SCOPE_PORT_H + SCOPE_PORT_GAP),
+          x: isRight ? containerW - SCOPE_PORT_NODE_W : 0,
+          y,
         },
         data: {
-          label: (
-            <div style={{ fontFamily: 'monospace' }}>
-              <div style={{ fontSize: 8.5, color: '#64748b' }}>«port»</div>
-              <div style={{ fontSize: 11, color: portColor(port.direction) }}>
-                {portArrow(port.direction)} {port.label}
-              </div>
-            </div>
-          ),
+          port: pd,
+          onPortSelect,
           _sel: {
             id,
             type: 'port' as const,
@@ -705,15 +875,22 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           } satisfies SelectionState,
         },
         style: {
-          background:   SCOPE_BG,
-          border:       `1px solid ${isSel ? PART_SEL : SCOPE_BDR}`,
-          borderRadius: 5,
-          width:        PART_MIN_W - 24,
-          padding:      '5px 10px',
-          cursor:       'pointer',
+          width:      SCOPE_PORT_NODE_W,
+          height:     SCOPE_PORT_NODE_H,
+          background: 'transparent',
+          border:     'none',
+          padding:    0,
+          overflow:   'visible',
         },
       };
-    });
+    }
+
+    const leftYs  = assignScopePortYs(leftScopePorts);
+    const rightYs = assignScopePortYs(rightScopePorts);
+    const rfScopePortNodes: Node[] = [
+      ...leftScopePorts.map((p, i)  => makeScopePortNode(p, leftYs[i],  false)),
+      ...rightScopePorts.map((p, i) => makeScopePortNode(p, rightYs[i], true)),
+    ];
 
     // Build a label → FlowUsage GraphNode map so connection edges can carry _sel
     // that jumps the editor cursor to the flow declaration, not just the port.
@@ -800,10 +977,21 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         const isTgtPort = !isMsg && tgtNode?.type === 'PortUsage';
         // Remap through canonicalPortId: a non-canonical duplicate ID must attach
         // to the handle of the single canonical (visible) square for that port.
-        const srcCanon  = canonicalPortId.get(conn.source) ?? conn.source;
-        const tgtCanon  = canonicalPortId.get(conn.target) ?? conn.target;
-        const srcHandle = isSrcPort ? `port-${srcCanon}-out` : undefined;
-        const tgtHandle = isTgtPort ? `port-${tgtCanon}`     : undefined;
+        const srcCanon   = canonicalPortId.get(conn.source) ?? conn.source;
+        const tgtCanon   = canonicalPortId.get(conn.target) ?? conn.target;
+        // Detect backward edges (source at higher layout rank than target) so the
+        // port squares and edge handles can be flipped to face each other directly.
+        const srcPartId  = portOwner.get(conn.source);
+        const tgtPartId  = portOwner.get(conn.target);
+        const srcRankVal = srcPartId ? (rank.get(srcPartId) ?? -1) : -1;
+        const tgtRankVal = tgtPartId ? (rank.get(tgtPartId) ?? -1) : -1;
+        const isBackward = srcRankVal >= 0 && tgtRankVal >= 0 && srcRankVal > tgtRankVal;
+        // Forward edge: source sqR (position=Right) → target sqL (position=Left).
+        // Backward edge: source exits via port-X-ft (position=Left, co-located with sqL)
+        //   and target receives via port-X-tgt-right (position=Right, co-located with sqR).
+        // With SCOPE_PORT_NODE_W=9 the sqR center coincides with the inner face of sqL.
+        const srcHandle = isSrcPort ? (isBackward ? `port-${srcCanon}-ft` : `port-${srcCanon}-out`) : undefined;
+        const tgtHandle = isTgtPort ? (isBackward ? `port-${tgtCanon}-tgt-right` : `port-${tgtCanon}`) : undefined;
 
         const edge: Edge & { pathOptions?: { borderRadius?: number } } = {
           id:              `wconn-${conn.id}`,
@@ -829,8 +1017,28 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         return edge;
       });
 
+    // IBD outer frame — rendered first (lowest z-order, behind parts and ports)
+    const scopeContainerNode: Node = {
+      id:         'wscope-container',
+      type:       'wiringScopeContainer',
+      position:   { x: 0, y: 0 },
+      draggable:  false,
+      selectable: false,
+      focusable:  false,
+      data:       { scopeName: activeScopeName },
+      style: {
+        width:         containerW,
+        height:        containerH,
+        background:    'transparent',
+        border:        `1.5px solid ${SCOPE_FRAME_BDR}`,
+        borderRadius:  6,
+        overflow:      'visible',
+        pointerEvents: 'none',
+      },
+    };
+
     return {
-      rfNodes: [...rfPartNodes, ...rfScopePortNodes],
+      rfNodes: [scopeContainerNode, ...rfPartNodes, ...rfScopePortNodes],
       rfEdges: rfConnEdges,
     };
   // layoutVersion in deps forces position recomputation when user clicks Reset

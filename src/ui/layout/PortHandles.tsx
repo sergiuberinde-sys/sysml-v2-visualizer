@@ -253,6 +253,17 @@ export function PortHandles(props: PortHandlesProps) {
               style={hideR}
             />
 
+            {/* Hidden target handle on the right edge.
+                Used by backward edges in the wiring view (source at higher rank)
+                so the edge enters from the right without routing all the way around. */}
+            <Handle
+              type="target"
+              position={Position.Right}
+              id={`port-${p.id}-tgt-right`}
+              style={hideR}
+            />
+
+
             {/* Source handle (right/bottom) */}
             <Handle
               type="source"

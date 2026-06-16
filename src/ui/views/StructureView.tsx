@@ -931,7 +931,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           target: `inst-${ownerName}-${conn.toPart}`,
           sourceHandle: conn.fromPort ? `port-${conn.fromPort}-out` : '__source',
           targetHandle: conn.toPort   ? `port-${conn.toPort}`      : '__target',
-          type: 'straight',
+          type: 'smoothstep',
           ...(conn.connType ? {
             label: conn.connType,
             labelStyle:   { fontSize: 9, fill: '#4ade80', fontFamily: 'monospace' },

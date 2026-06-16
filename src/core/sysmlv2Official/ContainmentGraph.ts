@@ -15,6 +15,8 @@
  *                      source is the specific/sub def, target is the general/super def.
  *   'subsetting'     — Subsetting (`:>>`) between PartUsages:
  *                      source is the subsetting usage, target is the subsetted usage.
+ *   'redefinition'   — Redefinition (`redefines`) between features:
+ *                      source is the redefining feature, target is the redefined feature.
  */
 export interface GraphNode {
   id: string;
@@ -22,6 +24,7 @@ export interface GraphNode {
   type: string;
   direction?: string;
   isComposite?: boolean;
+  isConjugated?: boolean;
   startLine?: number;
   endLine?: number;
 }
@@ -30,7 +33,7 @@ export interface GraphEdge {
   id: string;
   source: string;
   target: string;
-  type: 'contains' | 'typedBy' | 'connection' | 'message' | 'specialization' | 'subsetting';
+  type: 'contains' | 'typedBy' | 'connection' | 'message' | 'specialization' | 'subsetting' | 'interconnect' | 'redefinition';
   label?: string;
 }
 
