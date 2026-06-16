@@ -30,7 +30,7 @@
  */
 
 import type {
-  ModelNode, BehaviorAction, BehaviorFlow, BehaviorConditional, BehaviorData, ActionPort,
+  ModelNode, BehaviorAction, BehaviorFlow, BehaviorConditional, BehaviorData, BehaviorAllocation, ActionPort,
 } from './types';
 
 const ACTION_USAGE_TYPES   = new Set(['ActionUsage', 'PerformActionUsage']);
@@ -221,7 +221,9 @@ function collectPorts(node: ModelNode): ActionPort[] {
 // contains a chain: ReferenceSubsetting(action) + ReferenceUsage(port).
 // Returns [actionName, portName] or null if the chain can't be resolved.
 
-function extractFlowEndpointPair(efm: ModelNode): [string, string] | null {
+// Returns [actionName, portName] for `action.port` endpoints,
+// or [paramName, null] for bare boundary-parameter names (activityInput1, etc.).
+function extractFlowEndpointPair(efm: ModelNode): [string, string | null] | null {
   const names: string[] = [];
   function collect(n: ModelNode): void {
     if (
@@ -236,7 +238,9 @@ function extractFlowEndpointPair(efm: ModelNode): [string, string] | null {
     }
   }
   for (const c of efm.children) collect(c);
-  return names.length >= 2 ? [names[0], names[1]] : null;
+  if (names.length >= 2) return [names[0], names[1]];
+  if (names.length === 1) return [names[0], null];   // boundary parameter node
+  return null;
 }
 
 // ── Cross-file ActionDefinition port scanner ──────────────────────────────────
@@ -262,6 +266,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
   const actions:      BehaviorAction[]     = [];
   const flows:        BehaviorFlow[]       = [];
   const conditionals: BehaviorConditional[] = [];
+  const allocations:  BehaviorAllocation[] = [];
 
   /**
    * Visit a single node in the EMF tree.
@@ -511,6 +516,22 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       return;
     }
 
+    // ── AllocationUsage (allocate X.Y to Z) — SysML v2 §16.3 ─────────────────
+    // AllocationUsage is a specialisation of ConnectionUsage with two EndFeatureMembership
+    // children: source path (the allocated action, possibly dotted) and target (the responsible part).
+    // These become swimlane assignments in the action view.
+    if (node.type === 'AllocationUsage') {
+      const efms = node.children.filter(c => c.type === 'EndFeatureMembership');
+      if (efms.length >= 2) {
+        const sourceNames = extractEndpointNames(efms[0]);
+        const targetNames = extractEndpointNames(efms[1]);
+        if (sourceNames.length >= 1 && targetNames.length >= 1) {
+          allocations.push({ sourcePath: sourceNames, targetName: targetNames[0] });
+        }
+      }
+      return;
+    }
+
     // ── Transparent wrapper (OwningMembership, FeatureMembership, ParameterMembership, etc.) ──
     for (let i = 0; i < node.children.length; i++) {
       visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx);
@@ -540,5 +561,5 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
     }
   }
 
-  return { actions, flows, conditionals };
+  return { actions, flows, conditionals, allocations };
 }

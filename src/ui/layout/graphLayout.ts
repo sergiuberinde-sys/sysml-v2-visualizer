@@ -590,42 +590,101 @@ export async function applyHierarchicalLayout(
 
 // ── Actions view layout ───────────────────────────────────────────────────────
 
-/**
- * ELK `layered` layout for the Actions view.
- *
- * Flat graph — no hierarchy, no edge routing waypoints.  Only node
- * (x, y) positions are returned; React Flow renders edges natively.
- *
- * LAYER_SWEEP crossing minimisation + BRANDES_KOEPF node placement give a
- * clean top-to-bottom activity-diagram style with minimal edge crossings.
- */
-export async function applyBehaviorLayout(
+const BEHAVIOR_ELK_OPTIONS: Record<string, string> = {
+  'elk.algorithm':                             'layered',
+  'elk.direction':                             'DOWN',
+  'elk.edgeRouting':                           'ORTHOGONAL',
+  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+  'elk.layered.nodePlacement.strategy':        'BRANDES_KOEPF',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '80',
+  'elk.spacing.nodeNode':                      '48',
+  'elk.padding':                               '[top=40,left=40,bottom=40,right=40]',
+};
+
+/** Single ELK layered run — returns a nodeId→position map. */
+async function runBehaviorElk(
   nodes: Array<{ id: string; width: number; height: number }>,
   edges: Array<{ id: string; source: string; target: string }>,
 ): Promise<Map<string, { x: number; y: number }>> {
   if (!nodes.length) return new Map();
   const nodeSet = new Set(nodes.map(n => n.id));
-  const graph: ElkNode = {
+  const result = await elk.layout({
     id: 'behavior-root',
-    layoutOptions: {
-      'elk.algorithm':                             'layered',
-      'elk.direction':                             'DOWN',
-      'elk.edgeRouting':                           'ORTHOGONAL',
-      'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-      'elk.layered.nodePlacement.strategy':        'BRANDES_KOEPF',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-      'elk.spacing.nodeNode':                      '48',
-      'elk.padding':                               '[top=40,left=40,bottom=40,right=40]',
-    },
+    layoutOptions: BEHAVIOR_ELK_OPTIONS,
     children: nodes.map(n => ({ id: n.id, x: 0, y: 0, width: n.width, height: n.height })),
     edges: edges
       .filter(e => nodeSet.has(e.source) && nodeSet.has(e.target))
       .map(e => ({ id: e.id, sources: [e.source], targets: [e.target] })),
-  };
-  const result = await elk.layout(graph);
+  });
   const positions = new Map<string, { x: number; y: number }>();
   for (const child of result.children ?? []) {
     positions.set(child.id, { x: child.x ?? 0, y: child.y ?? 0 });
   }
   return positions;
+}
+
+/**
+ * ELK `layered` layout for the Actions view.
+ *
+ * When `laneMap` is supplied (nodeId → 0-based lane index), nodes are split
+ * by lane and each lane is laid out independently in its own vertical column.
+ * The columns are concatenated horizontally with a fixed gap so swimlane
+ * bounding boxes never overlap.  Cross-lane succession edges are drawn by
+ * React Flow and are not fed into ELK.
+ *
+ * Without `laneMap`, all nodes are laid out in a single ELK pass (original
+ * behaviour).
+ */
+export async function applyBehaviorLayout(
+  nodes: Array<{ id: string; width: number; height: number }>,
+  edges: Array<{ id: string; source: string; target: string }>,
+  laneMap?: Map<string, number>,
+): Promise<Map<string, { x: number; y: number }>> {
+  if (!nodes.length) return new Map();
+  if (!laneMap || laneMap.size === 0) return runBehaviorElk(nodes, edges);
+
+  // ── Per-lane column layout ──────────────────────────────────────────────────
+  const LANE_COL_GAP = 120;   // horizontal gap between swimlane columns (px)
+
+  const byLane = new Map<number, Array<{ id: string; width: number; height: number }>>();
+  const unallocated: Array<{ id: string; width: number; height: number }> = [];
+
+  for (const n of nodes) {
+    const lane = laneMap.get(n.id);
+    if (lane === undefined) { unallocated.push(n); continue; }
+    if (!byLane.has(lane)) byLane.set(lane, []);
+    byLane.get(lane)!.push(n);
+  }
+
+  const laneGroups = [...byLane.entries()].sort(([a], [b]) => a - b).map(([, g]) => g);
+  const allGroups  = [...laneGroups, ...(unallocated.length ? [unallocated] : [])];
+
+  // Run all lane layouts in parallel — only intra-lane edges are fed in.
+  const groupResults = await Promise.all(
+    allGroups.map(groupNodes => {
+      const groupSet = new Set(groupNodes.map(n => n.id));
+      return runBehaviorElk(
+        groupNodes,
+        edges.filter(e => groupSet.has(e.source) && groupSet.has(e.target)),
+      );
+    }),
+  );
+
+  // Concatenate columns left-to-right.
+  const result   = new Map<string, { x: number; y: number }>();
+  let xCursor    = 0;
+
+  for (let i = 0; i < allGroups.length; i++) {
+    const groupNodes = allGroups[i];
+    const positions  = groupResults[i];
+    let colWidth     = 0;
+    for (const n of groupNodes) {
+      const pos = positions.get(n.id) ?? { x: 0, y: 0 };
+      result.set(n.id, { x: pos.x + xCursor, y: pos.y });
+      colWidth = Math.max(colWidth, pos.x + n.width);
+    }
+    xCursor += colWidth + LANE_COL_GAP;
+  }
+
+  return result;
 }

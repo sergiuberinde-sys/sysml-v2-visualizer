@@ -83,6 +83,105 @@ const ITEM_FLOW_COLOR  = '#22d3ee';  // cyan — item flow edges
 
 const CTRL_FLOW_TYPES = new Set(['DecisionNode', 'MergeNode', 'ForkNode', 'JoinNode']);
 
+// ── Part container palette ────────────────────────────────────────────────────
+
+const LANE_COLORS = [
+  '#22c55e',  // green
+  '#f59e0b',  // amber
+  '#a78bfa',  // purple
+  '#fb923c',  // orange
+  '#38bdf8',  // sky
+  '#f472b6',  // pink
+  '#34d399',  // emerald
+  '#facc15',  // yellow
+];
+
+const PART_PAD     = 20;   // padding inside the part container around its child nodes
+const PART_LABEL_H = 24;   // height of the part name label row at the top
+
+interface PartContainerNodeData { label: string; color: string }
+
+// SysML part box: solid colored border, name label, transparent interior.
+function PartContainerNode({ data }: { data: PartContainerNodeData }) {
+  return (
+    <div style={{
+      width:         '100%',
+      height:        '100%',
+      borderRadius:  4,
+      border:        `1.5px solid ${data.color}`,
+      background:    `${data.color}08`,
+      boxSizing:     'border-box',
+      pointerEvents: 'none',
+      overflow:      'hidden',
+    }}>
+      <div style={{
+        padding:       '3px 8px',
+        fontSize:      9,
+        fontWeight:    600,
+        color:         data.color,
+        fontFamily:    'monospace',
+        letterSpacing: '0.3px',
+        whiteSpace:    'nowrap',
+        overflow:      'hidden',
+        textOverflow:  'ellipsis',
+        borderBottom:  `1px solid ${data.color}30`,
+      }}>
+        {data.label}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Activity parameter node (boundary pin) ───────────────────────────────────
+// Stacked in fixed left/right columns flanking the action graph, so they
+// don't get tangled into ELK's main layered layout.
+
+const PARAM_IN_COLOR  = '#34d399';   // emerald — input boundary
+const PARAM_OUT_COLOR = '#f87171';   // red     — output boundary
+
+const PARAM_W      = 130;
+const PARAM_H      = 38;
+const PARAM_GAP_X  = 80;   // gap between the action graph bbox and the param column
+const PARAM_GAP_Y  = 12;   // vertical gap between stacked params
+
+interface BoundaryParamNodeData { name: string; direction: 'in' | 'out'; _sel: SelectionState }
+
+function BoundaryParamNode({ data }: { data: BoundaryParamNodeData }) {
+  const isIn  = data.direction === 'in';
+  const color = isIn ? PARAM_IN_COLOR : PARAM_OUT_COLOR;
+  return (
+    <div style={{
+      width:         '100%',
+      height:        '100%',
+      borderRadius:  3,
+      border:        `1.5px solid ${color}`,
+      background:    `${color}10`,
+      boxSizing:     'border-box',
+      display:       'flex',
+      alignItems:    'center',
+      padding:       '0 8px',
+      gap:           6,
+    }}>
+      <Handle
+        type={isIn ? 'source' : 'target'}
+        position={isIn ? Position.Right : Position.Left}
+        id="param-port"
+        style={{ width: 7, height: 7, background: color, border: `1px solid ${color}`, borderRadius: 1 }}
+      />
+      <div style={{ fontSize: 8, color, letterSpacing: '0.3px', flexShrink: 0 }}>
+        «{isIn ? 'in' : 'out'}»
+      </div>
+      <div style={{
+        fontSize: 10, fontWeight: 600, color: '#e2e8f0',
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+      }}>
+        {data.name}
+      </div>
+    </div>
+  );
+}
+
 // ── Custom port-action node ───────────────────────────────────────────────────
 
 interface PortActionNodeData {
@@ -225,7 +324,7 @@ function PortActionNode({ data }: { data: PortActionNodeData }) {
 }
 
 // Stable nodeTypes reference (must be outside the component to avoid remounting).
-const PORT_NODE_TYPES = { portAction: PortActionNode } as const;
+const ALL_NODE_TYPES = { portAction: PortActionNode, partContainer: PartContainerNode, boundaryParam: BoundaryParamNode } as const;
 
 // ── Per-node dimension helper ─────────────────────────────────────────────────
 
@@ -275,6 +374,122 @@ interface Props {
   focusSubtree?:    boolean;
 }
 
+// ── Part container builder ────────────────────────────────────────────────────
+
+/**
+ * Converts flat positioned action nodes into a React Flow compound structure:
+ * - One `partContainer` parent node per allocated part (sized to fit its children).
+ * - Allocated action nodes become children (parentId set, positions made relative).
+ * - Unallocated nodes (conditionals, control flow) stay at root level unchanged.
+ *
+ * Parent nodes must precede their children in the returned array.
+ */
+function buildCompoundLayout(
+  positionedNodes: Node[],
+  laneColors: Map<string, string>,
+): Node[] {
+  if (laneColors.size === 0) return positionedNodes;
+
+  type Box = { x1: number; y1: number; x2: number; y2: number };
+  const boxes = new Map<string, Box>();
+
+  for (const n of positionedNodes) {
+    const allocatedTo = (n.data as Record<string, unknown>)?.allocatedTo as string | undefined;
+    if (!allocatedTo) continue;
+    const w = Number((n.style as Record<string, unknown>)?.width  ?? NODE_W);
+    const h = Number((n.style as Record<string, unknown>)?.height ?? NODE_H);
+    const b = boxes.get(allocatedTo) ?? { x1: Infinity, y1: Infinity, x2: -Infinity, y2: -Infinity };
+    b.x1 = Math.min(b.x1, n.position.x);
+    b.y1 = Math.min(b.y1, n.position.y);
+    b.x2 = Math.max(b.x2, n.position.x + w);
+    b.y2 = Math.max(b.y2, n.position.y + h);
+    boxes.set(allocatedTo, b);
+  }
+
+  // Container nodes and their absolute positions (needed to relativize children).
+  const containerNodes: Node[] = [];
+  const containerAbsPos = new Map<string, { x: number; y: number }>();
+
+  for (const [partName, box] of boxes) {
+    const color = laneColors.get(partName) ?? LANE_COLORS[0];
+    const cx = box.x1 - PART_PAD;
+    const cy = box.y1 - PART_LABEL_H - PART_PAD;
+    const cw = box.x2 - box.x1 + 2 * PART_PAD;
+    const ch = box.y2 - box.y1 + PART_LABEL_H + 2 * PART_PAD;
+
+    containerAbsPos.set(partName, { x: cx, y: cy });
+    containerNodes.push({
+      id:         `partbox-${partName}`,
+      type:       'partContainer',
+      position:   { x: cx, y: cy },
+      data:       { label: partName, color } satisfies PartContainerNodeData,
+      style:      { width: cw, height: ch, zIndex: -1 },
+      selectable: false,
+      draggable:  false,
+    });
+  }
+
+  // Action nodes: allocated ones become compound children with relative positions.
+  const actionNodes: Node[] = positionedNodes.map(n => {
+    const allocatedTo = (n.data as Record<string, unknown>)?.allocatedTo as string | undefined;
+    if (!allocatedTo) return n;
+    const cp = containerAbsPos.get(allocatedTo);
+    if (!cp) return n;
+    return {
+      ...n,
+      parentId:  `partbox-${allocatedTo}`,
+      position:  { x: n.position.x - cp.x, y: n.position.y - cp.y },
+      draggable: false,
+      extent:    'parent' as const,
+    };
+  });
+
+  // Parents must come before children in React Flow's node list.
+  return [...containerNodes, ...actionNodes];
+}
+
+// ── Allocation helpers ────────────────────────────────────────────────────────
+
+/**
+ * For the given behavior name, find all allocations that apply and return a
+ * map of actionName → partName.
+ *
+ * `allocate performUsage.actionName to partName` allocates `actionName` to
+ * `partName` when viewing the behavior typed by the `performUsage` perform
+ * action usage.  We resolve the perform usage name by looking for a
+ * PerformActionUsage whose actionType matches the behavior's def name.
+ */
+function buildActionAllocMap(
+  behavior:     BehaviorData,
+  behaviorName: string,
+): Map<string, string> {
+  const allocations = behavior.allocations;
+  if (!allocations?.length) return new Map();
+
+  const colonIdx = behaviorName.indexOf('::');
+  const defPart  = colonIdx >= 0 ? behaviorName.slice(colonIdx + 2) : behaviorName;
+
+  // Find every perform action usage whose type matches this behavior's def name.
+  const performNames = new Set(
+    behavior.actions
+      .filter(a =>
+        (a.type === 'PerformActionUsage' || a.type === 'ActionUsage') &&
+        a.actionType === defPart,
+      )
+      .map(a => a.name),
+  );
+
+  const map = new Map<string, string>();
+  for (const alloc of allocations) {
+    if (alloc.sourcePath.length < 2) continue;
+    if (!performNames.has(alloc.sourcePath[0])) continue;
+    // Last segment = action name; first = perform usage name.
+    const actionName = alloc.sourcePath[alloc.sourcePath.length - 1];
+    map.set(actionName, alloc.targetName);
+  }
+  return map;
+}
+
 // ── Conditional edge descriptor ───────────────────────────────────────────────
 
 interface CondEdge {
@@ -289,6 +504,26 @@ interface CondEdge {
 export default function OfficialBehaviorView({ behavior, behaviorName, behaviorNames, onBehaviorChange, onSelect, selection, focusSubtree }: Props) {
   // ReactFlow instance ref for programmatic fitView (Focus Subtree)
   const rfInstanceRef = useRef<ReturnType<typeof useReactFlow> | null>(null);
+
+  // ── Allocation / swimlane data ────────────────────────────────────────────────
+  // Map: action name → assigned part name (from allocate statements).
+  const actionAllocMap = useMemo(
+    () => (behavior ? buildActionAllocMap(behavior, behaviorName) : new Map<string, string>()),
+    [behavior, behaviorName],
+  );
+
+  // Stable ordered list of part names → color.
+  const laneColors = useMemo<Map<string, string>>(() => {
+    const seen = new Map<string, string>();
+    let i = 0;
+    for (const partName of actionAllocMap.values()) {
+      if (!seen.has(partName)) {
+        seen.set(partName, LANE_COLORS[i % LANE_COLORS.length]);
+        i++;
+      }
+    }
+    return seen;
+  }, [actionAllocMap]);
 
   // ── Position state managed by ELK (async) ────────────────────────────────────
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
@@ -504,14 +739,12 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const inPorts  = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'in');
       const outPorts = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'out');
 
-      // Use custom portAction node type for all action nodes so that ctrl-in/ctrl-out
-      // handles are always available for succession edge routing.
-      const nodeType = 'portAction';
+      const allocPart = actionAllocMap.get(a.name);
 
       return {
         id:       nodeId,
         position: DUMMY_POS,
-        type:     nodeType,
+        type:     'portAction',
         data: {
           name:       a.name,
           stereotype: stereo,
@@ -521,6 +754,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
           ports:      [...inPorts, ...outPorts],
           isBranch:   !isCtrl && isBranch,
           targets,
+          allocatedTo: allocPart,
           _sel: {
             id:   nodeId,
             type: 'actionInst',
@@ -529,17 +763,54 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
               behavior: behaviorName,
               ...(a.actionType ? { actionType: a.actionType } : {}),
               ...(targets.length > 0 ? { outgoingTargets: targets.join(',') } : {}),
+              ...(allocPart ? { allocatedTo: allocPart } : {}),
             },
           } satisfies SelectionState,
-        } satisfies PortActionNodeData,
+        },
         style: {
-          background: bg, border: `1px solid ${border}`, borderRadius: isCtrl ? 3 : 7,
-          width: dims.w, height: dims.h,
+          background:   bg,
+          border:       `1px solid ${border}`,
+          borderRadius: isCtrl ? 3 : 7,
+          width:        dims.w,
+          height:       dims.h,
         },
       };
     });
 
     const actNodeIds = new Set(actNodes.map(n => n.id));
+
+    // ── Boundary parameter nodes (activity parameter nodes per SysML v2 §10) ──
+    // Only emit nodes for params that actually appear in an item flow, so the
+    // diagram stays clean.  These nodes are positioned later in a fixed left
+    // (in) / right (out) column — they are NOT laid out by ELK.
+    const defPortMap = new Map((def.ports ?? []).map(p => [p.name, p]));
+    const referencedBoundaryParams = new Set<string>();
+    for (const f of itemFlows) {
+      if (f.sourcePort === null) referencedBoundaryParams.add(f.source);
+      if (f.targetPort === null) referencedBoundaryParams.add(f.target);
+    }
+    const boundaryParamNodes: Node[] = [...referencedBoundaryParams]
+      .filter(name => defPortMap.has(name))
+      .map(name => {
+        const port   = defPortMap.get(name)!;
+        const nodeId = `oparam-${behaviorName}-${name}`;
+        return {
+          id:       nodeId,
+          position: DUMMY_POS,
+          type:     'boundaryParam',
+          data: {
+            name:      port.name,
+            direction: port.direction,
+            _sel: {
+              id: nodeId, type: 'actionInst', name: port.name,
+              extra: { behavior: behaviorName, paramDirection: port.direction },
+            } satisfies SelectionState,
+          },
+          style: { width: PARAM_W, height: PARAM_H },
+          draggable: false,
+        };
+      });
+    const boundaryNodeIds = new Set(boundaryParamNodes.map(n => n.id));
 
     // ── Succession / transition edges ──────────────────────────────────────────
 
@@ -570,27 +841,38 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     });
 
     // ── Item flow edges ────────────────────────────────────────────────────────
+    // Endpoints with a null port refer to a boundary parameter node; non-null
+    // ports refer to an action port handle.
 
     const actionByName = new Map(actionUsages.map(a => [a.name, a]));
+    const allVisibleIds = new Set([...actNodeIds, ...boundaryNodeIds]);
     const itemFlowEdges: Edge[] = itemFlows.flatMap(f => {
-      const srcId = `oact-${behaviorName}-${f.source}`;
-      const tgtId = `oact-${behaviorName}-${f.target}`;
-      // Only render if both endpoints are visible in this behavior view.
-      if (!actNodeIds.has(srcId) || !actNodeIds.has(tgtId)) return [];
-      // Look up item type from the source action's port definition.
-      const srcAction = actionByName.get(f.source);
-      const srcPort   = srcAction?.ports?.find(p => p.name === f.sourcePort);
-      const itemType  = srcPort?.itemType ?? f.sourcePort;
+      const srcId = f.sourcePort !== null
+        ? `oact-${behaviorName}-${f.source}`
+        : `oparam-${behaviorName}-${f.source}`;
+      const tgtId = f.targetPort !== null
+        ? `oact-${behaviorName}-${f.target}`
+        : `oparam-${behaviorName}-${f.target}`;
+      if (!allVisibleIds.has(srcId) || !allVisibleIds.has(tgtId)) return [];
+
+      const srcAction  = f.sourcePort !== null ? actionByName.get(f.source) : undefined;
+      const srcPortDef = srcAction?.ports?.find(p => p.name === f.sourcePort);
+      const itemType   = srcPortDef?.itemType ?? f.sourcePort ?? f.targetPort ?? undefined;
+      const srcHandle  = f.sourcePort !== null ? `out-${f.sourcePort}` : 'param-port';
+      const tgtHandle  = f.targetPort !== null ? `in-${f.targetPort}`  : 'param-port';
+
       return [{
-        id:           `oiflow-${behaviorName}-${f.source}.${f.sourcePort}-${f.target}.${f.targetPort}`,
+        id:           `oiflow-${behaviorName}-${f.source}.${f.sourcePort ?? 'bnd'}-${f.target}.${f.targetPort ?? 'bnd'}`,
         source:       srcId,
         target:       tgtId,
-        sourceHandle: `out-${f.sourcePort}`,
-        targetHandle: `in-${f.targetPort}`,
+        sourceHandle: srcHandle,
+        targetHandle: tgtHandle,
         type:         'smoothstep',
-        label:        itemType,
-        labelStyle:   { fill: ITEM_FLOW_COLOR, fontSize: 8, fontWeight: 500, fontFamily: 'monospace' },
-        labelBgStyle: { fill: '#041e26', fillOpacity: 0.9, rx: 3, ry: 3 },
+        ...(itemType !== undefined ? {
+          label:        itemType,
+          labelStyle:   { fill: ITEM_FLOW_COLOR, fontSize: 8, fontWeight: 500, fontFamily: 'monospace' },
+          labelBgStyle: { fill: '#041e26', fillOpacity: 0.9, rx: 3, ry: 3 },
+        } : {}),
         style:        { stroke: ITEM_FLOW_COLOR, strokeWidth: 1.5 },
         markerEnd:    { type: MarkerType.ArrowClosed, color: ITEM_FLOW_COLOR, width: 12, height: 12 },
       } satisfies Edge];
@@ -652,7 +934,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       }));
 
     return {
-      rfNodes: [...actNodes, ...condNodes],
+      rfNodes: [...actNodes, ...condNodes, ...boundaryParamNodes],
       rfEdges: [...flowEdges, ...itemFlowEdges, ...condBranchEdges],
     };
   }, [behavior, behaviorName]);
@@ -667,17 +949,96 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       return;
     }
     let cancelled = false;
-    const elkNodes = rfNodes.map(n => ({
+
+    // Boundary params are NOT laid out by ELK — they go into fixed left/right
+    // columns flanking the action graph.  ELK only sees actions + conditionals.
+    const elkInputNodes = rfNodes.filter(n => n.type !== 'boundaryParam');
+    const paramNodes    = rfNodes.filter(n => n.type === 'boundaryParam');
+    const elkInputIds   = new Set(elkInputNodes.map(n => n.id));
+
+    const elkNodes = elkInputNodes.map(n => ({
       id:     n.id,
       width:  Number((n.style as Record<string, unknown>)?.['width']  ?? NODE_W),
       height: Number((n.style as Record<string, unknown>)?.['height'] ?? NODE_H),
     }));
-    const elkEdges = rfEdges.map(e => ({ id: e.id, source: e.source, target: e.target }));
-    applyBehaviorLayout(elkNodes, elkEdges).then(positions => {
+    // Skip edges that touch a boundary param — those would distort the layered layout.
+    const elkEdges = rfEdges
+      .filter(e => elkInputIds.has(e.source) && elkInputIds.has(e.target))
+      .map(e => ({ id: e.id, source: e.source, target: e.target }));
+
+    // Build lane map for per-column swimlane layout (nodeId → lane index).
+    const laneOrder = [...laneColors.keys()];
+    const elkLaneMap = new Map<string, number>();
+    if (laneOrder.length > 0) {
+      for (const rfNode of elkInputNodes) {
+        const allocPart = (rfNode.data as Record<string, unknown>)?.allocatedTo as string | undefined;
+        if (allocPart !== undefined) {
+          const idx = laneOrder.indexOf(allocPart);
+          if (idx >= 0) elkLaneMap.set(rfNode.id, idx);
+        }
+      }
+    }
+
+    applyBehaviorLayout(elkNodes, elkEdges, elkLaneMap.size > 0 ? elkLaneMap : undefined).then(positions => {
       if (cancelled) return;
+
+      // ── Compute bounding box of ELK-placed nodes (action graph extent) ────
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const n of elkInputNodes) {
+        const pos = positions.get(n.id);
+        if (!pos) continue;
+        const w = Number((n.style as Record<string, unknown>)?.['width']  ?? NODE_W);
+        const h = Number((n.style as Record<string, unknown>)?.['height'] ?? NODE_H);
+        minX = Math.min(minX, pos.x);
+        minY = Math.min(minY, pos.y);
+        maxX = Math.max(maxX, pos.x + w);
+        maxY = Math.max(maxY, pos.y + h);
+      }
+      if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+
+      // Part containers extend slightly beyond the action positions.
+      const hasContainers = laneColors.size > 0;
+      const padL = hasContainers ? PART_PAD : 0;
+      const padR = hasContainers ? PART_PAD : 0;
+      const leftCol  = minX - padL - PARAM_GAP_X - PARAM_W;
+      const rightCol = maxX + padR + PARAM_GAP_X;
+
+      // For each boundary param: find connected action's Y, so we can sort
+      // the param column to minimize edge crossings.
+      const paramPrefix = `oparam-${behaviorName}-`;
+      const connectedY = new Map<string, number>();
+      for (const e of rfEdges) {
+        const srcIsParam = e.source.startsWith(paramPrefix);
+        const tgtIsParam = e.target.startsWith(paramPrefix);
+        if (srcIsParam && !tgtIsParam) {
+          const p = positions.get(e.target);
+          if (p) connectedY.set(e.source, Math.min(connectedY.get(e.source) ?? Infinity, p.y));
+        } else if (tgtIsParam && !srcIsParam) {
+          const p = positions.get(e.source);
+          if (p) connectedY.set(e.target, Math.min(connectedY.get(e.target) ?? Infinity, p.y));
+        }
+      }
+      const sortByConnectedY = (a: Node, b: Node) =>
+        (connectedY.get(a.id) ?? Infinity) - (connectedY.get(b.id) ?? Infinity);
+
+      const paramDir = (n: Node) => (n.data as unknown as BoundaryParamNodeData).direction;
+      const inParams  = paramNodes.filter(n => paramDir(n) === 'in').sort(sortByConnectedY);
+      const outParams = paramNodes.filter(n => paramDir(n) === 'out').sort(sortByConnectedY);
+
+      const stackHeight = (count: number) => count * PARAM_H + Math.max(0, count - 1) * PARAM_GAP_Y;
+      const graphMidY   = (minY + maxY) / 2;
+      const startY = (params: Node[]) =>
+        Math.min(minY, graphMidY - stackHeight(params.length) / 2);
+
+      let y = startY(inParams);
+      for (const p of inParams)  { positions.set(p.id, { x: leftCol,  y }); y += PARAM_H + PARAM_GAP_Y; }
+      y = startY(outParams);
+      for (const p of outParams) { positions.set(p.id, { x: rightCol, y }); y += PARAM_H + PARAM_GAP_Y; }
+
       positionsRef.current = positions;
       layoutRunRef.current = key;
-      setDisplayNodes(rfNodes.map(n => ({ ...n, position: positions.get(n.id) ?? n.position })));
+      const positionedNodes = rfNodes.map(n => ({ ...n, position: positions.get(n.id) ?? n.position }));
+      setDisplayNodes(buildCompoundLayout(positionedNodes, laneColors));
       setAutoFitVersion(v => v + 1);
     }).catch(console.error);
     return () => { cancelled = true; };
@@ -688,19 +1049,23 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
   useEffect(() => {
     const key = `${behaviorName}::${resetVersion}`;
     if (layoutRunRef.current !== key) return;  // ELK hasn't finished for this key yet
-    setDisplayNodes(rfNodes.map(n => ({
+    const positionedNodes = rfNodes.map(n => ({
       ...n,
       position: positionsRef.current.get(n.id) ?? n.position,
-    })));
+    }));
+    setDisplayNodes(buildCompoundLayout(positionedNodes, laneColors));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rfNodes]);
 
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
-    setDisplayNodes(prev => {
-      const next = applyNodeChanges(changes, prev);
-      for (const n of next) positionsRef.current.set(n.id, n.position);
-      return next;
-    });
+    setDisplayNodes(prev => applyNodeChanges(changes, prev));
+  }, []);
+
+  // Only persist positions for root-level nodes (no parentId).
+  // Compound children use relative positions that must not overwrite the absolute
+  // ELK positions in positionsRef (which buildCompoundLayout depends on).
+  const handleNodeDragStop = useCallback((_e: React.MouseEvent, node: Node) => {
+    if (!node.parentId) positionsRef.current.set(node.id, node.position);
   }, []);
 
   const handleNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
@@ -797,9 +1162,10 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         <ReactFlow
           nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
           edges={rfEdges}
-          nodeTypes={PORT_NODE_TYPES}
+          nodeTypes={ALL_NODE_TYPES}
           onNodeClick={handleNodeClick}
           onNodesChange={handleNodesChange}
+          onNodeDragStop={handleNodeDragStop}
           onInit={inst => { rfInstanceRef.current = inst as ReturnType<typeof useReactFlow>; }}
           fitView
           fitViewOptions={{ padding: 0.2 }}

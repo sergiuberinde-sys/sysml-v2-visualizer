@@ -3,6 +3,7 @@ export interface Diagnostic {
   severity: 'error' | 'warning' | 'info';
   line?: number;
   column?: number;
+  code?: string;
 }
 
 export interface ModelNode {
@@ -46,7 +47,7 @@ export type BehaviorFlow =
   | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true }
   | { id: string; source: string; target: string; type: 'transition'; guard?: string }
   | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true }
-  | { id: string; source: string; sourcePort: string; target: string; targetPort: string; type: 'itemFlow' };
+  | { id: string; source: string; sourcePort: string | null; target: string; targetPort: string | null; type: 'itemFlow' };
 
 /**
  * Represents a discovered conditional / loop construct.
@@ -67,11 +68,25 @@ export interface BehaviorConditional {
   elseActionIds?: string[];
 }
 
+/**
+ * A single `allocate X.Y to Z` statement (SysML v2 §16.3 AllocationUsage).
+ * Represents the assignment of an action to a responsible structural part —
+ * the semantic basis for swimlane partitioning in action diagrams.
+ */
+export interface BehaviorAllocation {
+  /** Dotted source path, e.g. ['voltageTemperatureMonitoring', 'acquireSupplyVoltages'] */
+  sourcePath: string[];
+  /** Target part/element name, e.g. 'signalConversion' */
+  targetName: string;
+}
+
 export interface BehaviorData {
   actions: BehaviorAction[];
   flows: BehaviorFlow[];
   /** Conditional/loop structures discovered in the model */
   conditionals: BehaviorConditional[];
+  /** Allocation statements (allocate X to Y) — swimlane assignments */
+  allocations?: BehaviorAllocation[];
 }
 
 export interface SysMLV2ParseResult {

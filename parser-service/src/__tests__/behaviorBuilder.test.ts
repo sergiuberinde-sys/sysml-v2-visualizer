@@ -561,3 +561,67 @@ describe('ActionUsage inside PartDefinition', () => {
     expect(flow).toBeDefined();
   });
 });
+
+// ── 11. AllocationUsage (allocate X.Y to Z) — SysML v2 §16.3 ─────────────────
+//
+// part def SignalProcessing {
+//   perform action voltageTemperatureMonitoring : SignalConditioningAndProcessing_ASIL_D_VoltageTemperatureMon;
+//   allocate voltageTemperatureMonitoring.acquireSupplyVoltages to signalConversion;
+//   allocate voltageTemperatureMonitoring.extractDigitalValues  to inputOutputDriver;
+//   allocate voltageTemperatureMonitoring.convertRawValues       to signalConversion;
+// }
+//
+// EMF: AllocationUsage children are two EndFeatureMembership nodes.
+//   First EFM: Feature with FeatureChaining children for each dotted segment.
+//   Second EFM: ReferenceSubsetting with the target name.
+
+describe('AllocationUsage — swimlane allocations', () => {
+  const featureTyping = (name: string): ModelNode => n('FeatureTyping', name, []);
+  const fc = (name: string): ModelNode => n('FeatureChaining', name, []);
+
+  const allocUsage = (sourceParts: string[], targetName: string): ModelNode =>
+    n('AllocationUsage', null, [
+      efm([n('Feature', null, sourceParts.map(s => fc(s)))]),
+      efm([refSubsetting(targetName)]),
+    ]);
+
+  const root = n('PartDefinition', 'SignalProcessing', [
+    om(n('PerformActionUsage', 'voltageTemperatureMonitoring', [
+      featureTyping('SignalConditioningAndProcessing_ASIL_D_VoltageTemperatureMon'),
+    ])),
+    om(allocUsage(['voltageTemperatureMonitoring', 'acquireSupplyVoltages'], 'signalConversion')),
+    om(allocUsage(['voltageTemperatureMonitoring', 'extractDigitalValues'],  'inputOutputDriver')),
+    om(allocUsage(['voltageTemperatureMonitoring', 'convertRawValues'],      'signalConversion')),
+  ]);
+
+  const { actions, allocations } = buildBehavior([root]);
+
+  it('emits all three allocations', () => {
+    expect(allocations).toHaveLength(3);
+  });
+
+  it('first allocation has correct sourcePath and targetName', () => {
+    const a = allocations[0];
+    expect(a.sourcePath).toEqual(['voltageTemperatureMonitoring', 'acquireSupplyVoltages']);
+    expect(a.targetName).toBe('signalConversion');
+  });
+
+  it('second allocation resolves to inputOutputDriver', () => {
+    const a = allocations[1];
+    expect(a.sourcePath).toEqual(['voltageTemperatureMonitoring', 'extractDigitalValues']);
+    expect(a.targetName).toBe('inputOutputDriver');
+  });
+
+  it('third allocation also targets signalConversion', () => {
+    const a = allocations[2];
+    expect(a.sourcePath).toEqual(['voltageTemperatureMonitoring', 'convertRawValues']);
+    expect(a.targetName).toBe('signalConversion');
+  });
+
+  it('PerformActionUsage is still emitted with correct actionType', () => {
+    const perf = actions.find(a => a.name === 'voltageTemperatureMonitoring');
+    expect(perf).toBeDefined();
+    expect(perf?.type).toBe('PerformActionUsage');
+    expect(perf?.actionType).toBe('SignalConditioningAndProcessing_ASIL_D_VoltageTemperatureMon');
+  });
+});
