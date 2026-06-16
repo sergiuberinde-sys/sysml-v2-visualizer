@@ -4,15 +4,16 @@ import { promises as fsAsync } from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { JavaWrapperClient } from '../parser-service/src/javaWrapperClient';
-import { buildGraph, enrichWithContextModels } from '../parser-service/src/graphBuilder';
+import { buildGraph, enrichWithContextModels, type ContainmentGraph } from '../parser-service/src/graphBuilder';
 import { buildBehavior } from '../parser-service/src/behaviorBuilder';
+import { validateModel } from '../parser-service/src/validator';
 import type { SysMLV2ParseResult } from '../parser-service/src/types';
 import { ensureJava } from './javaInstaller';
 
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g24';
+const GRAPH_VERSION      = 'g34';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -110,8 +111,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   diskCacheDir = context.globalStorageUri.fsPath;
 
-  const diagnosticCollection = vscode.languages.createDiagnosticCollection('sysml-v2');
-  context.subscriptions.push(diagnosticCollection);
+  const diagnosticCollection          = vscode.languages.createDiagnosticCollection('sysml-v2');
+  const validatorDiagCollection       = vscode.languages.createDiagnosticCollection('sysml-v2-checker');
+  context.subscriptions.push(diagnosticCollection, validatorDiagCollection);
+
+  // Most-recently built graph + owning document — used by on-demand validation.
+  let lastGraph:    ContainmentGraph | null          = null;
+  let lastDocument: vscode.TextDocument | null       = null;
 
   // ── Java runtime — auto-install if missing or too old ────────────────────────
   // Runs before JavaWrapperClient is created so SYSML_JAVA_HOME is set first.
@@ -229,6 +235,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   /** Apply a parse result to VS Code squiggles and the webview. */
   function applyResult(document: vscode.TextDocument, result: SysMLV2ParseResult): void {
+    if (result.graph) { lastGraph = result.graph; lastDocument = document; }
     const diags = result.diagnostics.map(d => {
       const vd = new vscode.Diagnostic(toVsCodeRange(document, d.line, d.column), d.message, mapSeverity(d));
       vd.source = 'SysML v2 (official)';
@@ -372,6 +379,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.workspace.onDidCloseTextDocument(doc => {
       if (doc.fileName.endsWith('.sysml')) {
         diagnosticCollection.delete(doc.uri);
+        validatorDiagCollection.delete(doc.uri);
         console.log(`[sysml-visualizer] ${path.basename(doc.fileName)} closed — cleared diagnostics`);
       }
     }),
@@ -624,6 +632,28 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           editor.revealRange(found.range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
           console.log(`[sysml-visualizer] revealElementInSource "${name}" → ${path.basename(found.uri.fsPath)}:${found.range.start.line + 1}`);
         }
+
+      } else if (msg.type === 'runValidator') {
+        if (!lastGraph || !lastDocument) {
+          void panel.webview.postMessage({ type: 'validatorResult', diagnostics: [], noGraph: true });
+          return;
+        }
+        const valDiags = validateModel(lastGraph);
+        void panel.webview.postMessage({ type: 'validatorResult', diagnostics: valDiags });
+        // Persist as VS Code squiggles in a separate collection so they don't
+        // mix with parser diagnostics and survive until the next explicit run.
+        const vsValDiags = valDiags.map(d => {
+          const vd = new vscode.Diagnostic(
+            toVsCodeRange(lastDocument!, d.line, d.column),
+            d.message,
+            mapSeverity(d),
+          );
+          vd.source = 'SysML v2 Model Checker';
+          if (d.code) vd.code = d.code;
+          return vd;
+        });
+        validatorDiagCollection.set(lastDocument.uri, vsValDiags);
+        console.log(`[sysml-visualizer] validator: ${valDiags.length} issue(s)`);
 
       } else if (msg.type === 'revealSemanticElement') {
         const semanticId = msg.semanticId;

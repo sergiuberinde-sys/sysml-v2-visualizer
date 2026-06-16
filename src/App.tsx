@@ -360,6 +360,13 @@ export default function App() {
   );
   const [officialParseResult, setOfficialParseResult] = useState<SysMLV2ParseResult | null>(null);
   const [officialParseLoading, setOfficialParseLoading] = useState(false);
+
+  // ── Model checker state ────────────────────────────────────────────────────
+  type ValidatorDiag = { message: string; severity: string; code?: string; line?: number };
+  const [validatorDiags,     setValidatorDiags]     = useState<ValidatorDiag[]>([]);
+  const [validatorRunning,   setValidatorRunning]   = useState(false);
+  const [validatorPanelOpen, setValidatorPanelOpen] = useState(true);
+  const [validatorRanOnce,   setValidatorRanOnce]   = useState(false);
   // Stable ref so the VS Code message handler can access the latest parse result
   const officialParseResultRef = useRef<SysMLV2ParseResult | null>(null);
   // True when running inside the VS Code extension — the extension manages all
@@ -486,6 +493,7 @@ export default function App() {
       line:     d.line ?? 1,
       column:   d.column,
       severity: d.severity,
+      ...(d.code !== undefined ? { code: d.code } : {}),
     })) ?? [],
     [officialParseResult],
   );
@@ -620,8 +628,13 @@ export default function App() {
         diagnostics?: SysMLV2ParseResult['diagnostics'];
         trlcAnnotations?: RawAnnotation[];
         numericId?: string;
+        noGraph?: boolean;
       };
-      if (msg.type === 'loadModel' && typeof msg.text === 'string') {
+      if (msg.type === 'validatorResult') {
+        setValidatorRunning(false);
+        setValidatorRanOnce(true);
+        setValidatorDiags((msg.diagnostics as ValidatorDiag[] | undefined) ?? []);
+      } else if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
@@ -631,6 +644,8 @@ export default function App() {
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
+        setValidatorDiags([]);
+        setValidatorRanOnce(false);
       } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
@@ -1049,6 +1064,11 @@ export default function App() {
   const warnCount = activeDiagnostics.filter(d => d.severity === 'warning').length;
   const infoCount = activeDiagnostics.filter(d => d.severity === 'info').length;
 
+  const validatorErrCount  = validatorDiags.filter(d => d.severity === 'error').length;
+  const validatorWarnCount = validatorDiags.filter(d => d.severity === 'warning').length;
+  const validatorIssueCount = validatorErrCount + validatorWarnCount;
+  const hasGraph = !!officialParseResult?.graph;
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -1301,6 +1321,47 @@ export default function App() {
                   x
                 </button>
               )}
+              {/* ── Model checker button ──────────────────────────────── */}
+              <button
+                type="button"
+                disabled={validatorRunning || !hasGraph}
+                title={
+                  !hasGraph          ? 'No model loaded — parse a .sysml file first' :
+                  validatorRunning   ? 'Running model checker…' :
+                  validatorRanOnce   ? `Re-run model checker (last: ${validatorIssueCount} issue${validatorIssueCount !== 1 ? 's' : ''})` :
+                                       'Run SysML v2 model checker'
+                }
+                onClick={() => {
+                  setValidatorRunning(true);
+                  getVsCodeApi()?.postMessage({ type: 'runValidator' });
+                }}
+                style={{
+                  fontSize: 11,
+                  background: !validatorRanOnce ? '#1e293b'
+                            : validatorErrCount  > 0 ? '#2d0f0f'
+                            : validatorWarnCount > 0 ? '#1f1a0a'
+                            : '#0d2e1a',
+                  color: !validatorRanOnce ? '#94a3b8'
+                       : validatorErrCount  > 0 ? '#f87171'
+                       : validatorWarnCount > 0 ? '#facc15'
+                       : '#4ade80',
+                  border: `1px solid ${
+                    !validatorRanOnce ? '#334155'
+                    : validatorErrCount  > 0 ? '#ef4444'
+                    : validatorWarnCount > 0 ? '#eab308'
+                    : '#22c55e'
+                  }`,
+                  borderRadius: 3, padding: '1px 8px',
+                  cursor: validatorRunning || !hasGraph ? 'default' : 'pointer',
+                  opacity: validatorRunning || !hasGraph ? 0.5 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {validatorRunning ? 'Checking…'
+                  : !validatorRanOnce ? 'Validate'
+                  : validatorIssueCount === 0 ? '✓ Valid'
+                  : `⚠ ${validatorIssueCount} issue${validatorIssueCount !== 1 ? 's' : ''}`}
+              </button>
               <label
                 title="Sync Cursor — editor cursor position updates the visualizer selection"
                 style={{
@@ -1414,6 +1475,62 @@ export default function App() {
                 );
               })()}
             </div>
+            {/* ── Validator results panel ──────────────────────────────── */}
+            {validatorRanOnce && (
+              <div style={{
+                background: '#0a0f1a',
+                borderBottom: '1px solid #1e293b',
+                fontFamily: 'monospace',
+                fontSize: 11,
+                flexShrink: 0,
+              }}>
+                {/* Header row — always visible, click to expand/collapse */}
+                <div
+                  style={{
+                    padding: '4px 16px', display: 'flex', alignItems: 'center',
+                    gap: 8, cursor: 'pointer', userSelect: 'none',
+                  }}
+                  onClick={() => setValidatorPanelOpen(v => !v)}
+                >
+                  <span style={{ fontWeight: 600, color: '#475569' }}>Model Checker</span>
+                  <span style={{
+                    color: validatorErrCount  > 0 ? '#f87171'
+                         : validatorWarnCount > 0 ? '#facc15'
+                         : '#4ade80',
+                  }}>
+                    {validatorIssueCount === 0
+                      ? '✓ no issues'
+                      : `${validatorErrCount > 0 ? `${validatorErrCount} error${validatorErrCount !== 1 ? 's' : ''}` : ''}${validatorErrCount > 0 && validatorWarnCount > 0 ? ', ' : ''}${validatorWarnCount > 0 ? `${validatorWarnCount} warning${validatorWarnCount !== 1 ? 's' : ''}` : ''}`
+                    }
+                  </span>
+                  <span style={{ marginLeft: 'auto', color: '#475569', fontSize: 9 }}>
+                    {validatorPanelOpen ? '▲' : '▼'}
+                  </span>
+                </div>
+                {/* Issue list */}
+                {validatorPanelOpen && validatorDiags.length > 0 && (
+                  <div style={{ maxHeight: 160, overflowY: 'auto', padding: '0 16px 6px' }}>
+                    {validatorDiags.map((d, i) => (
+                      <div
+                        key={i}
+                        className={`diag-row diag-${d.severity}`}
+                        onClick={() => d.line && jumpToLine(d.line)}
+                        title={d.message}
+                        style={{ cursor: d.line ? 'pointer' : 'default' }}
+                      >
+                        <span className="diag-sev-icon">
+                          {d.severity === 'error' ? '✖' : d.severity === 'warning' ? '⚠' : 'ℹ'}
+                        </span>
+                        {d.line && <span className="diag-loc">L{d.line}</span>}
+                        {d.code  && <span className="diag-code">{d.code}</span>}
+                        <span className="diag-msg">{d.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             <ErrorBoundary label="Structure view error">
               {tab === 'structure' && (
                 <StructureView
