@@ -71,17 +71,17 @@ const THEN_COLOR  = '#4ade80';    // green — [true] / then branch
 const ELSE_COLOR  = '#f87171';    // red   — [false] / else branch
 const LOOP_EDGE   = '#818cf8';    // indigo — loop body edge
 
-const CTRL_BG     = '#0d1a14';    // dark teal — control flow nodes
-const CTRL_BORDER = '#2dd4bf';    // teal
-const CTRL_STEREO = '#5eead4';
-const CTRL_NAME   = '#ccfbf1';
+const CTRL_STEREO = '#5eead4';   // teal — fork/join stereotype text
+const CTRL_NAME   = '#ccfbf1';   // pale teal — fork/join name text
 
 const PIN_COLOR        = '#38bdf8';  // same as ACT_BORDER — item port pins
 const PORT_TEXT_COLOR  = '#7dc8e8';
 const PORT_TYPE_COLOR  = '#4a9fc0';
 const ITEM_FLOW_COLOR  = '#22d3ee';  // cyan — item flow edges
 
-const CTRL_FLOW_TYPES = new Set(['DecisionNode', 'MergeNode', 'ForkNode', 'JoinNode']);
+const CTRL_FLOW_TYPES    = new Set(['DecisionNode', 'MergeNode', 'ForkNode', 'JoinNode']);
+const FORK_JOIN_TYPES    = new Set(['ForkNode', 'JoinNode']);
+const DECIDE_MERGE_TYPES = new Set(['DecisionNode', 'MergeNode']);
 
 // ── Part container palette ────────────────────────────────────────────────────
 
@@ -96,8 +96,8 @@ const LANE_COLORS = [
   '#facc15',  // yellow
 ];
 
-const PART_PAD     = 20;   // padding inside the part container around its child nodes
-const PART_LABEL_H = 24;   // height of the part name label row at the top
+const PART_PAD     = 28;   // padding inside the part container around its child nodes
+const PART_LABEL_H = 28;   // height of the part name label row at the top
 
 interface PartContainerNodeData { label: string; color: string }
 
@@ -140,10 +140,10 @@ function PartContainerNode({ data }: { data: PartContainerNodeData }) {
 const PARAM_IN_COLOR  = '#34d399';   // emerald — input boundary
 const PARAM_OUT_COLOR = '#f87171';   // red     — output boundary
 
-const PARAM_W      = 130;
+const PARAM_W      = 140;
 const PARAM_H      = 38;
-const PARAM_GAP_X  = 80;   // gap between the action graph bbox and the param column
-const PARAM_GAP_Y  = 12;   // vertical gap between stacked params
+const PARAM_GAP_X  = 130;  // gap between the action graph bbox and the param column — wide enough for clean item-flow routing
+const PARAM_GAP_Y  = 14;   // vertical gap between stacked params
 
 interface BoundaryParamNodeData { name: string; direction: 'in' | 'out'; _sel: SelectionState }
 
@@ -177,6 +177,114 @@ function BoundaryParamNode({ data }: { data: BoundaryParamNodeData }) {
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
       }}>
         {data.name}
+      </div>
+    </div>
+  );
+}
+
+// ── Fork / Join — official SysML v2 graphical notation (solid bar) ───────────
+// UML/SysML v2 §12 shows fork and join as filled horizontal bars; semantic
+// distinction is by edge fan-out (fork: 1→N) vs. fan-in (join: N→1).
+
+const FORK_JOIN_BAR_COLOR = '#5eead4';   // bright teal — fork/join bar fill
+const FORK_JOIN_NODE_H    = 32;
+const FORK_JOIN_BAR_H     = 7;
+const FORK_JOIN_MIN_W     = 110;
+
+// ── Decision / Merge — official SysML v2 graphical notation (diamond) ─────────
+// UML/SysML v2 §12 shows decision and merge as diamonds; decision has guarded
+// outgoing transitions, merge converges control flow.
+
+const DIAMOND_NODE_W = 80;
+const DIAMOND_NODE_H = 70;
+
+type ControlNodeKind = 'fork' | 'join' | 'decision' | 'merge';
+
+interface ControlNodeData {
+  name: string;
+  kind: ControlNodeKind;
+  allocatedTo?: string;
+  _sel: SelectionState;
+}
+
+function ForkJoinBarNode({ data }: { data: ControlNodeData }) {
+  return (
+    <div style={{
+      position: 'relative',
+      width:    '100%',
+      height:   '100%',
+      display:  'flex',
+      flexDirection: 'column',
+      alignItems:    'center',
+      justifyContent: 'center',
+      gap: 4,
+    }}>
+      <Handle type="target" position={Position.Top}    id="ctrl-in"
+        style={{ width: 1, height: 1, top: 0, background: 'transparent', border: 'none', minWidth: 0, minHeight: 0 }} />
+      <Handle type="source" position={Position.Bottom} id="ctrl-out"
+        style={{ width: 1, height: 1, bottom: 0, background: 'transparent', border: 'none', minWidth: 0, minHeight: 0 }} />
+      {/* The solid bar */}
+      <div style={{
+        width:        '100%',
+        height:       FORK_JOIN_BAR_H,
+        background:   FORK_JOIN_BAR_COLOR,
+        borderRadius: 1.5,
+        boxShadow:    `0 0 0 1px ${FORK_JOIN_BAR_COLOR}`,
+      }} />
+      {/* Stereotype + name label below the bar */}
+      <div style={{
+        fontSize:      9,
+        fontFamily:    'monospace',
+        letterSpacing: '0.3px',
+        whiteSpace:    'nowrap',
+        textAlign:     'center',
+        lineHeight:    1.1,
+      }}>
+        <span style={{ color: CTRL_STEREO }}>«{data.kind}»</span>
+        {' '}
+        <span style={{ color: CTRL_NAME, fontWeight: 600 }}>{data.name}</span>
+      </div>
+    </div>
+  );
+}
+
+function DecideMergeDiamondNode({ data }: { data: ControlNodeData }) {
+  const isDecision = data.kind === 'decision';
+  const border = isDecision ? COND_BORDER : '#94a3b8';
+  const bg     = isDecision ? COND_BG     : '#1e293b';
+  const stereo = isDecision ? COND_STEREO : '#cbd5e1';
+  const nameClr = isDecision ? COND_NAME  : '#e2e8f0';
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <Handle type="target" position={Position.Top}    id="ctrl-in"
+        style={{ width: 1, height: 1, background: 'transparent', border: 'none', minWidth: 0, minHeight: 0 }} />
+      <Handle type="source" position={Position.Bottom} id="ctrl-out"
+        style={{ width: 1, height: 1, background: 'transparent', border: 'none', minWidth: 0, minHeight: 0 }} />
+      <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none"
+           style={{ position: 'absolute', inset: 0, display: 'block' }}>
+        <polygon points="50,3 97,50 50,97 3,50" fill={bg} stroke={border} strokeWidth="2" />
+      </svg>
+      <div style={{
+        position:       'absolute',
+        inset:          0,
+        display:        'flex',
+        flexDirection:  'column',
+        alignItems:     'center',
+        justifyContent: 'center',
+        textAlign:      'center',
+        padding:        '0 14px',
+        pointerEvents:  'none',
+        lineHeight:     1.1,
+      }}>
+        <div style={{ fontSize: 8, color: stereo, letterSpacing: '0.3px', fontFamily: 'monospace' }}>
+          «{data.kind}»
+        </div>
+        <div style={{
+          fontSize: 9, fontWeight: 600, color: nameClr,
+          fontFamily: 'monospace', wordBreak: 'break-all', marginTop: 1,
+        }}>
+          {data.name}
+        </div>
       </div>
     </div>
   );
@@ -324,7 +432,13 @@ function PortActionNode({ data }: { data: PortActionNodeData }) {
 }
 
 // Stable nodeTypes reference (must be outside the component to avoid remounting).
-const ALL_NODE_TYPES = { portAction: PortActionNode, partContainer: PartContainerNode, boundaryParam: BoundaryParamNode } as const;
+const ALL_NODE_TYPES = {
+  portAction:         PortActionNode,
+  partContainer:      PartContainerNode,
+  boundaryParam:      BoundaryParamNode,
+  forkJoinBar:        ForkJoinBarNode,
+  decideMergeDiamond: DecideMergeDiamondNode,
+} as const;
 
 // ── Per-node dimension helper ─────────────────────────────────────────────────
 
@@ -529,6 +643,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
   const [resetVersion,   setResetVersion]   = useState(0);
+  // Edge spotlight: clicking an edge highlights it (bright + glow) and dims the rest.
+  // Click pane or the same edge again to clear.
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   // positionsRef: stable drag + ELK positions; survives rfNodes style re-renders.
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   // layoutRunRef: key of the most recently completed ELK run; used to skip
@@ -698,22 +815,21 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
 
     // ── Node dimension helpers ─────────────────────────────────────────────────
 
-    const CTRL_STEREO_MAP: Record<string, string> = {
-      DecisionNode: '«decide»',
-      MergeNode:    '«merge»',
-      ForkNode:     '«fork»',
-      JoinNode:     '«join»',
-    };
-
     const nodeDims = new Map<string, { w: number; h: number }>();
     for (const a of actionUsages) {
-      const isCtrl    = CTRL_FLOW_TYPES.has(a.type);
-      const targets   = outgoing.get(a.name) ?? [];
-      const isBranch  = !isCtrl && targets.length > 1;
-      const stereoTxt = isCtrl ? (CTRL_STEREO_MAP[a.type] ?? '«control»') : '«action»';
-      const inPorts   = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'in');
-      const outPorts  = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'out');
-      nodeDims.set(a.name, behaviorNodeDims(a.name, isCtrl ? undefined : a.actionType, isBranch, stereoTxt, inPorts, outPorts));
+      const targets = outgoing.get(a.name) ?? [];
+      if (FORK_JOIN_TYPES.has(a.type)) {
+        const kind     = a.type === 'ForkNode' ? 'fork' : 'join';
+        const labelLen = `«${kind}» ${a.name}`.length;
+        nodeDims.set(a.name, { w: Math.max(FORK_JOIN_MIN_W, labelLen * 5.5 + 16), h: FORK_JOIN_NODE_H });
+      } else if (DECIDE_MERGE_TYPES.has(a.type)) {
+        nodeDims.set(a.name, { w: DIAMOND_NODE_W, h: DIAMOND_NODE_H });
+      } else {
+        const isBranch = targets.length > 1;
+        const inPorts  = (a.ports ?? []).filter(p => p.direction === 'in');
+        const outPorts = (a.ports ?? []).filter(p => p.direction === 'out');
+        nodeDims.set(a.name, behaviorNodeDims(a.name, a.actionType, isBranch, '«action»', inPorts, outPorts));
+      }
     }
     for (const c of ownedConditionals) {
       const isLoop   = c.type === 'whileLoop';
@@ -727,19 +843,48 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     const actNodes: Node[] = actionUsages.map(a => {
       const nodeId    = `oact-${behaviorName}-${a.name}`;
       const targets   = outgoing.get(a.name) ?? [];
-      const isBranch  = targets.length > 1;
-      const isCtrl    = CTRL_FLOW_TYPES.has(a.type);
       const dims      = nodeDims.get(a.name) ?? { w: NODE_W, h: NODE_H };
-      const bg        = isCtrl ? CTRL_BG     : ACT_BG;
-      const border    = isCtrl ? CTRL_BORDER : (isBranch ? BRANCH_COLOR : ACT_BORDER);
-      const stereo    = isCtrl ? (CTRL_STEREO_MAP[a.type] ?? '«control»') : '«action»';
-      const nameClr   = isCtrl ? CTRL_NAME   : ACT_NAME;
-      const stereoClr = isCtrl ? CTRL_STEREO : ACT_STEREO;
-
-      const inPorts  = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'in');
-      const outPorts = isCtrl ? [] : (a.ports ?? []).filter(p => p.direction === 'out');
-
       const allocPart = actionAllocMap.get(a.name);
+      const sel: SelectionState = {
+        id:   nodeId,
+        type: 'actionInst',
+        name: a.name,
+        extra: {
+          behavior: behaviorName,
+          ...(a.actionType ? { actionType: a.actionType } : {}),
+          ...(targets.length > 0 ? { outgoingTargets: targets.join(',') } : {}),
+          ...(allocPart ? { allocatedTo: allocPart } : {}),
+        },
+      };
+
+      // ── Fork/Join: solid bar (official SysML v2 §12 notation) ────────────
+      if (FORK_JOIN_TYPES.has(a.type)) {
+        const kind: ControlNodeKind = a.type === 'ForkNode' ? 'fork' : 'join';
+        return {
+          id:       nodeId,
+          position: DUMMY_POS,
+          type:     'forkJoinBar',
+          data: { name: a.name, kind, allocatedTo: allocPart, _sel: sel } satisfies ControlNodeData,
+          style: { width: dims.w, height: dims.h, background: 'transparent', border: 'none' },
+        };
+      }
+
+      // ── Decision/Merge: diamond (official SysML v2 §12 notation) ─────────
+      if (DECIDE_MERGE_TYPES.has(a.type)) {
+        const kind: ControlNodeKind = a.type === 'DecisionNode' ? 'decision' : 'merge';
+        return {
+          id:       nodeId,
+          position: DUMMY_POS,
+          type:     'decideMergeDiamond',
+          data: { name: a.name, kind, allocatedTo: allocPart, _sel: sel } satisfies ControlNodeData,
+          style: { width: dims.w, height: dims.h, background: 'transparent', border: 'none' },
+        };
+      }
+
+      // ── Regular action / perform-action usage ────────────────────────────
+      const isBranch = targets.length > 1;
+      const inPorts  = (a.ports ?? []).filter(p => p.direction === 'in');
+      const outPorts = (a.ports ?? []).filter(p => p.direction === 'out');
 
       return {
         id:       nodeId,
@@ -747,30 +892,20 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         type:     'portAction',
         data: {
           name:       a.name,
-          stereotype: stereo,
-          stereoClr,
-          nameClr,
-          actionType: isCtrl ? undefined : a.actionType,
+          stereotype: '«action»',
+          stereoClr:  ACT_STEREO,
+          nameClr:    ACT_NAME,
+          actionType: a.actionType,
           ports:      [...inPorts, ...outPorts],
-          isBranch:   !isCtrl && isBranch,
+          isBranch,
           targets,
           allocatedTo: allocPart,
-          _sel: {
-            id:   nodeId,
-            type: 'actionInst',
-            name: a.name,
-            extra: {
-              behavior: behaviorName,
-              ...(a.actionType ? { actionType: a.actionType } : {}),
-              ...(targets.length > 0 ? { outgoingTargets: targets.join(',') } : {}),
-              ...(allocPart ? { allocatedTo: allocPart } : {}),
-            },
-          } satisfies SelectionState,
+          _sel:        sel,
         },
         style: {
-          background:   bg,
-          border:       `1px solid ${border}`,
-          borderRadius: isCtrl ? 3 : 7,
+          background:   ACT_BG,
+          border:       `1px solid ${isBranch ? BRANCH_COLOR : ACT_BORDER}`,
+          borderRadius: 7,
           width:        dims.w,
           height:       dims.h,
         },
@@ -1003,37 +1138,50 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const leftCol  = minX - padL - PARAM_GAP_X - PARAM_W;
       const rightCol = maxX + padR + PARAM_GAP_X;
 
-      // For each boundary param: find connected action's Y, so we can sort
-      // the param column to minimize edge crossings.
+      // For each boundary param, compute the AVERAGE Y of its connected action
+      // node(s). Using the average (not the min) centers the param near the
+      // middle of its fan-in/fan-out, which keeps item-flow edges short.
       const paramPrefix = `oparam-${behaviorName}-`;
-      const connectedY = new Map<string, number>();
+      const connectedYSum = new Map<string, { sum: number; count: number }>();
+      const bump = (paramId: string, otherY: number) => {
+        const cur = connectedYSum.get(paramId) ?? { sum: 0, count: 0 };
+        connectedYSum.set(paramId, { sum: cur.sum + otherY, count: cur.count + 1 });
+      };
       for (const e of rfEdges) {
         const srcIsParam = e.source.startsWith(paramPrefix);
         const tgtIsParam = e.target.startsWith(paramPrefix);
         if (srcIsParam && !tgtIsParam) {
           const p = positions.get(e.target);
-          if (p) connectedY.set(e.source, Math.min(connectedY.get(e.source) ?? Infinity, p.y));
+          if (p) bump(e.source, p.y);
         } else if (tgtIsParam && !srcIsParam) {
           const p = positions.get(e.source);
-          if (p) connectedY.set(e.target, Math.min(connectedY.get(e.target) ?? Infinity, p.y));
+          if (p) bump(e.target, p.y);
         }
       }
+      const connectedY = new Map<string, number>();
+      for (const [id, { sum, count }] of connectedYSum) connectedY.set(id, sum / count);
+      const graphMidY = (minY + maxY) / 2;
       const sortByConnectedY = (a: Node, b: Node) =>
-        (connectedY.get(a.id) ?? Infinity) - (connectedY.get(b.id) ?? Infinity);
+        (connectedY.get(a.id) ?? graphMidY) - (connectedY.get(b.id) ?? graphMidY);
 
       const paramDir = (n: Node) => (n.data as unknown as BoundaryParamNodeData).direction;
       const inParams  = paramNodes.filter(n => paramDir(n) === 'in').sort(sortByConnectedY);
       const outParams = paramNodes.filter(n => paramDir(n) === 'out').sort(sortByConnectedY);
 
-      const stackHeight = (count: number) => count * PARAM_H + Math.max(0, count - 1) * PARAM_GAP_Y;
-      const graphMidY   = (minY + maxY) / 2;
-      const startY = (params: Node[]) =>
-        Math.min(minY, graphMidY - stackHeight(params.length) / 2);
-
-      let y = startY(inParams);
-      for (const p of inParams)  { positions.set(p.id, { x: leftCol,  y }); y += PARAM_H + PARAM_GAP_Y; }
-      y = startY(outParams);
-      for (const p of outParams) { positions.set(p.id, { x: rightCol, y }); y += PARAM_H + PARAM_GAP_Y; }
+      // Place each param close to its connected action's Y, enforcing a minimum
+      // PARAM_H + PARAM_GAP_Y vertical spacing so they never overlap.  Stacks
+      // collapse upward against minY so they don't drift above the graph.
+      const placeParams = (params: Node[], x: number) => {
+        let prevBottom = minY;  // floor: never above the graph
+        for (const p of params) {
+          const preferred = connectedY.get(p.id) ?? graphMidY;
+          const y = Math.max(preferred, prevBottom);
+          positions.set(p.id, { x, y });
+          prevBottom = y + PARAM_H + PARAM_GAP_Y;
+        }
+      };
+      placeParams(inParams,  leftCol);
+      placeParams(outParams, rightCol);
 
       positionsRef.current = positions;
       layoutRunRef.current = key;
@@ -1072,6 +1220,48 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     const s = node.data?._sel as SelectionState;
     if (s) onSelect(s);
   }, [onSelect]);
+
+  // ── Edge spotlight handlers ─────────────────────────────────────────────────
+  const handleEdgeClick = useCallback((e: React.MouseEvent, edge: Edge) => {
+    e.stopPropagation();
+    setSelectedEdgeId(prev => (prev === edge.id ? null : edge.id));
+  }, []);
+  const handlePaneClick = useCallback(() => setSelectedEdgeId(null), []);
+
+  // displayEdges: apply spotlight styling — selected edge gets a thick stroke
+  // with a coloured glow and a high z-index; everyone else fades to low opacity.
+  const displayEdges = useMemo<Edge[]>(() => {
+    if (!selectedEdgeId) return rfEdges;
+    return rfEdges.map(e => {
+      if (e.id === selectedEdgeId) {
+        const stroke = (e.style as { stroke?: string } | undefined)?.stroke ?? '#fde047';
+        return {
+          ...e,
+          style: {
+            ...e.style,
+            strokeWidth: 3.5,
+            opacity:     1,
+            filter:      `drop-shadow(0 0 4px ${stroke}) drop-shadow(0 0 10px ${stroke})`,
+          },
+          labelStyle: { ...(e.labelStyle ?? {}), fontWeight: 700, fontSize: 11 },
+          zIndex:     1000,
+        };
+      }
+      return { ...e, style: { ...e.style, opacity: 0.18 } };
+    });
+  }, [rfEdges, selectedEdgeId]);
+
+  // styledNodes: when an edge is selected, ring its source + target nodes in
+  // amber so the eye can trace the lit-up edge to its endpoints quickly.
+  const styledNodes = useMemo<Node[]>(() => {
+    const base = displayNodes.length > 0 ? displayNodes : rfNodes;
+    if (!selectedEdgeId) return base;
+    const edge = rfEdges.find(e => e.id === selectedEdgeId);
+    if (!edge) return base;
+    return base.map(n => (n.id === edge.source || n.id === edge.target)
+      ? { ...n, style: { ...n.style, boxShadow: '0 0 0 2px #fde047, 0 0 14px #fde047aa' } }
+      : n);
+  }, [displayNodes, rfNodes, rfEdges, selectedEdgeId]);
 
   // ── Selector toolbar ──────────────────────────────────────────────────────────
 
@@ -1160,12 +1350,14 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       {selectorBar}
       <div style={{ flex: 1, minHeight: 0 }}>
         <ReactFlow
-          nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
-          edges={rfEdges}
+          nodes={styledNodes}
+          edges={displayEdges}
           nodeTypes={ALL_NODE_TYPES}
           onNodeClick={handleNodeClick}
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
+          onEdgeClick={handleEdgeClick}
+          onPaneClick={handlePaneClick}
           onInit={inst => { rfInstanceRef.current = inst as ReturnType<typeof useReactFlow>; }}
           fitView
           fitViewOptions={{ padding: 0.2 }}

@@ -63,6 +63,24 @@ package SignalConditioningAndProcessing_XmiResolved {
     item def ChipInternalSupplyVoltageRails_Item;
     item def DieTemperaturesThresholdConfigHW_Item;
 
+
+    // Additional logical information items resolved from external Logical Interfaces
+    // through MagicDraw type href/referenceExtension referentPath entries.
+    item def PhysActualVoltageAcceleratorPedalSensor_Item;
+    item def DigActualMeasAcceleratorPedal_Item;
+    item def PhysSupplyVoltageAcceleratorPedalSensorChannel1_Item;
+    item def AcceleratorPedalHwCtrl_Item;
+    item def AcceleratorPedalPowerSupplyCtrl_Item;
+    item def RawVoltageAcceleratorSensor_Item;
+    item def RawSupplyVoltageAcceleratorPedalSensor_Item;
+    item def AcceleratorPedalDioCtrl_Item;
+    item def CAN_Standby_PhysicalVoltage_Item;
+
+    // Inferred aggregate items used only where the XMI activity pin itself has no direct type
+    // and the activity uses an aggregate/merged flow rather than a single structural port type.
+    item def AcquiredSupplyVoltages_Item;
+    item def ChipSupplyRailsActualVoltages_Item;
+
     // Port definitions resolved from logical-interface classes.
     // <html light="true"><body><a href="mdel://_2024x_1_86d01ee_1745739946034_37429_4167" erit:display="NAME" erit:update="AUTOMATIC_UPDATE">BatterySupply_In</a></body></html>
     port def BatterySupply_Port {
@@ -322,7 +340,65 @@ package SignalConditioningAndProcessing_XmiResolved {
         out item payload : PeripheralSupply_Item;
     }
 
+
+    // External accelerator-pedal logical interfaces resolved via type href/referenceExtension.
+    // Example XMI: InputOutputDriver::p3 is typed by
+    // Solution::Driving::Logical Interfaces::DrivingCoordinator::DigActualMeasAcceleratorPedal.
+    port def PhysActualVoltageAcceleratorPedalSensor_Port {
+        out item payload : PhysActualVoltageAcceleratorPedalSensor_Item;
+    }
+
+    port def DigActualMeasAcceleratorPedal_Port {
+        out item payload : DigActualMeasAcceleratorPedal_Item;
+    }
+
+    port def PhysSupplyVoltageAcceleratorPedalSensorChannel1_Port {
+        out item payload : PhysSupplyVoltageAcceleratorPedalSensorChannel1_Item;
+    }
+
+    port def AcceleratorPedalHwCtrl_Port {
+        out item payload : AcceleratorPedalHwCtrl_Item;
+    }
+
+    port def AcceleratorPedalPowerSupplyCtrl_Port {
+        out item payload : AcceleratorPedalPowerSupplyCtrl_Item;
+    }
+
+    port def RawVoltageAcceleratorSensor_Port {
+        out item payload : RawVoltageAcceleratorSensor_Item;
+    }
+
+    port def RawSupplyVoltageAcceleratorPedalSensor_Port {
+        out item payload : RawSupplyVoltageAcceleratorPedalSensor_Item;
+    }
+
+    port def AcceleratorPedalDioCtrl_Port {
+        out item payload : AcceleratorPedalDioCtrl_Item;
+    }
+
+    port def CAN_Standby_PhysicalVoltage_Port {
+        out item payload : CAN_Standby_PhysicalVoltage_Item;
+    }
+
     part def SignalConversion {
+        // Performed action usage used as allocation target for action-view swimlane rendering.
+        perform action acquireSupplyVoltagesPerformed : AcquireSupplyVoltages;
+
+
+        // Accelerator-pedal ports resolved from XMI structural port type references.
+        // p3 type: PhysActualVoltageAcceleratorPedalSensor, isConjugated=true.
+        port p3 : ~PhysActualVoltageAcceleratorPedalSensor_Port;
+        // p4 type: DigActualMeasAcceleratorPedal.
+        port p4 : DigActualMeasAcceleratorPedal_Port;
+        // p5 type: PhysSupplyVoltageAcceleratorPedalSensorChannel1, isConjugated=true.
+        port p5 : ~PhysSupplyVoltageAcceleratorPedalSensorChannel1_Port;
+        // p6 type: AcceleratorPedalHwCtrl, isConjugated=true.
+        port p6 : ~AcceleratorPedalHwCtrl_Port;
+        // p7 type: AcceleratorPedalPowerSupplyCtrl.
+        port p7 : AcceleratorPedalPowerSupplyCtrl_Port;
+        // p8 type: CAN_Standby_PhysicalVoltage, isConjugated=true.
+        port p8 : ~CAN_Standby_PhysicalVoltage_Port;
+
         // XMI isConjugated=true
         port BatterySupply_In : ~BatterySupply_In_Port;
         // XMI isConjugated=true
@@ -340,6 +416,23 @@ package SignalConditioningAndProcessing_XmiResolved {
     }
 
     part def InputOutputDriver {
+        // Performed action usage used as allocation target for action-view swimlane rendering.
+        perform action extractDigitalValuesForSupplyVoltagesFromADCHardwarePerformed
+            : ExtractDigitalValuesForSupplyVoltagesFromADCHardware;
+
+
+        // Accelerator-pedal ports resolved from XMI structural port type references.
+        // p2 type: RawVoltageAcceleratorSensor.
+        port p2 : RawVoltageAcceleratorSensor_Port;
+        // p3 type: DigActualMeasAcceleratorPedal, isConjugated=true.
+        port p3 : ~DigActualMeasAcceleratorPedal_Port;
+        // p5 type: RawSupplyVoltageAcceleratorPedalSensor.
+        port p5 : RawSupplyVoltageAcceleratorPedalSensor_Port;
+        // p7 type: AcceleratorPedalDioCtrl, isConjugated=true.
+        port p7 : ~AcceleratorPedalDioCtrl_Port;
+        // p8 type: AcceleratorPedalHwCtrl.
+        port p8 : AcceleratorPedalHwCtrl_Port;
+
         port CANFlexray_RawSupplyVoltage : CANFlexray_RawSupplyVoltage_Port;
         port Clamp30UVMeasRawVoltage : Clamp30UVMeasRawVoltage_Port;
         port Clamp30OVMeasRawVoltage : Clamp30OVMeasRawVoltage_Port;
@@ -354,6 +447,14 @@ package SignalConditioningAndProcessing_XmiResolved {
     }
 
     part def VoltageTemperatureSignalProcessing {
+        // Performed action usages used as allocation targets for action-view swimlane rendering.
+        perform action convertRawValuesToProperlyScaledValuesPerformed
+            : ConvertRawValuesToProperlyScaledValues;
+        perform action monitoringOfChipExternalAndInternalSupplyVoltageRailsPerformed
+            : MonitoringOfChipExternalAndInternalSupplyVoltageRails;
+        perform action monitoringOfDieTemperaturesPerformed
+            : MonitoringOfDieTemperatures;
+
         port Clamp30OVMeasActualVoltage : Clamp30OVMeasActualVoltage_Port;
         port Clamp30UVMeasActualVoltage : Clamp30UVMeasActualVoltage_Port;
         // XMI isConjugated=true
@@ -382,6 +483,15 @@ package SignalConditioningAndProcessing_XmiResolved {
     }
 
     part def OnChipVTSupervisionDriver {
+        // Performed action usages used as allocation targets for action-view swimlane rendering.
+        perform action configureDieTemperatureSensorsPerformed : ConfigureDieTemperatureSensors;
+        perform action configureExternalAndInternalVoltageRailsPerformed
+            : ConfigureExternalAndInternalVoltageRails;
+        perform action acquireDieTemperaturesFromDTSSensorsPerformed
+            : AcquireDieTemperaturesFromDTSSensors;
+        perform action convertDieTemperaturesToDegreeCelsiusPerformed
+            : ConvertDieTemperaturesToDegreeCelsius;
+
         // XMI isConjugated=true
         port ConfigureChipExternalSupplyVoltageRailsThresholds : ~ConfigureChipExternalSupplyVoltageRailsThresholds_Port;
         // XMI isConjugated=true
@@ -503,130 +613,130 @@ package SignalConditioningAndProcessing_XmiResolved {
             to enableDisablePowerSupply.input;
     }
 
+
     // Activity behavior extracted from the XMI-owned FunML Activity Diagram:
     // SignalConditioningAndProcessing_ASIL_D_VoltageTemperatureMon
     // Activity id: _2024x_1_8c20228_1746556974334_437385_611
     // Diagram id:  _2024x_1_8c20228_1746556974329_188464_610
     //
-    // Extraction summary:
-    // - 9 CallBehaviorAction nodes
-    // - 15 ControlFlow edges
-    // - 34 ObjectFlow edges
-    // - 20 ActivityParameterNode nodes
-    //
-    // The XMI does not expose meaningful names/types for the activity parameter
-    // nodes. Their flows are preserved here with generic activity input/output
-    // item names, while the action labels, pin names, control successions and
-    // object-flow topology are taken from the XMI.
-
-    item def VoltageTemperatureMonitoringActivityItem;
+    // Updated pin typing pass:
+    // - The CallBehaviorAction pins themselves do not carry direct type="..." attributes in the XMI.
+    // - Their generic names input/input1/output... were replaced with semantic pin names.
+    // - Types are resolved indirectly from the object-flow topology plus the structural port types
+    //   visible on SignalConversion, InputOutputDriver, VoltageTemperatureSignalProcessing,
+    //   OnChipVTSupervisionDriver and OnChipVTSupervision.
+    // - For structural ports whose type is external to the export, the MagicDraw
+    //   referenceExtension/referentPath is used, e.g. InputOutputDriver::p3 ->
+    //   Solution::Driving::Logical Interfaces::DrivingCoordinator::DigActualMeasAcceleratorPedal.
+    // - Two aggregate items are still inferred because the XMI activity contains aggregate flows
+    //   without a single direct UML pin type: AcquiredSupplyVoltages_Item and
+    //   ChipSupplyRailsActualVoltages_Item.
 
     // XMI action label: Acquire supply voltages
     action def AcquireSupplyVoltages {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        in item input1 : VoltageTemperatureMonitoringActivityItem;
-        in item input2 : VoltageTemperatureMonitoringActivityItem;
-        in item input3 : VoltageTemperatureMonitoringActivityItem;
-        in item input4 : VoltageTemperatureMonitoringActivityItem;
-        in item input6 : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
+        in item batterySupply : BatterySupply_Item;
+        in item canFlexrayPhysicalSupplyVoltage : CANFlexray_PhysicalSupplyVoltage_Item;
+        in item vdd3v3PhysicalSupplyVoltage : InterMicrocontrollers_PhysicalSupplyVoltage_Item;
+        in item vdd5dPhysicalSupplyVoltage : VDD5D_PhysicalSupplyVoltage_Item;
+        in item ethPhysicalSupplyVoltage : ETH_PhysicalSupplyVoltage_Item;
+        in item wakeupVBATBusCommPhysicalSupplyVoltage : WakeupVBATBusComm_PhysicalSupplyVoltage_Item;
+        out item acquiredSupplyVoltages : AcquiredSupplyVoltages_Item;
     }
 
     // XMI action label: Extract digital values for supply voltages from ADC hardware
     action def ExtractDigitalValuesForSupplyVoltagesFromADCHardware {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        out item output1 : VoltageTemperatureMonitoringActivityItem;
-        out item output2 : VoltageTemperatureMonitoringActivityItem;
-        out item output3 : VoltageTemperatureMonitoringActivityItem;
-        out item output4 : VoltageTemperatureMonitoringActivityItem;
-        out item output5 : VoltageTemperatureMonitoringActivityItem;
-        out item output6 : VoltageTemperatureMonitoringActivityItem;
-        out item output7 : VoltageTemperatureMonitoringActivityItem;
-    }
-
-    // XMI action label: Configure die temperature sensors
-    action def ConfigureDieTemperatureSensors {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
-    }
-
-    // XMI action label: Convert die temperatures to degree Celsius
-    action def ConvertDieTemperaturesToDegreeCelsius {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
-    }
-
-    // XMI action label: Acquire die temperatures from DTS sensors
-    action def AcquireDieTemperaturesFromDTSSensors {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
+        in item acquiredSupplyVoltages : AcquiredSupplyVoltages_Item;
+        out item canFlexrayRawSupplyVoltage : CANFlexray_RawSupplyVoltage_Item;
+        out item clamp30UVMeasRawVoltage : Clamp30UVMeasRawVoltage_Item;
+        out item clamp30OVMeasRawVoltage : Clamp30OVMeasRawVoltage_Item;
+        out item interMicrocontrollersRawSupplyVoltage : InterMicrocontrollers_RawSupplyVoltage_Item;
+        out item vdd5dRawSupplyVoltage : VDD5D_RawSupplyVoltage_Item;
+        out item ethRawSupplyVoltage : ETH_RawSupplyVoltage_Item;
+        out item wakeupVBATBusCommRawSupplyVoltage : WakeupVBATBusComm_RawSupplyVoltage_Item;
     }
 
     // XMI action label: Convert raw values to properly scaled values
     action def ConvertRawValuesToProperlyScaledValues {
-        in item input1 : VoltageTemperatureMonitoringActivityItem;
-        in item input2 : VoltageTemperatureMonitoringActivityItem;
-        in item input3 : VoltageTemperatureMonitoringActivityItem;
-        in item input4 : VoltageTemperatureMonitoringActivityItem;
-        in item input5 : VoltageTemperatureMonitoringActivityItem;
-        in item input6 : VoltageTemperatureMonitoringActivityItem;
-        in item input11 : VoltageTemperatureMonitoringActivityItem;
-        out item output1 : VoltageTemperatureMonitoringActivityItem;
-        out item output2 : VoltageTemperatureMonitoringActivityItem;
-        out item output3 : VoltageTemperatureMonitoringActivityItem;
-        out item output4 : VoltageTemperatureMonitoringActivityItem;
-        out item output5 : VoltageTemperatureMonitoringActivityItem;
-        out item output6 : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
+        in item canFlexrayRawSupplyVoltage : CANFlexray_RawSupplyVoltage_Item;
+        in item clamp30UVMeasRawVoltage : Clamp30UVMeasRawVoltage_Item;
+        in item clamp30OVMeasRawVoltage : Clamp30OVMeasRawVoltage_Item;
+        in item interMicrocontrollersRawSupplyVoltage : InterMicrocontrollers_RawSupplyVoltage_Item;
+        in item vdd5dRawSupplyVoltage : VDD5D_RawSupplyVoltage_Item;
+        in item ethRawSupplyVoltage : ETH_RawSupplyVoltage_Item;
+        in item wakeupVBATBusCommRawSupplyVoltage : WakeupVBATBusComm_RawSupplyVoltage_Item;
+        out item canFlexrayActualSupplyVoltage : CANFlexRay_ActualSupplyVoltage_Item;
+        out item clamp30UVMeasActualVoltage : Clamp30UVMeasActualVoltage_Item;
+        out item clamp30OVMeasActualVoltage : Clamp30OVMeasActualVoltage_Item;
+        out item interMicrocontrollersActualSupplyVoltage : InterMicrocontrollersComm_ActualSupplyVoltage_Item;
+        out item vdd5dActualSupplyVoltage : VDD5DActualSupplyVoltage_Item;
+        out item ethActualSupplyVoltage : ETH_ActualSupplyVoltage_Item;
+        out item wakeupVBATBusCommActualSupplyVoltage : WakeupVBATComm_ActualSupplyVoltage_Item;
+    }
+
+    // XMI action label: Configure die temperature sensors
+    action def ConfigureDieTemperatureSensors {
+        in item dieTemperaturesThresholdConfig : DieTemperaturesThresholdConfig_Item;
+        out item dieTemperaturesThresholdConfigHw : DieTemperaturesThresholdConfigHW_Item;
+    }
+
+    // XMI action label: Acquire die temperatures from DTS sensors
+    action def AcquireDieTemperaturesFromDTSSensors {
+        in item rawDieTemperatures : RawDieTemperatures_Item;
+        out item rawDieTemperaturesOut : RawDieTemperatures_Item;
+    }
+
+    // XMI action label: Convert die temperatures to degree Celsius
+    action def ConvertDieTemperaturesToDegreeCelsius {
+        in item rawDieTemperatures : RawDieTemperatures_Item;
+        out item actualDieTemperatures : ActualDieTemperatures_Item;
     }
 
     // XMI action label: Configure external and internal voltage rails
     action def ConfigureExternalAndInternalVoltageRails {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        in item input1 : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
-        out item output1 : VoltageTemperatureMonitoringActivityItem;
+        in item chipExternalVoltageRailsThresholdsConfig : ChipExternalVoltageRailsThresholdsConfig_Item;
+        in item chipInternalVoltageRailsThresholdsConfig : ChipInternalVoltageRailsThresholdsConfig_Item;
+        out item chipExternalSupplyVoltageRailsThresholdsConfigHw : ChipExternalVoltageRailsThresholdsConfigHW_Item;
+        out item chipInternalSupplyVoltageRailsThresholdsConfigHw : ChipInternalVoltageRailsThresholdsConfigHW_Item;
     }
 
     // XMI action label: Monitoring of Chip external and internal supply voltage rails
     action def MonitoringOfChipExternalAndInternalSupplyVoltageRails {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        in item input1 : VoltageTemperatureMonitoringActivityItem;
-        in item input2 : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
+        in item chipExternalSupplyVoltageRailsThresholdsConfigHw : ChipExternalVoltageRailsThresholdsConfigHW_Item;
+        in item chipInternalSupplyVoltageRailsThresholdsConfigHw : ChipInternalVoltageRailsThresholdsConfigHW_Item;
+        in item chipSupplyRailsActualVoltages : ChipSupplyRailsActualVoltages_Item;
+        out item alarmSignalInfo : ErrorAlarmSignal_Item;
     }
 
     // XMI action label: Monitoring of die temperatures
     action def MonitoringOfDieTemperatures {
-        in item input : VoltageTemperatureMonitoringActivityItem;
-        in item input1 : VoltageTemperatureMonitoringActivityItem;
-        out item output : VoltageTemperatureMonitoringActivityItem;
+        in item dieTemperaturesThresholdConfigHw : DieTemperaturesThresholdConfigHW_Item;
+        in item rawDieTemperatures : RawDieTemperatures_Item;
+        out item alarmSignalInfo : ErrorAlarmSignal_Item;
     }
 
     action def SignalConditioningAndProcessing_ASIL_D_VoltageTemperatureMon {
-        // Generic activity boundary inputs/outputs corresponding to unnamed
-        // UML ActivityParameterNodes in the XMI.
-        in item activityInput1 : VoltageTemperatureMonitoringActivityItem;
-        in item activityInput2 : VoltageTemperatureMonitoringActivityItem;
-        in item activityInput3 : VoltageTemperatureMonitoringActivityItem;
-        in item activityInput4 : VoltageTemperatureMonitoringActivityItem;
-        in item activityInput5 : VoltageTemperatureMonitoringActivityItem;
-        in item activityInput6 : VoltageTemperatureMonitoringActivityItem;
-        in item activityInputDieTemperatureThresholdConfig : VoltageTemperatureMonitoringActivityItem;
-        in item activityInputChipExternalVoltageRailsThresholdConfig : VoltageTemperatureMonitoringActivityItem;
-        in item activityInputChipInternalVoltageRailsThresholdConfig : VoltageTemperatureMonitoringActivityItem;
-        in item activityInputDieTemperatureAcquisition : VoltageTemperatureMonitoringActivityItem;
-        in item activityInputMonitoringSupplyRailsThresholdConfig : VoltageTemperatureMonitoringActivityItem;
+        in item batterySupply : BatterySupply_Item;
+        in item canFlexrayPhysicalSupplyVoltage : CANFlexray_PhysicalSupplyVoltage_Item;
+        in item vdd3v3PhysicalSupplyVoltage : InterMicrocontrollers_PhysicalSupplyVoltage_Item;
+        in item vdd5dPhysicalSupplyVoltage : VDD5D_PhysicalSupplyVoltage_Item;
+        in item ethPhysicalSupplyVoltage : ETH_PhysicalSupplyVoltage_Item;
+        in item wakeupVBATBusCommPhysicalSupplyVoltage : WakeupVBATBusComm_PhysicalSupplyVoltage_Item;
 
-        out item activityOutput1 : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutput2 : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutput3 : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutput4 : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutput5 : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutput6 : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutputConvertedReference : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutputConvertedDieTemperature : VoltageTemperatureMonitoringActivityItem;
-        out item activityOutputMonitoringResult : VoltageTemperatureMonitoringActivityItem;
+        in item dieTemperaturesThresholdConfig : DieTemperaturesThresholdConfig_Item;
+        in item chipExternalVoltageRailsThresholdsConfig : ChipExternalVoltageRailsThresholdsConfig_Item;
+        in item chipInternalVoltageRailsThresholdsConfig : ChipInternalVoltageRailsThresholdsConfig_Item;
+        in item rawDieTemperatures : RawDieTemperatures_Item;
+        in item chipSupplyRailsActualVoltages : ChipSupplyRailsActualVoltages_Item;
+
+        out item canFlexrayActualSupplyVoltage : CANFlexRay_ActualSupplyVoltage_Item;
+        out item clamp30UVMeasActualVoltage : Clamp30UVMeasActualVoltage_Item;
+        out item clamp30OVMeasActualVoltage : Clamp30OVMeasActualVoltage_Item;
+        out item interMicrocontrollersActualSupplyVoltage : InterMicrocontrollersComm_ActualSupplyVoltage_Item;
+        out item vdd5dActualSupplyVoltage : VDD5DActualSupplyVoltage_Item;
+        out item ethActualSupplyVoltage : ETH_ActualSupplyVoltage_Item;
+        out item wakeupVBATBusCommActualSupplyVoltage : WakeupVBATComm_ActualSupplyVoltage_Item;
+        out item actualDieTemperatures : ActualDieTemperatures_Item;
+        out item alarmSignalInfo : ErrorAlarmSignal_Item;
 
         action acquireSupplyVoltages : AcquireSupplyVoltages;
         action extractDigitalValuesForSupplyVoltagesFromADCHardware : ExtractDigitalValuesForSupplyVoltagesFromADCHardware;
@@ -639,61 +749,118 @@ package SignalConditioningAndProcessing_XmiResolved {
         action monitoringOfDieTemperatures : MonitoringOfDieTemperatures;
 
         // Control-flow topology translated from UML ControlFlow edges.
-        // The XMI has an InitialNode and two ForkNodes. These are represented
-        // here by independent start actions plus explicit action-to-action
-        // successions, avoiding non-portable pseudo initial/fork action syntax.
+        // Uses native SysML v2 control nodes instead of synthetic start/final/fork actions.
+        // XMI pattern: InitialNode -> ForkNode; two UML ForkNodes; one ActivityFinalNode; three FlowFinalNodes.
+        fork initialFork;
+        fork afterExtractFork;
+
+        succession startToInitialFork first start then initialFork;
+
+        succession initialForkToAcquireSupplyVoltages first initialFork
+            then acquireSupplyVoltages;
+        succession initialForkToConfigureDieTemperatureSensors first initialFork
+            then configureDieTemperatureSensors;
+        succession initialForkToConfigureExternalAndInternalVoltageRails first initialFork
+            then configureExternalAndInternalVoltageRails;
+        succession initialForkToAcquireDieTemperatures first initialFork
+            then acquireDieTemperaturesFromDTSSensors;
+
         succession acquireSupplyVoltagesToExtractDigitalValues first acquireSupplyVoltages
             then extractDigitalValuesForSupplyVoltagesFromADCHardware;
-        succession extractDigitalValuesToConvertRawValues first extractDigitalValuesForSupplyVoltagesFromADCHardware
+        succession extractDigitalValuesToAfterExtractFork first extractDigitalValuesForSupplyVoltagesFromADCHardware
+            then afterExtractFork;
+        succession afterExtractForkToConvertRawValues first afterExtractFork
             then convertRawValuesToProperlyScaledValues;
-        succession extractDigitalValuesToConvertDieTemperatures first extractDigitalValuesForSupplyVoltagesFromADCHardware
+        succession afterExtractForkToConvertDieTemperatures first afterExtractFork
             then convertDieTemperaturesToDegreeCelsius;
+
         succession configureDieTemperatureSensorsToMonitoringOfDieTemperatures first configureDieTemperatureSensors
             then monitoringOfDieTemperatures;
         succession configureVoltageRailsToMonitoringOfSupplyRails first configureExternalAndInternalVoltageRails
             then monitoringOfChipExternalAndInternalSupplyVoltageRails;
 
-        // Object-flow topology translated from UML ObjectFlow edges.
-        flow from activityInput1 to acquireSupplyVoltages.input;
-        flow from activityInput2 to acquireSupplyVoltages.input1;
-        flow from activityInput3 to acquireSupplyVoltages.input2;
-        flow from activityInput4 to acquireSupplyVoltages.input3;
-        flow from activityInput5 to acquireSupplyVoltages.input4;
-        flow from activityInput6 to acquireSupplyVoltages.input6;
-        flow from acquireSupplyVoltages.output to extractDigitalValuesForSupplyVoltagesFromADCHardware.input;
+        // Terminal control flows translated to native SysML v2 done.
+        // One UML ActivityFinalNode and three UML FlowFinalNodes were present in the XMI;
+        // SysML v2 textual action notation uses done as the terminal control point.
+        succession convertRawValuesToDone first convertRawValuesToProperlyScaledValues
+            then done;
+        succession monitoringSupplyRailsToDone first monitoringOfChipExternalAndInternalSupplyVoltageRails
+            then done;
+        succession acquireDieTemperaturesToDone first acquireDieTemperaturesFromDTSSensors
+            then done;
+        succession monitoringDieTemperaturesToDone first monitoringOfDieTemperatures
+            then done;
 
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output1 to convertRawValuesToProperlyScaledValues.input1;
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output2 to convertRawValuesToProperlyScaledValues.input2;
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output3 to convertRawValuesToProperlyScaledValues.input3;
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output4 to convertRawValuesToProperlyScaledValues.input4;
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output5 to convertRawValuesToProperlyScaledValues.input5;
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output6 to convertRawValuesToProperlyScaledValues.input6;
-        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.output7 to convertRawValuesToProperlyScaledValues.input11;
+        // Object-flow topology translated from UML ObjectFlow edges, with semantic pin names
+        // and item types resolved from structural port type references wherever possible.
+        // Activity boundary flows use the in/out items of this action directly, matching
+        // the earlier item-based activity boundary style.
+        flow from batterySupply to acquireSupplyVoltages.batterySupply;
+        flow from canFlexrayPhysicalSupplyVoltage to acquireSupplyVoltages.canFlexrayPhysicalSupplyVoltage;
+        flow from vdd3v3PhysicalSupplyVoltage to acquireSupplyVoltages.vdd3v3PhysicalSupplyVoltage;
+        flow from vdd5dPhysicalSupplyVoltage to acquireSupplyVoltages.vdd5dPhysicalSupplyVoltage;
+        flow from ethPhysicalSupplyVoltage to acquireSupplyVoltages.ethPhysicalSupplyVoltage;
+        flow from wakeupVBATBusCommPhysicalSupplyVoltage to acquireSupplyVoltages.wakeupVBATBusCommPhysicalSupplyVoltage;
+        flow from acquireSupplyVoltages.acquiredSupplyVoltages
+            to extractDigitalValuesForSupplyVoltagesFromADCHardware.acquiredSupplyVoltages;
 
-        flow from convertRawValuesToProperlyScaledValues.output1 to activityOutput1;
-        flow from convertRawValuesToProperlyScaledValues.output2 to activityOutput2;
-        flow from convertRawValuesToProperlyScaledValues.output3 to activityOutput3;
-        flow from convertRawValuesToProperlyScaledValues.output4 to activityOutput4;
-        flow from convertRawValuesToProperlyScaledValues.output5 to activityOutput5;
-        flow from convertRawValuesToProperlyScaledValues.output6 to activityOutput6;
-        flow from convertRawValuesToProperlyScaledValues.output to activityOutputConvertedReference;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.canFlexrayRawSupplyVoltage
+            to convertRawValuesToProperlyScaledValues.canFlexrayRawSupplyVoltage;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.clamp30UVMeasRawVoltage
+            to convertRawValuesToProperlyScaledValues.clamp30UVMeasRawVoltage;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.clamp30OVMeasRawVoltage
+            to convertRawValuesToProperlyScaledValues.clamp30OVMeasRawVoltage;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.interMicrocontrollersRawSupplyVoltage
+            to convertRawValuesToProperlyScaledValues.interMicrocontrollersRawSupplyVoltage;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.vdd5dRawSupplyVoltage
+            to convertRawValuesToProperlyScaledValues.vdd5dRawSupplyVoltage;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.ethRawSupplyVoltage
+            to convertRawValuesToProperlyScaledValues.ethRawSupplyVoltage;
+        flow from extractDigitalValuesForSupplyVoltagesFromADCHardware.wakeupVBATBusCommRawSupplyVoltage
+            to convertRawValuesToProperlyScaledValues.wakeupVBATBusCommRawSupplyVoltage;
 
-        flow from activityInputDieTemperatureThresholdConfig to configureDieTemperatureSensors.input;
-        flow from configureDieTemperatureSensors.output to monitoringOfDieTemperatures.input;
+        flow from convertRawValuesToProperlyScaledValues.canFlexrayActualSupplyVoltage
+            to canFlexrayActualSupplyVoltage;
+        flow from convertRawValuesToProperlyScaledValues.clamp30UVMeasActualVoltage
+            to clamp30UVMeasActualVoltage;
+        flow from convertRawValuesToProperlyScaledValues.clamp30OVMeasActualVoltage
+            to clamp30OVMeasActualVoltage;
+        flow from convertRawValuesToProperlyScaledValues.interMicrocontrollersActualSupplyVoltage
+            to interMicrocontrollersActualSupplyVoltage;
+        flow from convertRawValuesToProperlyScaledValues.vdd5dActualSupplyVoltage
+            to vdd5dActualSupplyVoltage;
+        flow from convertRawValuesToProperlyScaledValues.ethActualSupplyVoltage
+            to ethActualSupplyVoltage;
+        flow from convertRawValuesToProperlyScaledValues.wakeupVBATBusCommActualSupplyVoltage
+            to wakeupVBATBusCommActualSupplyVoltage;
 
-        flow from activityInputChipExternalVoltageRailsThresholdConfig to configureExternalAndInternalVoltageRails.input;
-        flow from activityInputChipInternalVoltageRailsThresholdConfig to configureExternalAndInternalVoltageRails.input1;
-        flow from configureExternalAndInternalVoltageRails.output to monitoringOfChipExternalAndInternalSupplyVoltageRails.input;
-        flow from configureExternalAndInternalVoltageRails.output1 to monitoringOfChipExternalAndInternalSupplyVoltageRails.input1;
-        flow from activityInputMonitoringSupplyRailsThresholdConfig to monitoringOfChipExternalAndInternalSupplyVoltageRails.input2;
+        flow from dieTemperaturesThresholdConfig
+            to configureDieTemperatureSensors.dieTemperaturesThresholdConfig;
+        flow from configureDieTemperatureSensors.dieTemperaturesThresholdConfigHw
+            to monitoringOfDieTemperatures.dieTemperaturesThresholdConfigHw;
 
-        flow from activityInputDieTemperatureAcquisition to acquireDieTemperaturesFromDTSSensors.input;
-        flow from acquireDieTemperaturesFromDTSSensors.output to convertDieTemperaturesToDegreeCelsius.input;
-        flow from convertDieTemperaturesToDegreeCelsius.output to activityOutputConvertedDieTemperature;
-        flow from activityInputDieTemperatureAcquisition to monitoringOfDieTemperatures.input1;
+        flow from chipExternalVoltageRailsThresholdsConfig
+            to configureExternalAndInternalVoltageRails.chipExternalVoltageRailsThresholdsConfig;
+        flow from chipInternalVoltageRailsThresholdsConfig
+            to configureExternalAndInternalVoltageRails.chipInternalVoltageRailsThresholdsConfig;
+        flow from configureExternalAndInternalVoltageRails.chipExternalSupplyVoltageRailsThresholdsConfigHw
+            to monitoringOfChipExternalAndInternalSupplyVoltageRails.chipExternalSupplyVoltageRailsThresholdsConfigHw;
+        flow from configureExternalAndInternalVoltageRails.chipInternalSupplyVoltageRailsThresholdsConfigHw
+            to monitoringOfChipExternalAndInternalSupplyVoltageRails.chipInternalSupplyVoltageRailsThresholdsConfigHw;
+        flow from chipSupplyRailsActualVoltages
+            to monitoringOfChipExternalAndInternalSupplyVoltageRails.chipSupplyRailsActualVoltages;
 
-        flow from monitoringOfChipExternalAndInternalSupplyVoltageRails.output to activityOutputMonitoringResult;
-        flow from monitoringOfDieTemperatures.output to activityOutputMonitoringResult;
+        flow from rawDieTemperatures to acquireDieTemperaturesFromDTSSensors.rawDieTemperatures;
+        flow from acquireDieTemperaturesFromDTSSensors.rawDieTemperaturesOut
+            to convertDieTemperaturesToDegreeCelsius.rawDieTemperatures;
+        flow from convertDieTemperaturesToDegreeCelsius.actualDieTemperatures
+            to actualDieTemperatures;
+        flow from rawDieTemperatures to monitoringOfDieTemperatures.rawDieTemperatures;
+
+        flow from monitoringOfChipExternalAndInternalSupplyVoltageRails.alarmSignalInfo
+            to alarmSignalInfo;
+        flow from monitoringOfDieTemperatures.alarmSignalInfo
+            to alarmSignalInfo;
     }
 
     part def SignalConditioningAndProcessing {
@@ -773,31 +940,45 @@ package SignalConditioningAndProcessing_XmiResolved {
 
         // Swimlane/responsibility allocations for the action-view renderer.
         // MagicDraw swimlanes are represented semantically as SysML v2 allocations
-        // from nested action usages to the responsible internal logical-function part.
+        // from nested action usages in the composed activity to performed action usages
+        // owned by the responsible internal logical-function parts.
+        // This is stricter than allocating directly to the part usages and is closer
+        // to the action-to-action allocation pattern used by the SysML v2 examples.
         // For this ASIL-D activity export, the UML ActivityPartition elements exist,
         // but the exported partitions do not carry usable represents/node membership;
         // these allocations are therefore inferred from the action labels and the
         // existing logical-function decomposition.
         allocate voltageTemperatureMonitoring.acquireSupplyVoltages
-            to signalConversion;
+            to signalConversion.acquireSupplyVoltagesPerformed;
         allocate voltageTemperatureMonitoring.extractDigitalValuesForSupplyVoltagesFromADCHardware
-            to inputOutputDriver;
+            to inputOutputDriver.extractDigitalValuesForSupplyVoltagesFromADCHardwarePerformed;
         allocate voltageTemperatureMonitoring.convertRawValuesToProperlyScaledValues
-            to voltageTemperatureSignalProcessing;
+            to voltageTemperatureSignalProcessing.convertRawValuesToProperlyScaledValuesPerformed;
         allocate voltageTemperatureMonitoring.monitoringOfChipExternalAndInternalSupplyVoltageRails
-            to voltageTemperatureSignalProcessing;
+            to voltageTemperatureSignalProcessing.monitoringOfChipExternalAndInternalSupplyVoltageRailsPerformed;
         allocate voltageTemperatureMonitoring.configureDieTemperatureSensors
-            to onChipVTSupervisionDriver;
+            to onChipVTSupervisionDriver.configureDieTemperatureSensorsPerformed;
         allocate voltageTemperatureMonitoring.configureExternalAndInternalVoltageRails
-            to onChipVTSupervisionDriver;
+            to onChipVTSupervisionDriver.configureExternalAndInternalVoltageRailsPerformed;
         allocate voltageTemperatureMonitoring.acquireDieTemperaturesFromDTSSensors
-            to onChipVTSupervisionDriver;
+            to onChipVTSupervisionDriver.acquireDieTemperaturesFromDTSSensorsPerformed;
         allocate voltageTemperatureMonitoring.convertDieTemperaturesToDegreeCelsius
-            to onChipVTSupervisionDriver;
+            to onChipVTSupervisionDriver.convertDieTemperaturesToDegreeCelsiusPerformed;
         allocate voltageTemperatureMonitoring.monitoringOfDieTemperatures
-            to voltageTemperatureSignalProcessing;
+            to voltageTemperatureSignalProcessing.monitoringOfDieTemperaturesPerformed;
 
         // Internal and delegation connectors resolved from UML ownedConnector elements.
+
+
+        // Additional connector semantics from the earlier logical function diagram/XMI handoff,
+        // now with structural port types resolved from href/referenceExtension paths.
+        interface digActualMeasAcceleratorPedalConnection connect
+            signalConversion.p4
+                to inputOutputDriver.p3;
+
+        interface acceleratorPedalHwCtrlConnection connect
+            inputOutputDriver.p8
+                to signalConversion.p6;
         interface batterySupply_to_BatterySupply_In_connection connect
             BatterySupply
                 to signalConversion.BatterySupply_In;
