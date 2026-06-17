@@ -590,15 +590,31 @@ export async function applyHierarchicalLayout(
 
 // ── Actions view layout ───────────────────────────────────────────────────────
 
+// Actions-view ELK options.  Tuned for readable action diagrams:
+//   • Wide layer gaps so guarded transitions / branch labels don't crowd nodes.
+//   • Generous node-node spacing so port-rich actions don't visually merge.
+//   • Edge-node / edge-edge spacing prevents item-flow and succession edges
+//     from stacking or grazing node faces.
+//   • thoroughness=70 + greedy-switch + balanced node placement aggressively
+//     minimise crossings, important for fan-out forks and fan-in joins.
+//   • unnecessaryBendpoints=true keeps orthogonal routes simple.
 const BEHAVIOR_ELK_OPTIONS: Record<string, string> = {
-  'elk.algorithm':                             'layered',
-  'elk.direction':                             'DOWN',
-  'elk.edgeRouting':                           'ORTHOGONAL',
-  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-  'elk.layered.nodePlacement.strategy':        'BRANDES_KOEPF',
-  'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-  'elk.spacing.nodeNode':                      '48',
-  'elk.padding':                               '[top=40,left=40,bottom=40,right=40]',
+  'elk.algorithm':                                                    'layered',
+  'elk.direction':                                                    'DOWN',
+  'elk.edgeRouting':                                                  'ORTHOGONAL',
+  'elk.layered.crossingMinimization.strategy':                        'LAYER_SWEEP',
+  'elk.layered.crossingMinimization.greedySwitch.activationThreshold': '40',
+  'elk.layered.nodePlacement.strategy':                               'BRANDES_KOEPF',
+  'elk.layered.nodePlacement.bk.fixedAlignment':                      'BALANCED',
+  'elk.layered.thoroughness':                                         '70',
+  'elk.layered.unnecessaryBendpoints':                                'true',
+  'elk.layered.spacing.nodeNodeBetweenLayers':                        '110',
+  'elk.layered.spacing.edgeNodeBetweenLayers':                        '30',
+  'elk.layered.spacing.edgeEdgeBetweenLayers':                        '20',
+  'elk.spacing.nodeNode':                                             '70',
+  'elk.spacing.edgeNode':                                             '25',
+  'elk.spacing.edgeEdge':                                             '18',
+  'elk.padding':                                                      '[top=50,left=50,bottom=50,right=50]',
 };
 
 /** Single ELK layered run — returns a nodeId→position map. */
@@ -644,7 +660,7 @@ export async function applyBehaviorLayout(
   if (!laneMap || laneMap.size === 0) return runBehaviorElk(nodes, edges);
 
   // ── Per-lane column layout ──────────────────────────────────────────────────
-  const LANE_COL_GAP = 120;   // horizontal gap between swimlane columns (px)
+  const LANE_COL_GAP = 170;   // horizontal gap between swimlane columns (px) — wide enough that cross-lane succession edges have routing room outside both containers
 
   const byLane = new Map<number, Array<{ id: string; width: number; height: number }>>();
   const unallocated: Array<{ id: string; width: number; height: number }> = [];
