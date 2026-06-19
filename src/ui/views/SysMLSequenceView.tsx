@@ -67,6 +67,19 @@ function semanticChildren(
 
 type Endpoint = { participant: string; event: string };
 
+/**
+ * Decode a message endpoint (ParameterMembership child of a FlowUsage).
+ *
+ * Two syntactic forms produced by the official parser:
+ *   1. Dotted: `from acpdCdd.AcpdCdd_Activation_source`
+ *      ParameterMembership → EventOccurrenceUsage → ReferenceSubsetting → Feature
+ *        → FeatureChaining[participant], FeatureChaining[event]
+ *   2. Direct: `from acpdSignalProcessing` (participant lifeline only, no event)
+ *      ParameterMembership → EventOccurrenceUsage → ReferenceSubsetting (label = participant)
+ *
+ * Form (2) is what the demo's sequence action def uses for every message, so
+ * missing it caused every lifeline to appear empty.
+ */
 function resolveEndpoint(
   paramMembId: string,
   childrenOf: Map<string, string[]>,
@@ -75,15 +88,20 @@ function resolveEndpoint(
   for (const evtId of childrenOf.get(paramMembId) ?? []) {
     if (nodeById.get(evtId)?.type !== 'EventOccurrenceUsage') continue;
     for (const refId of childrenOf.get(evtId) ?? []) {
-      if (nodeById.get(refId)?.type !== 'ReferenceSubsetting') continue;
+      const refNode = nodeById.get(refId);
+      if (refNode?.type !== 'ReferenceSubsetting') continue;
+      // Dotted form: FeatureChaining children list participant + event.
       for (const featId of childrenOf.get(refId) ?? []) {
         if (nodeById.get(featId)?.type !== 'Feature') continue;
         const chains = (childrenOf.get(featId) ?? [])
           .map(id => nodeById.get(id))
           .filter((n): n is GraphNode => n?.type === 'FeatureChaining');
-        if (chains.length >= 2) {
-          return { participant: chains[0].label, event: chains[1].label };
-        }
+        if (chains.length >= 2) return { participant: chains[0].label, event: chains[1].label };
+        if (chains.length === 1) return { participant: chains[0].label, event: '' };
+      }
+      // Direct form: ReferenceSubsetting.label is the participant.
+      if (refNode.label && refNode.label !== 'ReferenceSubsetting') {
+        return { participant: refNode.label, event: '' };
       }
     }
   }
@@ -141,10 +159,14 @@ interface IfBranches {
 /**
  * Decode an IfActionUsage node into its condition label and branch FlowUsages.
  *
- * ifTest child:
- *   FeatureReferenceExpression → Membership[name]          (if flag)
- *   OperatorExpression → ... → Membership[name]            (if not flag)
- * thenClause / elseClause: ActionUsage nodes containing FlowUsage children.
+ * Children layout (positional, per SysML v2 §11.4):
+ *   ParameterMembership[0]  → ifTest (FeatureReferenceExpression or OperatorExpression)
+ *   ParameterMembership[1]  → then-branch ActionUsage (any name; demo files use
+ *                              names like `enableSupplyBranch`, not `thenClause`)
+ *   ParameterMembership[2]? → else-branch ActionUsage (any name)
+ *
+ * The earlier label-based match for `thenClause` / `elseClause` was too strict
+ * and silently dropped both branches in real demos.
  */
 function extractIfBranches(
   ifId: string,
@@ -156,32 +178,64 @@ function extractIfBranches(
   const thenFlows: GraphNode[] = [];
   const elseFlows: GraphNode[] = [];
 
-  for (const pmId of childrenOf.get(ifId) ?? []) {
-    const pm = nodeById.get(pmId);
-    if (!pm || pm.type !== 'ParameterMembership') continue;
+  const params = (childrenOf.get(ifId) ?? [])
+    .filter(id => nodeById.get(id)?.type === 'ParameterMembership');
 
-    for (const kid of childrenOf.get(pmId) ?? []) {
+  // Param 0 → condition expression
+  if (params.length > 0) {
+    for (const kid of childrenOf.get(params[0]) ?? []) {
       const n = nodeById.get(kid);
       if (!n) continue;
-
       if (n.type === 'FeatureReferenceExpression') {
-        // Direct: if flag
         const name = findMembershipLabel(kid, childrenOf, nodeById);
         if (name) condition = name;
       } else if (n.type === 'OperatorExpression') {
-        // Negated: if not flag
         const name = findMembershipLabel(kid, childrenOf, nodeById);
         if (name) { condition = name; negated = true; }
-      } else if (n.type === 'ActionUsage' && n.label === 'thenClause') {
-        thenFlows.push(...flowsInActionUsage(kid, childrenOf, nodeById));
-      } else if (n.type === 'ActionUsage' && n.label === 'elseClause') {
-        elseFlows.push(...flowsInActionUsage(kid, childrenOf, nodeById));
       }
     }
   }
 
+  // Param 1 → then-branch ActionUsage; param 2 → else-branch ActionUsage.
+  const collectBranchFlows = (pmId: string, target: GraphNode[]) => {
+    for (const kid of childrenOf.get(pmId) ?? []) {
+      if (nodeById.get(kid)?.type === 'ActionUsage') {
+        target.push(...flowsInActionUsage(kid, childrenOf, nodeById));
+      }
+    }
+  };
+  if (params.length > 1) collectBranchFlows(params[1], thenFlows);
+  if (params.length > 2) collectBranchFlows(params[2], elseFlows);
+
   if (negated) condition = `not ${condition}`;
   return { condition, thenFlows, elseFlows };
+}
+
+/**
+ * Decode a WhileLoopActionUsage into its body FlowUsages.
+ *
+ *   ParameterMembership[0] → whileTest (often empty in modeling-from-XMI code)
+ *   ParameterMembership[1] → body ActionUsage containing FlowUsage children
+ *
+ * Renders as a `loop` combined fragment with one branch.
+ */
+function extractLoopBody(
+  loopId: string,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+): GraphNode[] {
+  const flows: GraphNode[] = [];
+  const params = (childrenOf.get(loopId) ?? [])
+    .filter(id => nodeById.get(id)?.type === 'ParameterMembership');
+  if (params.length < 2) return flows;
+  // Body is the LAST parameter (after whileTest).
+  const bodyParam = params[params.length - 1];
+  for (const kid of childrenOf.get(bodyParam) ?? []) {
+    if (nodeById.get(kid)?.type === 'ActionUsage') {
+      flows.push(...flowsInActionUsage(kid, childrenOf, nodeById));
+    }
+  }
+  return flows;
 }
 
 /** Logical negation of a guard label (strips or adds "not "). */
@@ -191,13 +245,17 @@ function negateCondition(cond: string): string {
 
 // ── Data types ─────────────────────────────────────────────────────────────────
 
+type FragmentKind = 'alt' | 'loop';
+
 interface ParsedMessage {
-  id:     string;
-  label:  string;
-  from:   Endpoint | null;
-  to:     Endpoint | null;
-  line?:  number;
-  guard?: string;
+  id:               string;
+  label:            string;
+  from:             Endpoint | null;
+  to:               Endpoint | null;
+  line?:            number;
+  guard?:           string;
+  fragmentBlockId?: string;       // groups consecutive messages into one combined fragment
+  fragmentKind?:    FragmentKind; // 'alt' for if/else, 'loop' for while-loops
 }
 
 interface AltBranchLayout {
@@ -207,6 +265,7 @@ interface AltBranchLayout {
 }
 
 interface AltBlockLayout {
+  kind:     FragmentKind;
   topY:     number;
   bottomY:  number;
   branches: AltBranchLayout[];
@@ -225,6 +284,8 @@ function resolveFlow(
   childrenOf: Map<string, string[]>,
   nodeById: Map<string, GraphNode>,
   guard?: string,
+  fragmentBlockId?: string,
+  fragmentKind?: FragmentKind,
 ): ParsedMessage {
   const paramMembs = (childrenOf.get(flow.id) ?? [])
     .map(id => nodeById.get(id))
@@ -236,7 +297,9 @@ function resolveFlow(
     from:  m0 ? resolveEndpoint(m0.id, childrenOf, nodeById) : null,
     to:    m1 ? resolveEndpoint(m1.id, childrenOf, nodeById) : null,
     line:  flow.startLine,
-    ...(guard !== undefined ? { guard } : {}),
+    ...(guard           !== undefined ? { guard }           : {}),
+    ...(fragmentBlockId !== undefined ? { fragmentBlockId } : {}),
+    ...(fragmentKind    !== undefined ? { fragmentKind }    : {}),
   };
 }
 
@@ -254,10 +317,21 @@ function parseSequenceDefs(
     if (n.type !== 'PartDefinition' && n.type !== 'ActionDefinition') continue;
 
     const sChildren = semanticChildren(n.id, childrenOf, nodeById);
-    if (!sChildren.some(c => c.type === 'FlowUsage' || c.type === 'IfActionUsage')) continue;
+    const SEQ_CHILD_TYPES = new Set(['FlowUsage', 'IfActionUsage', 'WhileLoopActionUsage']);
+    if (!sChildren.some(c => SEQ_CHILD_TYPES.has(c.type))) continue;
 
-    const sorted       = sChildren.slice().sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
-    const participants = sorted.filter(c => c.type === 'PartUsage');
+    const sorted = sChildren.slice().sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
+
+    // Lifelines per SysML v2 §13 (Interactions): any Usage referenced from a
+    // message endpoint, not just PartUsage.  Real demos declare lifelines via
+    // `ref part`, `ref port`, `ref item`, etc. — all parse to distinct EMF types.
+    // Attribute/Action/IfAction/WhileLoop are explicitly excluded since they're
+    // guards or control structures, not message endpoints.
+    const LIFELINE_TYPES = new Set([
+      'PartUsage', 'PortUsage', 'ItemUsage', 'ReferenceUsage',
+      'ConnectionUsage', 'OccurrenceUsage',
+    ]);
+    const participants = sorted.filter(c => LIFELINE_TYPES.has(c.type));
     const messages: ParsedMessage[] = [];
 
     for (const child of sorted) {
@@ -265,10 +339,16 @@ function parseSequenceDefs(
         messages.push(resolveFlow(child, childrenOf, nodeById));
       } else if (child.type === 'IfActionUsage') {
         const { condition, thenFlows, elseFlows } = extractIfBranches(child.id, childrenOf, nodeById);
-        if (!condition) continue;
-        const elseCond = negateCondition(condition);
-        for (const f of thenFlows) messages.push(resolveFlow(f, childrenOf, nodeById, condition));
-        for (const f of elseFlows) messages.push(resolveFlow(f, childrenOf, nodeById, elseCond));
+        if (thenFlows.length === 0 && elseFlows.length === 0) continue;
+        const cond     = condition || 'condition';
+        const elseCond = negateCondition(cond);
+        for (const f of thenFlows) messages.push(resolveFlow(f, childrenOf, nodeById, cond,     child.id, 'alt'));
+        for (const f of elseFlows) messages.push(resolveFlow(f, childrenOf, nodeById, elseCond, child.id, 'alt'));
+      } else if (child.type === 'WhileLoopActionUsage') {
+        const bodyFlows = extractLoopBody(child.id, childrenOf, nodeById);
+        if (bodyFlows.length === 0) continue;
+        const loopLabel = child.label && child.label !== child.type ? child.label : 'loop';
+        for (const f of bodyFlows) messages.push(resolveFlow(f, childrenOf, nodeById, loopLabel, child.id, 'loop'));
       }
     }
 
@@ -293,38 +373,42 @@ function computeMessageLayout(messages: ParsedMessage[]): MessageLayout {
   let i    = 0;
 
   while (i < messages.length) {
-    if (!messages[i].guard) {
+    const blockId = messages[i].fragmentBlockId;
+    if (!blockId) {
       msgY[i] = curY;
       curY   += MSG_STEP_Y;
       i++;
-    } else {
-      const blockTopY = curY;
-      curY += ALT_HEADER_H;
-
-      const branches: AltBranchLayout[] = [];
-      let currentCondition = '';
-
-      while (i < messages.length && messages[i].guard) {
-        const cond = messages[i].guard!;
-        if (cond !== currentCondition) {
-          if (currentCondition === '') {
-            branches.push({ condition: cond, condLabelY: blockTopY + ALT_TAG_H / 2 });
-          } else {
-            const sepY = curY;
-            curY      += ALT_SEP_H;
-            branches.push({ condition: cond, sepY, condLabelY: sepY + 10 });
-          }
-          currentCondition = cond;
-        }
-        msgY[i] = curY;
-        curY   += MSG_STEP_Y;
-        i++;
-      }
-
-      const blockBottomY = curY + ALT_VPAD;
-      altBlocks.push({ topY: blockTopY, bottomY: blockBottomY, branches });
-      curY = blockBottomY + MSG_STEP_Y / 2;
+      continue;
     }
+
+    const blockKind   = messages[i].fragmentKind ?? 'alt';
+    const blockTopY   = curY;
+    curY += ALT_HEADER_H;
+
+    const branches: AltBranchLayout[] = [];
+    let currentCondition = '';
+
+    // Consume every consecutive message with the same fragmentBlockId.
+    while (i < messages.length && messages[i].fragmentBlockId === blockId) {
+      const cond = messages[i].guard ?? '';
+      if (cond !== currentCondition) {
+        if (currentCondition === '') {
+          branches.push({ condition: cond, condLabelY: blockTopY + ALT_TAG_H / 2 });
+        } else {
+          const sepY = curY;
+          curY     += ALT_SEP_H;
+          branches.push({ condition: cond, sepY, condLabelY: sepY + 10 });
+        }
+        currentCondition = cond;
+      }
+      msgY[i] = curY;
+      curY   += MSG_STEP_Y;
+      i++;
+    }
+
+    const blockBottomY = curY + ALT_VPAD;
+    altBlocks.push({ kind: blockKind, topY: blockTopY, bottomY: blockBottomY, branches });
+    curY = blockBottomY + MSG_STEP_Y / 2;
   }
 
   return { msgY, altBlocks, totalH: curY + SVG_PAD_BOT };
@@ -453,55 +537,63 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
           preserveAspectRatio="xMidYMid meet"
           style={{ fontFamily: 'monospace', userSelect: 'none', display: 'block' }}
         >
-          {/* Alt combined fragment backgrounds — rendered before lifelines */}
-          {altBlocks.map((blk, bi) => (
-            <g key={`alt-${bi}`}>
-              <rect
-                x={altX} y={blk.topY} width={altW} height={blk.bottomY - blk.topY}
-                fill="none" stroke={C_ALT_BORDER} strokeWidth={1} rx={2}
-              />
-              {/* Pentagon "alt" tag */}
-              <polygon
-                points={[
-                  `${altX},${blk.topY}`,
-                  `${altX + ALT_TAG_W},${blk.topY}`,
-                  `${altX + ALT_TAG_W},${blk.topY + ALT_TAG_H - 6}`,
-                  `${altX + ALT_TAG_W - 6},${blk.topY + ALT_TAG_H}`,
-                  `${altX},${blk.topY + ALT_TAG_H}`,
-                ].join(' ')}
-                fill={C_ALT_TAG_BG} stroke={C_ALT_TAG_BD} strokeWidth={1}
-              />
-              <text
-                x={altX + ALT_TAG_W / 2} y={blk.topY + ALT_TAG_H / 2}
-                textAnchor="middle" dominantBaseline="central"
-                fill={C_ALT_TAG_TX} fontSize={9} fontWeight={600}
-              >alt</text>
-              {blk.branches.map((br, bri) => (
-                <g key={`br-${bri}`}>
-                  {br.sepY !== undefined && (
-                    <line
-                      x1={altX} y1={br.sepY} x2={altX + altW} y2={br.sepY}
-                      stroke={C_ALT_SEP} strokeWidth={1} strokeDasharray="5 3"
-                    />
-                  )}
-                  <text
-                    x={bri === 0 ? altX + ALT_TAG_W + 4 : altX + 6}
-                    y={br.condLabelY}
-                    dominantBaseline="central"
-                    fill={C_ALT_COND} fontSize={10} fontStyle="italic"
-                  >{`[${br.condition}]`}</text>
-                </g>
-              ))}
-            </g>
-          ))}
+          {/* Combined fragment backgrounds (alt / loop) — rendered before lifelines */}
+          {altBlocks.map((blk, bi) => {
+            const tagW = blk.kind === 'loop' ? 36 : ALT_TAG_W;
+            return (
+              <g key={`alt-${bi}`}>
+                <rect
+                  x={altX} y={blk.topY} width={altW} height={blk.bottomY - blk.topY}
+                  fill="none" stroke={C_ALT_BORDER} strokeWidth={1} rx={2}
+                />
+                {/* Pentagon tag — 'alt' or 'loop' */}
+                <polygon
+                  points={[
+                    `${altX},${blk.topY}`,
+                    `${altX + tagW},${blk.topY}`,
+                    `${altX + tagW},${blk.topY + ALT_TAG_H - 6}`,
+                    `${altX + tagW - 6},${blk.topY + ALT_TAG_H}`,
+                    `${altX},${blk.topY + ALT_TAG_H}`,
+                  ].join(' ')}
+                  fill={C_ALT_TAG_BG} stroke={C_ALT_TAG_BD} strokeWidth={1}
+                />
+                <text
+                  x={altX + tagW / 2} y={blk.topY + ALT_TAG_H / 2}
+                  textAnchor="middle" dominantBaseline="central"
+                  fill={C_ALT_TAG_TX} fontSize={9} fontWeight={600}
+                >{blk.kind}</text>
+                {blk.branches.map((br, bri) => (
+                  <g key={`br-${bri}`}>
+                    {br.sepY !== undefined && (
+                      <line
+                        x1={altX} y1={br.sepY} x2={altX + altW} y2={br.sepY}
+                        stroke={C_ALT_SEP} strokeWidth={1} strokeDasharray="5 3"
+                      />
+                    )}
+                    {br.condition && (
+                      <text
+                        x={bri === 0 ? altX + tagW + 4 : altX + 6}
+                        y={br.condLabelY}
+                        dominantBaseline="central"
+                        fill={C_ALT_COND} fontSize={10} fontStyle="italic"
+                      >{`[${br.condition}]`}</text>
+                    )}
+                  </g>
+                ))}
+              </g>
+            );
+          })}
 
           {/* Lifelines */}
           {participants.map((part, i) => {
             const cx = centers[i], bw = widths[i], isSel = selGraphId === part.id;
+            // Selection 'type' stays 'part' so cross-view sync (Inspector,
+            // model tree) treats a clicked lifeline as a structural participant
+            // regardless of whether it's a PartUsage, PortUsage, ItemUsage, …
             return (
               <g key={part.id} style={{ cursor: 'pointer' }} onClick={() => onSelect({
                 id: part.id, type: 'part', name: part.label, line: part.startLine,
-                extra: { graphId: part.id, emfType: 'PartUsage' },
+                extra: { graphId: part.id, emfType: part.type },
               })}>
                 <rect x={cx - bw/2} y={0} width={bw} height={LBOX_H} rx={4}
                   fill={isSel ? '#1e3a5f' : '#1e293b'}
@@ -544,20 +636,49 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
             const ti = partIdx.get(msg.to.participant)   ?? -1;
             if (fi < 0 || ti < 0) return null;
             const x1 = centers[fi], x2 = centers[ti], y = msgY[idx];
-            const isSel = selGraphId === msg.id;
+            const isSel  = selGraphId === msg.id;
             const stroke = isSel ? '#38bdf8' : '#64748b';
-            const right  = x2 > x1;
-            const aX     = right ? x2 - ARROW_SIZE : x2 + ARROW_SIZE;
+            const isSelf = fi === ti;
+
+            const onClick = () => onSelect({
+              id: msg.id, type: 'connection', name: msg.label, line: msg.line,
+              extra: { graphId: msg.id, emfType: 'FlowUsage' },
+            });
+            const labelFill = isSel ? '#7dd3fc' : '#94a3b8';
+            const sw        = isSel ? 2 : 1.5;
+
+            // Self-message: rectangular loop to the right of the lifeline.
+            if (isSelf) {
+              const loopW = 30;
+              const loopH = 14;
+              const startY = y - loopH / 2;
+              const endY   = y + loopH / 2;
+              const tipX   = x1 + ARROW_SIZE;
+              return (
+                <g key={msg.id} style={{ cursor: 'pointer' }} onClick={onClick}>
+                  <text x={x1 + loopW + 6} y={startY - 2} textAnchor="start"
+                    fill={labelFill} fontSize={10} fontWeight={isSel ? 600 : 400}>
+                    {msg.label}
+                  </text>
+                  <path d={`M ${x1} ${startY} L ${x1+loopW} ${startY} L ${x1+loopW} ${endY} L ${tipX} ${endY}`}
+                        fill="none" stroke={stroke} strokeWidth={sw} />
+                  <polygon
+                    points={`${x1},${endY} ${tipX},${endY-ARROW_SIZE/2} ${tipX},${endY+ARROW_SIZE/2}`}
+                    fill={stroke}
+                  />
+                </g>
+              );
+            }
+
+            const right = x2 > x1;
+            const aX    = right ? x2 - ARROW_SIZE : x2 + ARROW_SIZE;
             return (
-              <g key={msg.id} style={{ cursor: 'pointer' }} onClick={() => onSelect({
-                id: msg.id, type: 'connection', name: msg.label, line: msg.line,
-                extra: { graphId: msg.id, emfType: 'FlowUsage' },
-              })}>
+              <g key={msg.id} style={{ cursor: 'pointer' }} onClick={onClick}>
                 <text x={(x1+x2)/2} y={y-8} textAnchor="middle"
-                  fill={isSel ? '#7dd3fc' : '#94a3b8'} fontSize={10} fontWeight={isSel ? 600 : 400}>
+                  fill={labelFill} fontSize={10} fontWeight={isSel ? 600 : 400}>
                   {msg.label}
                 </text>
-                <line x1={x1} y1={y} x2={x2} y2={y} stroke={stroke} strokeWidth={isSel ? 2 : 1.5} />
+                <line x1={x1} y1={y} x2={x2} y2={y} stroke={stroke} strokeWidth={sw} />
                 <polygon points={`${x2},${y} ${aX},${y-ARROW_SIZE/2} ${aX},${y+ARROW_SIZE/2}`} fill={stroke} />
               </g>
             );
