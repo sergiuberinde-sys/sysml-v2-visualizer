@@ -335,7 +335,13 @@
       "WebFetch(domain:docs.oasis-open-projects.org)",
       "WebFetch(domain:voidaliot.github.io)",
       "Bash(grep -c \"connect$\\\\|connect$\" /Users/sergiu/Downloads/SignalConditioningAndProcessing_fourth_pass_parser_fix.sysml)",
-      "Bash(grep -A3 \"interface.*connect$\" /Users/sergiu/Downloads/SignalConditioningAndProcessing_fourth_pass_parser_fix.sysml)"
+      "Bash(grep -A3 \"interface.*connect$\" /Users/sergiu/Downloads/SignalConditioningAndProcessing_fourth_pass_parser_fix.sysml)",
+      "Bash(SYSML_STDLIB_PATH=/Users/sergiu/sysml-v2-visualizer/parser-service/sysml-stdlib /opt/homebrew/opt/openjdk@21/bin/java -jar java-parser-wrapper/target/sysml-parse-cli.jar demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full/12_DynamicInteractionSequences.sysml)",
+      "Bash(awk '/\"FlowUsage\"/{flag=1} flag{print; if \\(++c > 80\\) exit}' /tmp/parse12.txt)",
+      "Bash(awk '/\"type\": \"PartDefinition\",/{flag=1; lines=0} flag && /AcpdCdd_Runtime_Sequence/{matched=1} flag && matched{print; if\\(++lines>40\\) exit}' /tmp/parse12.txt)",
+      "Bash(SYSML_STDLIB_PATH=/Users/sergiu/sysml-v2-visualizer/parser-service/sysml-stdlib /opt/homebrew/opt/openjdk@21/bin/java *)",
+      "Bash(awk '/SignalConditioningAndProcessing_acpd_seq/,/^[[:space:]]*}/')",
+      "Bash(awk 'NR>=570 && NR<=800' demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full/SignalConditioningAndProcessing_Platform4_sequence_actiondef_control_fragments_boundary_types_fixed.sysml)"
     ]
   }
 }
