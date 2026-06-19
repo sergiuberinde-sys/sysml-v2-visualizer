@@ -28,20 +28,20 @@ import type { SelectionState } from '../../app/selection';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
-const PART_MIN_W    = 192;
+const PART_MIN_W    = 200;
 const WIRING_H_PAD  = 24;  // 2 × 12 px from padding: '8px 12px'
 const PART_BASE_H   = 72;
-const PORT_ROW_H    = 17;
-const H_GAP         = 240; // horizontal gap between rank columns (wider for edge-label room)
-const V_GAP         = 80;  // vertical gap between directly-connected nodes in the same rank column
-const V_GAP_SPLIT   = 200; // larger gap between disconnected groups in the same rank column
+const PORT_ROW_H    = 19;
+const H_GAP         = 320; // horizontal gap between rank columns (wide enough for edge-label room and obstacle-free smoothstep curves)
+const V_GAP         = 110; // vertical gap between directly-connected nodes in the same rank column
+const V_GAP_SPLIT   = 260; // larger gap between disconnected groups in the same rank column
 const Y_PARTS       = 60;  // min-y used as base in the rank-centering formula
 
 // IBD outer-frame (scope container) geometry
-const SCOPE_PAD_TOP     = 52;  // space for the «part def» + name header
-const SCOPE_PAD_BOTTOM  = 80;
-const SCOPE_PAD_LEFT    = 220; // gap between left frame edge and first rank column
-const SCOPE_PAD_RIGHT   = 220;
+const SCOPE_PAD_TOP     = 60;  // space for the «part def» + name header
+const SCOPE_PAD_BOTTOM  = 90;
+const SCOPE_PAD_LEFT    = 260; // gap between left frame edge and first rank column
+const SCOPE_PAD_RIGHT   = 260;
 const SCOPE_PORT_NODE_W = 9;   // boundary port node width — sqR center lands at x=9 (inner face of sqL square)
 const SCOPE_PORT_NODE_H = 10;  // boundary port node height (port-square height)
 const MIN_PORT_SPACING  = 20;  // minimum px between adjacent boundary port squares
@@ -307,35 +307,95 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     // typedBy edges: usage → definition (needed for port direction inference)
     const typedByEdges = graph.edges.filter(e => e.type === 'typedBy');
 
-    // Derive port direction: explicit → typedBy item-match → name heuristic.
-    // Ports in this project are untyped in SysML source, so the name heuristic
-    // is the primary resolver (*In → 'in', *Out → 'out', from_* → 'in', to_* → 'out').
+    // Connection-based direction inference — fallback for ports that have no
+    // explicit direction, no typedBy edge (e.g. SysML v2 ConjugatedPortTyping
+    // doesn't serialize its cross-reference in the official parser output),
+    // and no name heuristic match.
+    //
+    // For **internal** ports of a part: the source of `connect A.p1 to B.p2`
+    // emits data (`'out'`), the target receives (`'in'`).  For **boundary**
+    // ports owned by the scope, the role is FLIPPED — they sit on the frame
+    // edge, so a connection like `connect boundaryIn to internal.p` carries
+    // external data IN to the internal port; the boundary endpoint is `'in'`.
+    // Without this flip every conjugated supply-voltage input
+    // (`port X : ~Y_Port`) was tagged `'out'` and ended up on the wrong side
+    // of the IBD frame.
+    const scopePortIdSet = new Set(scopePorts.map(p => p.id));
+    const portConnDir = new Map<string, string>();
+    const tagPortConn = (id: string, want: 'in' | 'out') => {
+      const existing = portConnDir.get(id);
+      if (!existing) portConnDir.set(id, want);
+      else if (existing !== want) portConnDir.set(id, 'inout');
+    };
+    for (const e of graph.edges) {
+      if (e.type !== 'connection' && e.type !== 'message' && e.type !== 'interconnect') continue;
+      const srcIsBoundary = scopePortIdSet.has(e.source);
+      const tgtIsBoundary = scopePortIdSet.has(e.target);
+      tagPortConn(e.source, srcIsBoundary ? 'in' : 'out');
+      tagPortConn(e.target, tgtIsBoundary ? 'out' : 'in');
+    }
+
+    // Conjugation flips port direction (SysML v2 §10.3.3.3): `~XPort` reverses
+    // every directional feature of the base port def, so an `out item payload`
+    // declared on XPort becomes `in item payload` on `~XPort`.  The parser
+    // resolves the typedBy edge to the base PortDef (not the conjugated copy)
+    // and sets `isConjugated` on the usage — we apply the flip here.
+    const flipDir = (d: string): string =>
+      d === 'in' ? 'out' : d === 'out' ? 'in' : d;
+
+    // Derive port direction: explicit → typedBy item-match → name heuristic →
+    // connection-edge participation. Ports in this project are often untyped,
+    // so the name heuristic and connection inference are the primary resolvers.
+    //
+    // BOUNDARY ports get a different priority: the connection-based direction
+    // is authoritative.  Some models declare `port External_X : YPort` (no
+    // conjugation) even when the port semantically receives data from outside
+    // the frame (e.g. External_AcceleratorPedalPowerSupplyState in the demo —
+    // YPort has `out item payload`, but the connect statement routes data FROM
+    // the boundary port INTO an internal part, meaning the frame-relative
+    // direction is `'in'`).  Trusting typedBy in that case puts the input port
+    // on the right edge and forces every wire to wrap around the diagram.
+    // The connection direction reflects actual data flow through the frame,
+    // so we use it first and only fall back to typedBy / name heuristic when
+    // the boundary port has no connections.
     function resolvePortDir(port: GraphNode): string {
       if (port.direction) return port.direction;
+      if (scopePortIdSet.has(port.id)) {
+        const fromConn = portConnDir.get(port.id);
+        if (fromConn) return fromConn;
+      }
       // Follow typedBy edge to the PortDefinition.
       const typedEdge = typedByEdges.find(e => e.source === port.id);
       if (typedEdge) {
         const portDef = nodeById.get(typedEdge.target);
         if (portDef) {
           const defKids = directSemanticChildren(portDef.id, childrenOf, nodeById);
+          let resolved = '';
           // Match by name first (unambiguous single feature case).
           const matchItem = defKids.find(
             n => n.label === port.label && n.direction,
           );
-          if (matchItem?.direction) return matchItem.direction;
-          // Aggregate all directed features: both in+out present → inout.
-          const dirFeatures = defKids.filter(n => n.direction);
-          if (dirFeatures.length === 1) return dirFeatures[0].direction ?? '';
-          if (dirFeatures.length > 1) {
-            const dirs = new Set(dirFeatures.map(f => f.direction));
-            if ((dirs.has('in') && dirs.has('out')) || dirs.has('inout')) return 'inout';
-            if (dirs.has('out')) return 'out';
-            if (dirs.has('in')) return 'in';
+          if (matchItem?.direction) {
+            resolved = matchItem.direction;
+          } else {
+            // Aggregate all directed features: both in+out present → inout.
+            const dirFeatures = defKids.filter(n => n.direction);
+            if (dirFeatures.length === 1) resolved = dirFeatures[0].direction ?? '';
+            else if (dirFeatures.length > 1) {
+              const dirs = new Set(dirFeatures.map(f => f.direction));
+              if ((dirs.has('in') && dirs.has('out')) || dirs.has('inout')) resolved = 'inout';
+              else if (dirs.has('out')) resolved = 'out';
+              else if (dirs.has('in')) resolved = 'in';
+            }
           }
+          if (resolved) return port.isConjugated ? flipDir(resolved) : resolved;
         }
       }
-      // Fall back to shared name heuristic (*In → in, *Out → out, from_* → in, to_* → out).
-      return resolvePortDirection(port.label, '');
+      // Name heuristic (*In → in, *Out → out, from_* → in, to_* → out).
+      const fromName = resolvePortDirection(port.label, '');
+      if (fromName) return fromName;
+      // Final fallback: inferred from this port's role in connection edges.
+      return portConnDir.get(port.id) ?? '';
     }
 
     function portDisplay(port: GraphNode): PortDisplay {
@@ -364,14 +424,35 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         }
       }
 
-      // Estimate rendered height to distribute port handles across the node.
-      // Header ~46px, each section label ~18px, each item/action row ~13px, padding 20px.
-      const leafNodeH = Math.max(96,
-        46
+      // ── Leaf node geometry ───────────────────────────────────────────────
+      // Pick height & width large enough that:
+      //   (a) every port label gets a full PORT_ROW_H vertical slot, so labels
+      //       on the right edge stop stacking on top of each other;
+      //   (b) item / action rows inside the node still fit comfortably;
+      //   (c) the right-side port column (which extends OUTSIDE the node via
+      //       absolute positioning) doesn't collide with the port-def context
+      //       boxes — those are pushed past the longest port label.
+      const PORT_AREA_TOP = 42;
+      const portsCount    = scopePorts.length;
+      const portColH      = portsCount > 0 ? (portsCount + 1) * PORT_ROW_H + 16 : 0;
+      const insideH       = 46
         + (scopeItems.length   > 0 ? 18 + scopeItems.length   * 13 : 0)
         + (scopeActions.length > 0 ? 18 + scopeActions.length * 13 : 0)
-        + 20,
+        + 20;
+      const leafNodeH = Math.max(96, insideH, PORT_AREA_TOP + portColH);
+
+      const maxInsideLabel = Math.max(
+        activeScopeName.length,
+        ...scopeItems.map(i => i.label.length),
+        ...scopeActions.map(a => a.label.length),
+        0,
       );
+      const leafNodeW = Math.max(260, maxInsideLabel * 7 + 56);
+
+      const maxPortLabel = scopePorts.reduce((m, p) => Math.max(m, p.label.length), 0);
+      // Port labels render outside the right edge with `right:-12; translate(100%, …)`.
+      // Reserve label_width + gap before the port-def column starts.
+      const portLabelW = maxPortLabel * 6.4 + 24;
 
       const selfNode: Node = {
         id:   selfId,
@@ -396,15 +477,17 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           border:       `1.5px solid ${isSelfSel ? PART_SEL : PART_BORDER}`,
           borderRadius: 8,
           padding:      '10px 14px',
-          minWidth:     240,
+          width:        leafNodeW,
+          height:       leafNodeH,
           cursor:       'pointer',
           overflow:     'visible',
           boxShadow:    isSelfSel ? `0 0 8px 2px ${PART_SEL}44` : 'none',
         },
       };
 
-      // PortDefinition context boxes showing item-flow direction
-      const PORTDEF_X = 370;
+      // PortDefinition context boxes — placed past the leaf node + its outside
+      // port labels so right-side port names don't overlap them.
+      const PORTDEF_X = leafNodeW + portLabelW + 80;
       const rfPortDefNodes: Node[] = pkgPortDefs.map((pd, i) => {
         const pdKids  = directSemanticChildren(pd.id, childrenOf, nodeById);
         const pdItems = pdKids.filter(n => n.type === 'ItemUsage');
@@ -489,6 +572,18 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       partPorts.set(part.id, deduped);
     }
 
+    // Propagate connection-inferred direction from alias port IDs (specialization
+    // copies) onto the canonical port ID — otherwise a port whose only edge
+    // reference is via its non-canonical alias would still resolve to no arrow.
+    for (const [alias, canonical] of canonicalPortId) {
+      if (alias === canonical) continue;
+      const aliasDir = portConnDir.get(alias);
+      if (!aliasDir) continue;
+      const canonDir = portConnDir.get(canonical);
+      if (!canonDir) portConnDir.set(canonical, aliasDir);
+      else if (canonDir !== aliasDir) portConnDir.set(canonical, 'inout');
+    }
+
     function getTypeName(nodeId: string): string | null {
       const edge = typedByEdges.find(e => e.source === nodeId);
       if (!edge) return null;
@@ -552,12 +647,45 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       flowIn.get(tgt)?.add(src);
     }
 
+    // Source-score per part: boundary inputs minus boundary outputs.  Parts
+    // that absorb many boundary inputs (e.g. `signalConversion` taking 7 supply
+    // voltages from the IBD frame) score high and should sit at rank 0 so the
+    // long wires from those boundary ports stay short and straight.  This is
+    // used to:
+    //   • Order DFS starts so cycle-breaking back-edges fall on the right side
+    //     (i.e., cycles get broken with the source-like part as the head).
+    //   • Tiebreak the topological BFS so the most source-like parts are
+    //     popped first within a rank.
+    const boundaryIn  = new Map<string, number>();
+    const boundaryOut = new Map<string, number>();
+    for (const p of partUsages) { boundaryIn.set(p.id, 0); boundaryOut.set(p.id, 0); }
+    for (const conn of inScopeConns) {
+      const src = portOwner.get(conn.source);
+      const tgt = portOwner.get(conn.target);
+      if (!src || !tgt) continue;
+      if (src === scopeDef.id && tgt !== scopeDef.id) {
+        boundaryIn.set(tgt, (boundaryIn.get(tgt) ?? 0) + 1);
+      } else if (tgt === scopeDef.id && src !== scopeDef.id) {
+        boundaryOut.set(src, (boundaryOut.get(src) ?? 0) + 1);
+      }
+    }
+    const sourceScore = (id: string) =>
+      (boundaryIn.get(id) ?? 0) - (boundaryOut.get(id) ?? 0);
+
+    // Order DFS starts by source-score (descending).  Cycle-breaking back-edges
+    // depend on visit order — visiting the most source-like part first turns
+    // every cycle's "back to the source" leg into the back-edge, leaving the
+    // forward chain source → … intact.
+    const dfsStartOrder = [...partUsages].sort(
+      (a, b) => sourceScore(b.id) - sourceScore(a.id),
+    );
+
     // Detect back-edges using iterative DFS so cycle edges can be excluded from
     // rank assignment. Back-edges point to a DFS ancestor (gray node in the stack).
     // Removing them makes the ranking graph a DAG (Sugiyama cycle-breaking step).
     const dfsColor = new Map<string, number>(partUsages.map(p => [p.id, 0])); // 0=white,1=gray,2=black
     const backEdgeSet = new Set<string>(); // "srcId:tgtId" pairs
-    for (const start of partUsages) {
+    for (const start of dfsStartOrder) {
       if (dfsColor.get(start.id) !== 0) continue;
       const stk: Array<{ id: string; iter: IterableIterator<string> }> = [];
       dfsColor.set(start.id, 1);
@@ -592,10 +720,16 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
 
     // Kahn's topological BFS on the acyclic subgraph to assign column ranks.
     // Rank = length of the longest incoming path from any source node.
+    // Among zero-indegree nodes we pop the most source-like part first; this
+    // affects the order in `topo` (used later for barycenter init) without
+    // changing the assigned rank values.
     const rank = new Map<string, number>(partUsages.map(p => [p.id, 0]));
     const inDeg = new Map(partUsages.map(p => [p.id, rankIn.get(p.id)!.size]));
     const topo: string[] = [];
-    const bfsHead = partUsages.filter(p => (inDeg.get(p.id) ?? 0) === 0).map(p => p.id);
+    const bfsHead = partUsages
+      .filter(p => (inDeg.get(p.id) ?? 0) === 0)
+      .map(p => p.id)
+      .sort((a, b) => sourceScore(b) - sourceScore(a));
     while (bfsHead.length > 0) {
       const u = bfsHead.shift()!;
       topo.push(u);
@@ -637,9 +771,12 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       }
     }
 
-    // Group parts by rank; within each rank the initial order follows model order.
+    // Group parts by rank; within each rank seed by source-score (most input-
+    // heavy first) so the subsequent barycenter pass starts from a sensible
+    // ordering instead of model order, which is arbitrary.
     const byRank: string[][] = Array.from({ length: finalMaxRank + 1 }, () => []);
-    for (const p of partUsages) byRank[rank.get(p.id)!].push(p.id);
+    const byRankSeed = [...partUsages].sort((a, b) => sourceScore(b.id) - sourceScore(a.id));
+    for (const p of byRankSeed) byRank[rank.get(p.id)!].push(p.id);
 
     // Barycenter heuristic (left-to-right pass): reorder nodes within each rank r
     // by the average index of their predecessors in rank r-1. Reduces crossings.
@@ -778,6 +915,39 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       return result;
     }
 
+    // Build the flow-name → FlowUsage lookup early so we can determine which
+    // connection (and therefore which port IDs) the current selection points at,
+    // before any port nodes are constructed.
+    const flowNodeByLabel = new Map<string, GraphNode>();
+    for (const n of graph.nodes) {
+      if (FLOW_NODE_TYPES.has(n.type) && n.label !== n.type && !flowNodeByLabel.has(n.label)) {
+        flowNodeByLabel.set(n.label, n);
+      }
+    }
+
+    // Port IDs at the endpoints of the currently selected connection — used to
+    // light up port labels at both ends when a wire is clicked.
+    const selectedConnPortIds = new Set<string>();
+    if (selection?.type === 'connection') {
+      for (const conn of inScopeConns) {
+        let flowNode = conn.label ? flowNodeByLabel.get(conn.label) : undefined;
+        if (!flowNode && conn.label) {
+          const colonIdx = conn.label.indexOf(' : ');
+          if (colonIdx > 0) flowNode = flowNodeByLabel.get(conn.label.slice(0, colonIdx));
+        }
+        const isThisSel = flowNode
+          ? selection?.extra?.graphId === flowNode.id || selection?.id === `wflow-${flowNode.id}`
+          : selection?.id === `wconn-${conn.id}`;
+        if (!isThisSel) continue;
+        selectedConnPortIds.add(conn.source);
+        selectedConnPortIds.add(conn.target);
+        const srcCanon = canonicalPortId.get(conn.source);
+        const tgtCanon = canonicalPortId.get(conn.target);
+        if (srcCanon) selectedConnPortIds.add(srcCanon);
+        if (tgtCanon) selectedConnPortIds.add(tgtCanon);
+      }
+    }
+
     // Part nodes — layoutVersion in dep triggers position reset when user clicks Reset
     const partRfId = (partId: string) => `wpart-${partId}`;
     const rfPartNodes: Node[] = [];
@@ -803,7 +973,8 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
             const showsLeft  = portsShowLeft.has(p.id);
             const showsRight = portsShowRight.has(p.id);
             const isPortSel = selection?.extra?.graphId === p.id
-                           || (selection?.type === 'port' && selection?.name === p.label);
+                           || (selection?.type === 'port' && selection?.name === p.label)
+                           || selectedConnPortIds.has(p.id);
             const selStyle = isPortSel ? { color: EDGE_SEL_C, fontWeight: 600 } : undefined;
             return {
               ...pd,
@@ -852,10 +1023,20 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     function makeScopePortNode(port: GraphNode, y: number, isRight: boolean): Node {
       const id  = `wsport-${port.id}`;
       const dir = resolvePortDir(port);
+      const isPortSel = selection?.extra?.graphId === port.id
+                     || selection?.id === id
+                     || (selection?.type === 'port' && selection?.name === port.label)
+                     || selectedConnPortIds.has(port.id);
       // One visible square per boundary port: left-side ports show sqL (on left boundary),
       // right-side ports show sqR (on right boundary). The hidden handle stays in the DOM
       // so React Flow can still route edges to/from it.
-      const pd: PortDisplay = { ...makeBoundaryPortDisplay(port.id, port.label, dir, '', dir), showLeft: !isRight, showRight: isRight };
+      const basePd = makeBoundaryPortDisplay(port.id, port.label, dir, '', dir);
+      const pd: PortDisplay = {
+        ...basePd,
+        showLeft: !isRight,
+        showRight: isRight,
+        ...(isPortSel ? { labelStyle: { ...basePd.labelStyle, color: EDGE_SEL_C, fontWeight: 600 } } : {}),
+      };
       return {
         id,
         type: 'wiringScopePort',
@@ -892,14 +1073,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       ...rightScopePorts.map((p, i) => makeScopePortNode(p, rightYs[i], true)),
     ];
 
-    // Build a label → FlowUsage GraphNode map so connection edges can carry _sel
-    // that jumps the editor cursor to the flow declaration, not just the port.
-    const flowNodeByLabel = new Map<string, GraphNode>();
-    for (const n of graph.nodes) {
-      if (FLOW_NODE_TYPES.has(n.type) && n.label !== n.type && !flowNodeByLabel.has(n.label)) {
-        flowNodeByLabel.set(n.label, n);
-      }
-    }
+    // (flowNodeByLabel is built earlier so selectedConnPortIds can use it.)
 
     // Connection edges: map portId / partId → rfNodeId.
     // Uses partAllPorts so non-canonical duplicate IDs also map to the correct RF node.
@@ -918,6 +1092,11 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         if (!portToRfId.has(op.id)) portToRfId.set(op.id, partRfId(part.id));
       }
     }
+
+    // Edge spotlight: when the outer selection points at a connection, the
+    // selected edge keeps its full visibility (with a colour-matched glow) and
+    // every other edge fades to low opacity so the cluttered wire mesh thins out.
+    const isConnectionSelected = selection?.type === 'connection';
 
     const rfConnEdges: Edge[] = inScopeConns
       .filter(conn => {
@@ -993,6 +1172,16 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         const srcHandle = isSrcPort ? (isBackward ? `port-${srcCanon}-ft` : `port-${srcCanon}-out`) : undefined;
         const tgtHandle = isTgtPort ? (isBackward ? `port-${tgtCanon}-tgt-right` : `port-${tgtCanon}`) : undefined;
 
+        // Spotlight styling: selected edge gets a colour-matched glow filter
+        // and is rendered above siblings; non-selected edges fade out so the
+        // selected wire stands cleanly above the surrounding clutter.
+        const isDimmed       = isConnectionSelected && !isEdgeSel;
+        const spotlightStyle = isEdgeSel
+          ? { filter: `drop-shadow(0 0 4px ${edgeC}) drop-shadow(0 0 10px ${edgeC})`, opacity: 1 }
+          : isDimmed
+          ? { opacity: 0.18 }
+          : {};
+
         const edge: Edge & { pathOptions?: { borderRadius?: number } } = {
           id:              `wconn-${conn.id}`,
           source:          srcRf,
@@ -1000,13 +1189,19 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           sourceHandle:    srcHandle,
           targetHandle:    tgtHandle,
           type:            'smoothstep',
-          animated:        !isMsg && !isStructural,
+          animated:        !isMsg && !isStructural && !isDimmed,
           label,
           // Label background prevents text landing directly on port glyphs or node text.
-          labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace' },
+          labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace', ...(isDimmed ? { opacity: 0.3 } : {}) },
           labelBgStyle:    { fill: '#030c06', fillOpacity: 0.95, rx: 3, ry: 3 },
           labelBgPadding:  [3, 4] as [number, number],
-          style:           { stroke: edgeC, strokeWidth: highlightEdge ? 2.5 : 1.5, ...(isMsg ? { strokeDasharray: '6 3' } : {}) },
+          style: {
+            stroke:       edgeC,
+            strokeWidth:  isEdgeSel ? 3 : (highlightEdge ? 2.5 : 1.5),
+            ...(isMsg ? { strokeDasharray: '6 3' } : {}),
+            ...spotlightStyle,
+          },
+          ...(isEdgeSel ? { zIndex: 1000 } : {}),
           // Structural connections (ConnectionUsage) are undirected — no arrowhead.
           // Flow connections carry direction (FlowUsage / FlowConnectionUsage).
           ...(isStructural ? {} : { markerEnd: { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 } }),
@@ -1079,6 +1274,9 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     const s = edge.data?._sel as SelectionState;
     if (s) onSelect(s);
   }, [onSelect]);
+
+  // Pane click clears selection — also clears the edge spotlight.
+  const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
 
   // ── Empty states ───────────────────────────────────────────────────────────
 
@@ -1177,6 +1375,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
             nodeTypes={WIRING_NODE_TYPES}
             onNodeClick={handleNodeClick}
             onEdgeClick={handleEdgeClick}
+            onPaneClick={handlePaneClick}
             onNodesChange={handleNodesChange}
             fitView
             fitViewOptions={{ padding: 0.3 }}
