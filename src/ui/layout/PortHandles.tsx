@@ -27,6 +27,9 @@ export interface PortDisplay {
   showLeft?:  boolean;
   /** Force right (source) handle visible; overrides direction-based and showBothHandles prop. */
   showRight?: boolean;
+  /** Declared direction used to orient the in/out arrow inside the square.
+   *  Falls back to `direction` when absent. Empty ⇒ no arrow drawn. */
+  arrowDir?:  string;
 }
 
 // ── Shared boundary-port visual constants ─────────────────────────────────────
@@ -37,9 +40,15 @@ export interface PortDisplay {
 
 export const PORT_MARKER_COLOR = '#64748b';
 
-function portMarkerSvg(direction: string): ReactNode {
+/**
+ * Arrow glyph drawn inside a port square. `pointsRight` controls the horizontal
+ * orientation so the arrow can be aimed *into* or *out of* the owning shape
+ * depending on which boundary edge the square sits on (see PortHandles).
+ */
+function portMarkerSvg(direction: string, pointsRight: boolean): ReactNode {
   const c = PORT_MARKER_COLOR;
   if (direction === 'inout') {
+    // Bidirectional — symmetric, orientation-independent.
     return (
       <svg width="10" height="8" viewBox="0 0 10 8" fill="none"
         style={{ display: 'block', pointerEvents: 'none' }}>
@@ -51,7 +60,8 @@ function portMarkerSvg(direction: string): ReactNode {
   if (direction === 'in' || direction === 'out') {
     return (
       <svg width="8" height="8" viewBox="0 0 8 8" fill="none"
-        style={{ display: 'block', pointerEvents: 'none' }}>
+        style={{ display: 'block', pointerEvents: 'none',
+          ...(pointsRight ? {} : { transform: 'scaleX(-1)' }) }}>
         <path d="M0.5,4 L6.5,4 M4.5,2 L6.5,4 L4.5,6"
           stroke={c} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -108,7 +118,9 @@ export function makeBoundaryPortDisplay(
     labelStyle: {
       color: PORT_MARKER_COLOR,
     },
-    svgContent: portMarkerSvg(arrowDir ?? direction),
+    // The arrow is oriented per-side at render time (PortHandles), so we only
+    // record the declared direction here rather than baking in a fixed glyph.
+    arrowDir: arrowDir ?? direction,
   };
 }
 
@@ -161,6 +173,12 @@ export function PortHandles(props: PortHandlesProps) {
         const d     = p.direction;
         const color = portHandleColor(d);
         const arrow = p.glyph !== undefined ? p.glyph : portArrowGlyph(d, isLR);
+
+        // Side-aware arrow: aim it INTO the shape for `in`, OUT for `out`.
+        // On the left edge, "into" is rightward; on the right edge it is leftward.
+        const arrowD     = p.arrowDir ?? d;
+        const leftArrow  = portMarkerSvg(arrowD, arrowD === 'in');
+        const rightArrow = portMarkerSvg(arrowD, arrowD === 'out');
 
         // Visibility: left handle = target (in/inout/''); right handle = source (out/inout).
         // Per-port showLeft/showRight take priority over showBothHandles and direction defaults,
@@ -227,7 +245,7 @@ export function PortHandles(props: PortHandlesProps) {
             >
               {showL && (p.svgContent !== undefined
                 ? p.svgContent
-                : (arrow && <span style={{ pointerEvents: 'none', userSelect: 'none' }}>{arrow}</span>)
+                : (leftArrow ?? (arrow && <span style={{ pointerEvents: 'none', userSelect: 'none' }}>{arrow}</span>))
               )}
             </Handle>
 
@@ -273,7 +291,7 @@ export function PortHandles(props: PortHandlesProps) {
             >
               {showR && (p.svgContent !== undefined
                 ? p.svgContent
-                : (arrow && <span style={{ pointerEvents: 'none', userSelect: 'none' }}>{arrow}</span>)
+                : (rightArrow ?? (arrow && <span style={{ pointerEvents: 'none', userSelect: 'none' }}>{arrow}</span>))
               )}
             </Handle>
 

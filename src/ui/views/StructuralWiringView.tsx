@@ -747,9 +747,11 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     const finalMaxRank = partUsages.reduce((m, p) => Math.max(m, rank.get(p.id) ?? 0), 0);
 
     // Port side assignment: for each in-scope connection, decide which side of the part
-    // node each port's handle square should appear on.  Backward edges (source rank >
-    // target rank) flip the sides so the edge travels straight across instead of
-    // routing all the way around the shapes.
+    // node each port's handle square should appear on.  Port sides are based purely on
+    // connection topology (SysML `connect` source/target order), not on port direction.
+    // Direction is conveyed by edge arrowheads instead, giving the layout more freedom.
+    // Backward edges (source rank > target rank) flip the sides so the handle squares
+    // stay on the side closest to the connected part.
     const portsShowLeft  = new Set<string>();
     const portsShowRight = new Set<string>();
     for (const conn of inScopeConns) {
@@ -765,7 +767,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         portsShowLeft.add(srcCanon);
         portsShowRight.add(tgtCanon);
       } else {
-        // Forward, same-rank, or boundary connection: source exits right, target enters left
+        // Forward / boundary edge: source exits right, target enters left
         portsShowRight.add(srcCanon);
         portsShowLeft.add(tgtCanon);
       }
@@ -1013,12 +1015,49 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       });
     }
 
-    // ── IBD boundary port nodes: in/inout on left frame edge, out on right ──────
+    // ── IBD boundary port nodes ─────────────────────────────────────────────────
     // Port square straddles the frame edge: left-side nodes at x=0 (sqL handle
     // has `left: -9` so its center lands at the container left at x=0), right-side
     // nodes at x = containerW - SCOPE_PORT_NODE_W (sqR center at x=containerW).
-    const leftScopePorts  = scopePorts.filter(p => resolvePortDir(p) !== 'out');
-    const rightScopePorts = scopePorts.filter(p => resolvePortDir(p) === 'out');
+    //
+    // Side is chosen by connection topology, NOT by direction: each delegated
+    // boundary port sits on the same frame edge that the internal port it wires
+    // to leaves from, so the connecting line goes straight across instead of
+    // making a U-turn (e.g. an internal `out` port exiting the right side keeps
+    // its delegated port on the RIGHT edge).  Direction is conveyed by the in/out
+    // arrow drawn inside the square instead.  Ports with no in-scope connection
+    // fall back to declared direction (in/inout → left, out → right).
+    //
+    // `internalOnRight` mirrors the edge-handle resolution below: when the
+    // boundary is the connection source the internal endpoint is the target
+    // (right iff its right square shows); when the boundary is the target the
+    // internal endpoint is the source (right unless its left square shows).
+    const scopePortRight = new Map<string, boolean>();
+    function boundaryOnRight(sp: GraphNode): boolean {
+      const cached = scopePortRight.get(sp.id);
+      if (cached !== undefined) return cached;
+      let rightVotes = 0, leftVotes = 0;
+      for (const conn of inScopeConns) {
+        const boundaryIsSource = conn.source === sp.id;
+        const internalId = boundaryIsSource ? conn.target
+                         : conn.target === sp.id ? conn.source : null;
+        if (!internalId) continue;
+        const partId = portOwner.get(internalId);
+        if (!partId || partId === scopeDefIdStr) continue;
+        const canon = canonicalPortId.get(internalId) ?? internalId;
+        const internalOnRight = boundaryIsSource
+          ? portsShowRight.has(canon)
+          : !portsShowLeft.has(canon);
+        if (internalOnRight) rightVotes++; else leftVotes++;
+      }
+      const right = (rightVotes + leftVotes === 0)
+        ? resolvePortDir(sp) === 'out'
+        : rightVotes >= leftVotes;
+      scopePortRight.set(sp.id, right);
+      return right;
+    }
+    const leftScopePorts  = scopePorts.filter(p => !boundaryOnRight(p));
+    const rightScopePorts = scopePorts.filter(p =>  boundaryOnRight(p));
 
     function makeScopePortNode(port: GraphNode, y: number, isRight: boolean): Node {
       const id  = `wsport-${port.id}`;
@@ -1158,19 +1197,41 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         // to the handle of the single canonical (visible) square for that port.
         const srcCanon   = canonicalPortId.get(conn.source) ?? conn.source;
         const tgtCanon   = canonicalPortId.get(conn.target) ?? conn.target;
-        // Detect backward edges (source at higher layout rank than target) so the
-        // port squares and edge handles can be flipped to face each other directly.
-        const srcPartId  = portOwner.get(conn.source);
-        const tgtPartId  = portOwner.get(conn.target);
-        const srcRankVal = srcPartId ? (rank.get(srcPartId) ?? -1) : -1;
-        const tgtRankVal = tgtPartId ? (rank.get(tgtPartId) ?? -1) : -1;
-        const isBackward = srcRankVal >= 0 && tgtRankVal >= 0 && srcRankVal > tgtRankVal;
-        // Forward edge: source sqR (position=Right) → target sqL (position=Left).
-        // Backward edge: source exits via port-X-ft (position=Left, co-located with sqL)
-        //   and target receives via port-X-tgt-right (position=Right, co-located with sqR).
-        // With SCOPE_PORT_NODE_W=9 the sqR center coincides with the inner face of sqL.
-        const srcHandle = isSrcPort ? (isBackward ? `port-${srcCanon}-ft` : `port-${srcCanon}-out`) : undefined;
-        const tgtHandle = isTgtPort ? (isBackward ? `port-${tgtCanon}-tgt-right` : `port-${tgtCanon}`) : undefined;
+
+        // Semantic direction: when both endpoints are internal (non-scope) ports and
+        // the SysML connect order is reversed from semantic data flow (src=in, tgt=out),
+        // swap edge source/target so the arrowhead always points INTO the 'in' port.
+        const srcDir = (isSrcPort && !scopePortIdSet.has(srcCanon)) ? resolvePortDir(srcNode!) : null;
+        const tgtDir = (isTgtPort && !scopePortIdSet.has(tgtCanon)) ? resolvePortDir(tgtNode!) : null;
+        const needsSwap = srcDir === 'in' && tgtDir === 'out';
+
+        const edgeSrcRf     = needsSwap ? tgtRf    : srcRf;
+        const edgeTgtRf     = needsSwap ? srcRf    : tgtRf;
+        const edgeSrcCanon  = needsSwap ? tgtCanon : srcCanon;
+        const edgeTgtCanon  = needsSwap ? srcCanon : tgtCanon;
+        const edgeIsSrcPort = needsSwap ? isTgtPort : isSrcPort;
+        const edgeIsTgtPort = needsSwap ? isSrcPort : isTgtPort;
+
+        // Choose the handle by which side the port square is displayed on.
+        //   Internal ports wire OUTWARD to a neighbouring part, so the handle is
+        //   on the same side as the visible square.
+        //   Boundary ports straddle a frame edge and always wire INWARD toward the
+        //   interior, so their handle is on the opposite side from the frame edge
+        //   they sit on (left-edge port → exits right; right-edge port → exits left).
+        // Source: left side → hidden left source (-ft); right side → visible right (-out).
+        // Target: right side → hidden right target (-tgt-right); left side → plain left target.
+        const srcOnLeft = scopePortIdSet.has(edgeSrcCanon)
+          ? (scopePortRight.get(edgeSrcCanon) ?? false)   // right-edge boundary → exits left
+          : portsShowLeft.has(edgeSrcCanon);
+        const tgtOnRight = scopePortIdSet.has(edgeTgtCanon)
+          ? !(scopePortRight.get(edgeTgtCanon) ?? false)  // left-edge boundary → enters from right
+          : portsShowRight.has(edgeTgtCanon);
+        const srcHandle = edgeIsSrcPort
+          ? (srcOnLeft ? `port-${edgeSrcCanon}-ft` : `port-${edgeSrcCanon}-out`)
+          : undefined;
+        const tgtHandle = edgeIsTgtPort
+          ? (tgtOnRight ? `port-${edgeTgtCanon}-tgt-right` : `port-${edgeTgtCanon}`)
+          : undefined;
 
         // Spotlight styling: selected edge gets a colour-matched glow filter
         // and is rendered above siblings; non-selected edges fade out so the
@@ -1184,8 +1245,8 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
 
         const edge: Edge & { pathOptions?: { borderRadius?: number } } = {
           id:              `wconn-${conn.id}`,
-          source:          srcRf,
-          target:          tgtRf,
+          source:          edgeSrcRf,
+          target:          edgeTgtRf,
           sourceHandle:    srcHandle,
           targetHandle:    tgtHandle,
           type:            'smoothstep',
@@ -1202,9 +1263,9 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
             ...spotlightStyle,
           },
           ...(isEdgeSel ? { zIndex: 1000 } : {}),
-          // Structural connections (ConnectionUsage) are undirected — no arrowhead.
-          // Flow connections carry direction (FlowUsage / FlowConnectionUsage).
-          ...(isStructural ? {} : { markerEnd: { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 } }),
+          // All connections carry an arrowhead pointing into the 'in' port.
+          // Direction is conveyed by the arrow, not by port placement on left vs right.
+          markerEnd: { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 },
           // Smooth rounded corners on the orthogonal bends
           pathOptions:     { borderRadius: 12 },
           data:            { _sel: edgeSel },
