@@ -872,9 +872,9 @@ package SignalConditioningAndProcessing_XmiResolved {
         port p32 : ~InterMicrocontrollers_PhysicalSupplyVoltage_Port;
         port p33 : ~ETH_PhysicalSupplyVoltage_Port;
         // External/referenced connector endpoint not locally exported in XMI: _2021x_1_68c018f_1670824403585_757635_1307
-        port External_ActualVoltageAcceleratorPedal : ActualVoltageAcceleratorPedal_Port;
+        port External_ActualVoltageAcceleratorPedal : ~ActualVoltageAcceleratorPedal_Port;
         // External/referenced connector endpoint not locally exported in XMI: _2021x_1_68c018f_1670824481035_265353_1329
-        port External_ActualSupplyVoltageAcceleratorPedal : ActualSupplyVoltageAcceleratorPedal_Port;
+        port External_ActualSupplyVoltageAcceleratorPedal : ~ActualSupplyVoltageAcceleratorPedal_Port;
         // External/referenced connector endpoint not locally exported in XMI: _2021x_1_68c018f_1670824077896_684229_1147
         port External_PhysActualVoltageAcceleratorPedalSensor : PhysActualVoltageAcceleratorPedalSensor_Port;
         // External/referenced connector endpoint not locally exported in XMI: _2024x_1_86c020f_1739450243970_930410_395
@@ -882,7 +882,7 @@ package SignalConditioningAndProcessing_XmiResolved {
         // External/referenced connector endpoint not locally exported in XMI: _2024x_1_86c020f_1739803183384_79946_420
         port External_AcceleratorPedalPowerSupplyState : AcceleratorPedalPowerSupplyState_Port;
         // External/referenced connector endpoint not locally exported in XMI: _2024x_1_86c020f_1739790423963_642330_319
-        port External_AcceleratorPedalPowerSupplyCtrl : AcceleratorPedalPowerSupplyCtrl_Port;
+        port External_AcceleratorPedalPowerSupplyCtrl : ~AcceleratorPedalPowerSupplyCtrl_Port;
 
         // Internal logical-function parts.
         part acpdSignalProcessing : AcpdSignalProcessing;
@@ -926,30 +926,30 @@ package SignalConditioningAndProcessing_XmiResolved {
             acpdSignalProcessing.p1 to inputOutputDriver.p7;
         interface inputOutputDriver_p8TosignalConversion_p6 connect
             inputOutputDriver.p8 to signalConversion.p6;
-        interface BatterySupply_InTosignalConversion_BatterySupply_In connect
-            BatterySupply_In to signalConversion.BatterySupply_In;
-        interface CANFlexray_PhysicalSupplyVoltageTosignalConversion_CANFlexray_PhysicalSupplyVoltage connect
-            CANFlexray_PhysicalSupplyVoltage to signalConversion.CANFlexray_PhysicalSupplyVoltage;
-        interface VDD3V3PhysicalSupplyVoltageTosignalConversion_VDD3V3PhysicalSupplyVoltage connect
-            VDD3V3PhysicalSupplyVoltage to signalConversion.VDD3V3PhysicalSupplyVoltage;
-        interface VDD5DPhysicalSupplyVoltageTosignalConversion_VDD5DPhysicalSupplyVoltage connect
-            VDD5DPhysicalSupplyVoltage to signalConversion.VDD5DPhysicalSupplyVoltage;
-        interface EthernetPLCPhysicalSupplyVoltageTosignalConversion_EthernetPLCPhysicalSupplyVoltage connect
-            EthernetPLCPhysicalSupplyVoltage to signalConversion.EthernetPLCPhysicalSupplyVoltage;
-        interface WakeupVBATBusComm_PhysicalSupplyVoltageTosignalConversion_WakeupVBATBusComm_PhysicalSupplyVoltage connect
-            WakeupVBATBusComm_PhysicalSupplyVoltage to signalConversion.WakeupVBATBusComm_PhysicalSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_Clamp30OVMeasActualVoltageToClamp30OVMeasActualVoltage connect
-            voltageTemperatureSignalProcessing.Clamp30OVMeasActualVoltage to Clamp30OVMeasActualVoltage;
-        interface c19_connection connect
-            ConfigureChipExternalSupplyVoltageRailsThresholds to onChipVTSupervisionDriver.ConfigureChipExternalSupplyVoltageRailsThresholds;
-        interface c20_connection connect
-            ConfigureChipInternalSupplyVoltageRailsThresholds to onChipVTSupervisionDriver.ConfigureChipInternalSupplyVoltageRailsThresholds;
-        interface voltageTemperatureSignalProcessing_Clamp30UVMeasActualVoltageToClamp30UVMeasActualVoltage connect
-            voltageTemperatureSignalProcessing.Clamp30UVMeasActualVoltage to Clamp30UVMeasActualVoltage;
-        interface c22_connection connect
-            onChipVTSupervisionDriver.ChipExternalSupplyRailsActualVoltages to ChipExternalSupplyRailsActualVoltages;
-        interface ConfigureDieTemperaturesThresholdsToonChipVTSupervisionDriver_ConfigureDieTemperaturesThresholds connect
-            ConfigureDieTemperaturesThresholds to onChipVTSupervisionDriver.ConfigureDieTemperaturesThresholds;
+        // FDD delegation connector: BatterySupply_InTosignalConversion_BatterySupply_In
+        bind BatterySupply_In = signalConversion.BatterySupply_In;
+        // FDD delegation connector: CANFlexray_PhysicalSupplyVoltageTosignalConversion_CANFlexray_PhysicalSupplyVoltage
+        bind CANFlexray_PhysicalSupplyVoltage = signalConversion.CANFlexray_PhysicalSupplyVoltage;
+        // FDD delegation connector: VDD3V3PhysicalSupplyVoltageTosignalConversion_VDD3V3PhysicalSupplyVoltage
+        bind VDD3V3PhysicalSupplyVoltage = signalConversion.VDD3V3PhysicalSupplyVoltage;
+        // FDD delegation connector: VDD5DPhysicalSupplyVoltageTosignalConversion_VDD5DPhysicalSupplyVoltage
+        bind VDD5DPhysicalSupplyVoltage = signalConversion.VDD5DPhysicalSupplyVoltage;
+        // FDD delegation connector: EthernetPLCPhysicalSupplyVoltageTosignalConversion_EthernetPLCPhysicalSupplyVoltage
+        bind EthernetPLCPhysicalSupplyVoltage = signalConversion.EthernetPLCPhysicalSupplyVoltage;
+        // FDD delegation connector: WakeupVBATBusComm_PhysicalSupplyVoltageTosignalConversion_WakeupVBATBusComm_PhysicalSupplyVoltage
+        bind WakeupVBATBusComm_PhysicalSupplyVoltage = signalConversion.WakeupVBATBusComm_PhysicalSupplyVoltage;
+        // FDD delegation connector: voltageTemperatureSignalProcessing_Clamp30OVMeasActualVoltageToClamp30OVMeasActualVoltage
+        bind Clamp30OVMeasActualVoltage = voltageTemperatureSignalProcessing.Clamp30OVMeasActualVoltage;
+        // FDD delegation connector: c19_connection
+        bind ConfigureChipExternalSupplyVoltageRailsThresholds = onChipVTSupervisionDriver.ConfigureChipExternalSupplyVoltageRailsThresholds;
+        // FDD delegation connector: c20_connection
+        bind ConfigureChipInternalSupplyVoltageRailsThresholds = onChipVTSupervisionDriver.ConfigureChipInternalSupplyVoltageRailsThresholds;
+        // FDD delegation connector: voltageTemperatureSignalProcessing_Clamp30UVMeasActualVoltageToClamp30UVMeasActualVoltage
+        bind Clamp30UVMeasActualVoltage = voltageTemperatureSignalProcessing.Clamp30UVMeasActualVoltage;
+        // FDD delegation connector: c22_connection
+        bind ChipExternalSupplyRailsActualVoltages = onChipVTSupervisionDriver.ChipExternalSupplyRailsActualVoltages;
+        // FDD delegation connector: ConfigureDieTemperaturesThresholdsToonChipVTSupervisionDriver_ConfigureDieTemperaturesThresholds
+        bind ConfigureDieTemperaturesThresholds = onChipVTSupervisionDriver.ConfigureDieTemperaturesThresholds;
         interface c24_connection connect
             inputOutputDriver.CANFlexray_RawSupplyVoltage to voltageTemperatureSignalProcessing.CANFlexray_RawSupplyVoltage;
         interface c25_connection connect
@@ -964,16 +964,16 @@ package SignalConditioningAndProcessing_XmiResolved {
             inputOutputDriver.ETH_RawSupplyVoltage to voltageTemperatureSignalProcessing.ETH_RawSupplyVoltage;
         interface c30_connection connect
             inputOutputDriver.WakeupVBATBusComm_RawSupplyVoltage to voltageTemperatureSignalProcessing.WakeupVBATBusComm_RawSupplyVoltage;
-        interface c31_connection connect
-            voltageTemperatureSignalProcessing.WakeupVBATBusComm_ActualSupplyVoltage to WakeupVBATBusComm_ActualSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_ETH_ActualSupplyVoltageToETH_ActualSupplyVoltage connect
-            voltageTemperatureSignalProcessing.ETH_ActualSupplyVoltage to ETH_ActualSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_VDD5D_ActualSupplyVoltageToVDD5D_ActualSupplyVoltage connect
-            voltageTemperatureSignalProcessing.VDD5D_ActualSupplyVoltage to VDD5D_ActualSupplyVoltage;
-        interface c34_connection connect
-            voltageTemperatureSignalProcessing.InterMicrocontrollers_ActualSupplyVoltage to InterMicrocontrollers_ActualSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_CANFlexray_ActualSupplyVoltageToCANFlexray_ActualSupplyVoltage connect
-            voltageTemperatureSignalProcessing.CANFlexray_ActualSupplyVoltage to CANFlexray_ActualSupplyVoltage;
+        // FDD delegation connector: c31_connection
+        bind WakeupVBATBusComm_ActualSupplyVoltage = voltageTemperatureSignalProcessing.WakeupVBATBusComm_ActualSupplyVoltage;
+        // FDD delegation connector: voltageTemperatureSignalProcessing_ETH_ActualSupplyVoltageToETH_ActualSupplyVoltage
+        bind ETH_ActualSupplyVoltage = voltageTemperatureSignalProcessing.ETH_ActualSupplyVoltage;
+        // FDD delegation connector: voltageTemperatureSignalProcessing_VDD5D_ActualSupplyVoltageToVDD5D_ActualSupplyVoltage
+        bind VDD5D_ActualSupplyVoltage = voltageTemperatureSignalProcessing.VDD5D_ActualSupplyVoltage;
+        // FDD delegation connector: c34_connection
+        bind InterMicrocontrollers_ActualSupplyVoltage = voltageTemperatureSignalProcessing.InterMicrocontrollers_ActualSupplyVoltage;
+        // FDD delegation connector: voltageTemperatureSignalProcessing_CANFlexray_ActualSupplyVoltageToCANFlexray_ActualSupplyVoltage
+        bind CANFlexray_ActualSupplyVoltage = voltageTemperatureSignalProcessing.CANFlexray_ActualSupplyVoltage;
         interface signalConversion_DigActualECUVoltagesMeasToinputOutputDriver_DigActualECUVoltagesMeas connect
             signalConversion.DigActualECUVoltagesMeas to inputOutputDriver.DigActualECUVoltagesMeas;
         interface onChipVTSupervision_RawDieTemperaturesToonChipVTSupervisionDriver_RawDieTemperatures connect
@@ -986,84 +986,28 @@ package SignalConditioningAndProcessing_XmiResolved {
             onChipVTSupervision.ChipExternalSupplyRailsRawVoltages to onChipVTSupervisionDriver.ChipExternalSupplyRailsRawVoltages;
         interface c41_connection connect
             onChipVTSupervision.ChipInternalSupplyRailsRawVoltages to onChipVTSupervisionDriver.ChipInternalSupplyRailsRawVoltages;
-        interface onChipVTSupervision_AlarmSignalInfoToAlarmSignalInfo connect
-            onChipVTSupervision.AlarmSignalInfo to AlarmSignalInfo;
+        // FDD delegation connector: onChipVTSupervision_AlarmSignalInfoToAlarmSignalInfo
+        bind AlarmSignalInfo = onChipVTSupervision.AlarmSignalInfo;
         interface c43_connection connect
             onChipVTSupervisionDriver.DieTemperaturesThresholdsConfigHW to onChipVTSupervision.DieTemperaturesThresholdsConfigHW;
-        interface c44_connection connect
-            onChipVTSupervisionDriver.ChipExternalSupplyRailsActualVoltages to voltageTemperatureSignalProcessing.ChipExternalSupplyRailsActualVoltages;
-        interface c45_connection connect
-            onChipVTSupervisionDriver.ChipInternalSupplyRailsActualVoltages to ChipInternalSupplyRailsActualVoltages;
-        interface onChipVTSupervisionDriver_ActualDieTemperaturesToActualDieTemperatures connect
-            onChipVTSupervisionDriver.ActualDieTemperatures to ActualDieTemperatures;
-        interface c47_connection connect
-            onChipVTSupervisionDriver.ChipInternalSupplyRailsActualVoltages to voltageTemperatureSignalProcessing.ChipInternalSupplyRailsActualVoltages;
-        interface signalConversion_DigActualECUVoltagesMeasToinputOutputDriver_DigActualECUVoltagesMeas_2 connect
-            signalConversion.DigActualECUVoltagesMeas to inputOutputDriver.DigActualECUVoltagesMeas;
-        interface c49_connection connect
-            inputOutputDriver.Clamp30OVMeasRawVoltage to voltageTemperatureSignalProcessing.Clamp30OVMeasRawVoltage;
-        interface c50_connection connect
-            inputOutputDriver.CANFlexray_RawSupplyVoltage to voltageTemperatureSignalProcessing.CANFlexray_RawSupplyVoltage;
-        interface c51_connection connect
-            inputOutputDriver.InterMicrocontrollers_RawSupplyVoltage to voltageTemperatureSignalProcessing.InterMicrocontrollers_RawSupplyVoltage;
-        interface inputOutputDriver_VDD5DRawSupplyVoltageTovoltageTemperatureSignalProcessing_VDD5DRawSupplyVoltage_2 connect
-            inputOutputDriver.VDD5DRawSupplyVoltage to voltageTemperatureSignalProcessing.VDD5DRawSupplyVoltage;
-        interface inputOutputDriver_ETH_RawSupplyVoltageTovoltageTemperatureSignalProcessing_ETH_RawSupplyVoltage_2 connect
-            inputOutputDriver.ETH_RawSupplyVoltage to voltageTemperatureSignalProcessing.ETH_RawSupplyVoltage;
-        interface c54_connection connect
-            inputOutputDriver.WakeupVBATBusComm_RawSupplyVoltage to voltageTemperatureSignalProcessing.WakeupVBATBusComm_RawSupplyVoltage;
-        interface c55_connection connect
-            inputOutputDriver.Clamp30UVMeasRawVoltage to voltageTemperatureSignalProcessing.Clamp30UVMeasRawVoltage;
-        interface voltageTemperatureSignalProcessing_CANFlexray_ActualSupplyVoltageToCANFlexray_ActualSupplyVoltage_2 connect
-            voltageTemperatureSignalProcessing.CANFlexray_ActualSupplyVoltage to CANFlexray_ActualSupplyVoltage;
-        interface c57_connection connect
-            voltageTemperatureSignalProcessing.InterMicrocontrollers_ActualSupplyVoltage to InterMicrocontrollers_ActualSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_VDD5D_ActualSupplyVoltageToVDD5D_ActualSupplyVoltage_2 connect
-            voltageTemperatureSignalProcessing.VDD5D_ActualSupplyVoltage to VDD5D_ActualSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_ETH_ActualSupplyVoltageToETH_ActualSupplyVoltage_2 connect
-            voltageTemperatureSignalProcessing.ETH_ActualSupplyVoltage to ETH_ActualSupplyVoltage;
-        interface c60_connection connect
-            voltageTemperatureSignalProcessing.WakeupVBATBusComm_ActualSupplyVoltage to WakeupVBATBusComm_ActualSupplyVoltage;
-        interface voltageTemperatureSignalProcessing_ActualReferenceVoltageToActualReferenceVoltage connect
-            voltageTemperatureSignalProcessing.ActualReferenceVoltage to ActualReferenceVoltage;
-        interface c62_connection connect
-            onChipVTSupervisionDriver.ChipExternalSupplyRailsActualVoltages to voltageTemperatureSignalProcessing.ChipExternalSupplyRailsActualVoltages;
-        interface c63_connection connect
-            onChipVTSupervisionDriver.ChipInternalSupplyRailsActualVoltages to voltageTemperatureSignalProcessing.ChipInternalSupplyRailsActualVoltages;
-        interface c64_connection connect
-            onChipVTSupervisionDriver.ChipExternalSupplyVoltageRailsThresholdsConfigHw to onChipVTSupervision.ChipExternalSupplyVoltageRailsThresholdsConfigHw;
-        interface c65_connection connect
-            onChipVTSupervisionDriver.ChipExternalSupplyRailsRawVoltages to onChipVTSupervision.ChipExternalSupplyRailsRawVoltages;
-        interface c66_connection connect
-            onChipVTSupervisionDriver.ChipInternalSupplyRailsRawVoltages to onChipVTSupervision.ChipInternalSupplyRailsRawVoltages;
-        interface onChipVTSupervision_AlarmSignalInfoToAlarmSignalInfo_2 connect
-            onChipVTSupervision.AlarmSignalInfo to AlarmSignalInfo;
-        interface c68_connection connect
-            onChipVTSupervisionDriver.ChipInternalSupplyVoltageRailsThresholdsConfigHW to onChipVTSupervision.ChipInternalSupplyVoltageRailsThresholdsConfigHW;
-        interface c69_connection connect
-            onChipVTSupervisionDriver.DieTemperaturesThresholdsConfigHW to onChipVTSupervision.DieTemperaturesThresholdsConfigHW;
-        interface onChipVTSupervision_RawDieTemperaturesToonChipVTSupervisionDriver_RawDieTemperatures_2 connect
-            onChipVTSupervision.RawDieTemperatures to onChipVTSupervisionDriver.RawDieTemperatures;
-        interface onChipVTSupervisionDriver_ActualDieTemperaturesToActualDieTemperatures_2 connect
-            onChipVTSupervisionDriver.ActualDieTemperatures to ActualDieTemperatures;
-        interface c72_connection connect
-            onChipVTSupervisionDriver.ChipInternalSupplyRailsActualVoltages to ChipInternalSupplyRailsActualVoltages;
-        interface ConfigureDieTemperaturesThresholdsToonChipVTSupervisionDriver_ConfigureDieTemperaturesThresholds_2 connect
-            ConfigureDieTemperaturesThresholds to onChipVTSupervisionDriver.ConfigureDieTemperaturesThresholds;
-        interface signalConversion_p8Top21 connect
-            signalConversion.p8 to p21;
+        // FDD delegation connector: c45_connection
+        bind ChipInternalSupplyRailsActualVoltages = onChipVTSupervisionDriver.ChipInternalSupplyRailsActualVoltages;
+        // FDD delegation connector: onChipVTSupervisionDriver_ActualDieTemperaturesToActualDieTemperatures
+        bind ActualDieTemperatures = onChipVTSupervisionDriver.ActualDieTemperatures;
+        // FDD delegation connector: signalConversion_p8Top21
+        bind p21 = signalConversion.p8;
         interface signalConversion_p9ToinputOutputDriver_p9 connect
             signalConversion.p9 to inputOutputDriver.p9;
-        interface inputOutputDriver_p10Top22 connect
-            inputOutputDriver.p10 to p22;
-        interface inputOutputDriver_p11Top23 connect
-            inputOutputDriver.p11 to p23;
-        interface inputOutputDriver_p12Top24 connect
-            inputOutputDriver.p12 to p24;
-        interface p30ToonChipVTSupervision_p3 connect
-            p30 to onChipVTSupervision.p3;
-        interface p31ToonChipVTSupervision_p5 connect
-            p31 to onChipVTSupervision.p5;
+        // FDD delegation connector: inputOutputDriver_p10Top22
+        bind p22 = inputOutputDriver.p10;
+        // FDD delegation connector: inputOutputDriver_p11Top23
+        bind p23 = inputOutputDriver.p11;
+        // FDD delegation connector: inputOutputDriver_p12Top24
+        bind p24 = inputOutputDriver.p12;
+        // FDD delegation connector: p30ToonChipVTSupervision_p3
+        bind p30 = onChipVTSupervision.p3;
+        // FDD delegation connector: p31ToonChipVTSupervision_p5
+        bind p31 = onChipVTSupervision.p5;
     }
 
 }
