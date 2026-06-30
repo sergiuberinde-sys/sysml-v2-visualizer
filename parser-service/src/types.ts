@@ -38,6 +38,8 @@ export interface BehaviorAction {
   owningDefType?: string;
   /** For ActionUsage/PerformActionUsage: resolved type name from FeatureTyping (e.g. "ReadSensor") */
   actionType?: string;
+  /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
+  asil?: string;
   /** In/out item ports (parameters) on this action */
   ports?: ActionPort[];
 }

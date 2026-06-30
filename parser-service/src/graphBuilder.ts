@@ -23,6 +23,8 @@ export interface GraphNode {
   direction?: string;
   isComposite?: boolean;
   isConjugated?: boolean;
+  /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
+  asil?: string;
   startLine?: number;
   endLine?: number;
 }
@@ -196,6 +198,40 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
   for (const n of nodes) childrenOf.set(n.id, []);
   for (const [childId, parentId] of parentOf) {
     childrenOf.get(parentId)?.push(childId);
+  }
+
+  // ── ASIL metadata annotations ────────────────────────────────────────────────
+  // `@ASIL { level = ASILLevel::X }` parses to a MetadataUsage typed by 'ASIL' whose
+  // 'level' feature value references the enum literal (a named Membership in the
+  // subtree). Attach that level to the annotated host element (nearest non-membership
+  // ancestor) so views can render a safety badge — SysML v2 shows metadata as a
+  // textual annotation on the element.
+  for (const n of nodes) {
+    if (n.type !== 'MetadataUsage') continue;
+    const kids = childrenOf.get(n.id) ?? [];
+    const typing = kids.map(id => nodeById.get(id)).find(k => k?.type === 'FeatureTyping');
+    if (typing?.label !== 'ASIL') continue;
+    // Descend to the first named Membership — the referenced enum literal (the level).
+    let level: string | undefined;
+    const findLevel = (id: string): void => {
+      for (const cid of childrenOf.get(id) ?? []) {
+        const c = nodeById.get(cid);
+        if (!c) continue;
+        if (c.type === 'Membership' && c.label && c.label !== c.type) { level = c.label; return; }
+        findLevel(cid);
+        if (level) return;
+      }
+    };
+    findLevel(n.id);
+    if (!level) continue;
+    // Walk up to the annotated host (skip membership wrappers).
+    let hostId = parentOf.get(n.id);
+    while (hostId !== undefined) {
+      const h = nodeById.get(hostId);
+      if (!h) break;
+      if (!MEMBERSHIP_WRAPPERS.has(h.type)) { h.asil = level; break; }
+      hostId = parentOf.get(hostId);
+    }
   }
 
   // Build name→[id] index for PortUsage nodes so we can resolve endpoint chains.

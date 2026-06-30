@@ -23,6 +23,7 @@ import type { SelectionState } from '../../app/selection';
 import { applyBehaviorLayout } from '../layout/graphLayout';
 import { FitPanel } from '../layout/FitPanel';
 import { fitNodeWidth, estimateWrapLines, type TextRow } from '../layout/nodeSize';
+import { AsilBadge } from '../layout/AsilBadge';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 
@@ -298,6 +299,7 @@ interface PortActionNodeData {
   stereoClr:  string;
   nameClr:    string;
   actionType?: string;
+  asil?:      string;
   ports:      ActionPort[];
   isBranch:   boolean;
   targets:    string[];
@@ -322,6 +324,9 @@ function PortActionNode({ data }: { data: PortActionNodeData }) {
         <div style={{ fontSize: 10, color: PORT_TYPE_COLOR, marginTop: 1, textAlign: 'center' }}>
           : {data.actionType}
         </div>
+      )}
+      {data.asil && (
+        <div style={{ marginTop: 3, textAlign: 'center' }}><AsilBadge level={data.asil} /></div>
       )}
       {data.isBranch && (
         <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
@@ -449,6 +454,7 @@ function behaviorNodeDims(
   stereoText: string,
   inPorts:    ActionPort[] = [],
   outPorts:   ActionPort[] = [],
+  hasAsil:    boolean = false,
 ): { w: number; h: number } {
   const rows: TextRow[] = [
     { text: stereoText, font: '9px sans-serif' },
@@ -460,6 +466,7 @@ function behaviorNodeDims(
   let h = BEHAV_V_PAD + LINE_H_SMALL + nameLines * LINE_H_NAME;
   if (actionType) h += LINE_H_SMALL;
   if (isBranch)   h += BADGE_H;
+  if (hasAsil)    h += 16; // ASIL badge row
 
   const maxPorts = Math.max(inPorts.length, outPorts.length);
   let w = w0;
@@ -702,7 +709,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const partNodes: Node[] = actionUsages.map(a => {
         const nodeId  = `oact-${behaviorName}-${a.name}`;
         const targets = outgoing.get(a.name) ?? [];
-        const dims    = behaviorNodeDims(a.name, a.actionType, targets.length > 1, '«action»');
+        const dims    = behaviorNodeDims(a.name, a.actionType, targets.length > 1, '«action»', [], [], !!a.asil);
         return {
           id:       nodeId,
           position: { x: 0, y: 0 },
@@ -714,6 +721,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
                 {a.actionType && (
                   <div style={{ fontSize: 10, color: '#4a9fc0', marginTop: 1 }}>: {a.actionType}</div>
                 )}
+                {a.asil && <div style={{ marginTop: 3 }}><AsilBadge level={a.asil} /></div>}
               </div>
             ),
             _sel: {
@@ -828,7 +836,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         const isBranch = targets.length > 1;
         const inPorts  = (a.ports ?? []).filter(p => p.direction === 'in');
         const outPorts = (a.ports ?? []).filter(p => p.direction === 'out');
-        nodeDims.set(a.name, behaviorNodeDims(a.name, a.actionType, isBranch, '«action»', inPorts, outPorts));
+        nodeDims.set(a.name, behaviorNodeDims(a.name, a.actionType, isBranch, '«action»', inPorts, outPorts, !!a.asil));
       }
     }
     for (const c of ownedConditionals) {
@@ -896,6 +904,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
           stereoClr:  ACT_STEREO,
           nameClr:    ACT_NAME,
           actionType: a.actionType,
+          asil:       a.asil,
           ports:      [...inPorts, ...outPorts],
           isBranch,
           targets,

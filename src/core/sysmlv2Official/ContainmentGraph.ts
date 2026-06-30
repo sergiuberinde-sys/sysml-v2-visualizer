@@ -25,6 +25,8 @@ export interface GraphNode {
   direction?: string;
   isComposite?: boolean;
   isConjugated?: boolean;
+  /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
+  asil?: string;
   startLine?: number;
   endLine?: number;
 }

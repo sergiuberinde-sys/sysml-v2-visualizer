@@ -19,6 +19,7 @@ import {
   type Node, type Edge, type NodeChange, type NodeProps, type EdgeMouseHandler,
 } from '@xyflow/react';
 import { PortHandles, makeBoundaryPortDisplay, resolvePortDirection, type PortDisplay } from '../layout/PortHandles';
+import { AsilBadge, asilLabel } from '../layout/AsilBadge';
 import { fitNodeWidth, type TextRow } from '../layout/nodeSize';
 import '@xyflow/react/dist/style.css';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
@@ -97,6 +98,7 @@ function WiringPartNode({ data }: NodeProps) {
   const partLbl       =  data['partLbl']       as string;
   const typeName      = (data['typeName']      as string | null) ?? null;
   const nodeH         = (data['nodeH']         as number) ?? PART_BASE_H;
+  const asil          = (data['asil']          as string | undefined);
   const onPortSelect  = data['onPortSelect']   as ((p: PortDisplay, e: React.MouseEvent) => void) | undefined;
 
   return (
@@ -120,6 +122,7 @@ function WiringPartNode({ data }: NodeProps) {
           <div style={{ fontSize: 9, color: '#4ade8088', letterSpacing: '0.3px' }}>«part»</div>
           <div style={{ fontSize: 12.5, fontWeight: 600, color: PART_NAME }}>{partLbl}</div>
           {typeName && <div style={{ fontSize: 10, color: PART_TYPE, marginTop: 1 }}>: {typeName}</div>}
+          {asil && <div style={{ marginTop: 3 }}><AsilBadge level={asil} /></div>}
         </div>
       </div>
     </>
@@ -597,6 +600,14 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       const edge = typedByEdges.find(e => e.source === nodeId);
       if (!edge) return null;
       return nodeById.get(edge.target)?.label ?? null;
+    }
+
+    // ASIL for a part box: the PartUsage's own @ASIL, else its typing PartDef's.
+    function getPartAsil(partId: string): string | undefined {
+      const own = nodeById.get(partId)?.asil;
+      if (own) return own;
+      const edge = typedByEdges.find(e => e.source === partId);
+      return edge ? nodeById.get(edge.target)?.asil : undefined;
     }
 
     // Map portId / partId → owning PartUsage id (or scope id for boundary ports).
@@ -1134,6 +1145,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         data: {
           partLbl:  part.label,
           typeName: typeName ?? null,
+          asil:     getPartAsil(part.id),
           ports:    ports.map(p => {
             const pd         = portDisplay(p);
             const showsLeft  = portsShowLeft.has(p.id);
@@ -1285,6 +1297,8 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           const colonIdx = conn.label.indexOf(' : ');
           if (colonIdx > 0) flowNode = flowNodeByLabel.get(conn.label.slice(0, colonIdx));
         }
+        // Append the flow's ASIL level to its rendered label (SysML metadata annotation).
+        const displayLabel = label && flowNode?.asil ? `${label}  ⟨${asilLabel(flowNode.asil)}⟩` : label;
 
         const edgeSel: SelectionState = flowNode
           ? {
@@ -1393,7 +1407,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           targetHandle:    tgtHandle,
           type:            'smoothstep',
           animated:        !isMsg && !isStructural && !isDimmed,
-          label,
+          label:           displayLabel,
           // Label background prevents text landing directly on port glyphs or node text.
           labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace', ...(isDimmed ? { opacity: 0.3 } : {}) },
           labelBgStyle:    { fill: '#030c06', fillOpacity: 0.95, rx: 3, ry: 3 },

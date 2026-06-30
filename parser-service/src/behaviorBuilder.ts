@@ -215,6 +215,34 @@ function collectPorts(node: ModelNode): ActionPort[] {
   return ports;
 }
 
+// ── ASIL metadata on an element ──────────────────────────────────────────────
+// `@ASIL { level = ASILLevel::X }` parses to a MetadataUsage typed by 'ASIL' whose
+// 'level' value references an enum literal (a named Membership in its subtree).
+// Look for it directly under the element or one membership-wrapper deep — never in
+// nested elements (which carry their own @ASIL). Returns the level (e.g. 'ASIL_D').
+function asilOf(node: ModelNode): string | undefined {
+  let level: string | undefined;
+  const digLevel = (m: ModelNode): void => {
+    for (const k of m.children) {
+      if (level) return;
+      if (k.type === 'Membership' && k.name) { level = k.name; return; }
+      digLevel(k);
+    }
+  };
+  const fromMetadata = (mu: ModelNode): void => {
+    if (mu.children.find(k => k.type === 'FeatureTyping')?.name !== 'ASIL') return;
+    digLevel(mu);
+  };
+  for (const c of node.children) {
+    if (level) break;
+    if (c.type === 'MetadataUsage') fromMetadata(c);
+    else if (c.children.length && (c.type.endsWith('Membership') || c.type === 'Namespace')) {
+      for (const gc of c.children) { if (gc.type === 'MetadataUsage') fromMetadata(gc); if (level) break; }
+    }
+  }
+  return level;
+}
+
 // ── Flow-endpoint extraction ───────────────────────────────────────────────────
 //
 // For `flow from A.p to B.q`, each EndFeatureMembership child of the FlowUsage
@@ -343,6 +371,8 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       }
       const ft = node.children.find(c => c.type === 'FeatureTyping');
       if (ft?.name) action.actionType = ft.name;
+      const asil = asilOf(node);
+      if (asil) action.asil = asil;
       const ports = collectPorts(node);
       if (ports.length > 0) action.ports = ports;
       actions.push(action);
