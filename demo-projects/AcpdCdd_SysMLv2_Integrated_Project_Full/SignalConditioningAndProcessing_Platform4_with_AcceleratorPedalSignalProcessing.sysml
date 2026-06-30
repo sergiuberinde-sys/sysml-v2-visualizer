@@ -18,6 +18,14 @@ package SignalConditioningAndProcessing_XmiResolved {
      * - Swimlanes/activity partitions are represented by action-to-performed-action allocations.
      */
 
+    // ASIL metadata reconstructed from the XMI Safety Integrity Level constraint references.
+    // Source traceability remains in the accompanying extraction report.
+    enum def ASILLevel { QM; ASIL_A; ASIL_B; ASIL_C; ASIL_D; }
+
+    metadata def ASIL {
+        attribute level : ASILLevel;
+    }
+
     // Logical information item definitions.
     item def AcceleratorPedalDioCtrl_Item;
     item def AcceleratorPedalHwCtrl_Item;
@@ -90,6 +98,17 @@ package SignalConditioningAndProcessing_XmiResolved {
     item def WakeupVBATBusComm_RawSupplyVoltage_Item;
     item def WakeupVBATComm_ActualSupplyVoltage_Item;
     item def p29_Item;
+
+    // Intermediate information items named by the AcceleratorPedalSignalProcessing XMI object flows.
+    // The XMI gives no independent signal type for these intermediate flows, so the exact flow names are retained.
+    item def ADC_ISR_Item;
+    item def ISRErrorState_Item;
+    item def MeanValueActualVoltageSensor1_Item;
+    item def MeanValueActualVoltageSensor1Redundant_Item;
+    item def MeanValueActualVoltageSensor2_Item;
+    item def MeanValueActualVoltageSensor2Redundant_Item;
+    item def ScaledSupplyVoltage1_Item;
+    item def ScaledSupplyVoltage2_Item;
 
     // Logical interface port definitions.
     port def AcceleratorPedalDioCtrl_Port {
@@ -335,6 +354,7 @@ package SignalConditioningAndProcessing_XmiResolved {
 
         perform action getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachinePerformed : GetEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine;
         perform action processAndQualifySensorAndSupplyVoltagesPerformed : ProcessAndQualifySensorAndSupplyVoltages;
+        perform action acceleratorPedalSignalProcessingPerformed : AcceleratorPedalSignalProcessing;
     }
 
     part def InputOutputDriver {
@@ -388,6 +408,9 @@ package SignalConditioningAndProcessing_XmiResolved {
     }
 
     part def SignalConversion {
+        @ASIL {
+            level = ASILLevel::ASIL_B;
+        }
         port BatterySupply_In : ~BatterySupply_In_Port;
         port CANFlexray_PhysicalSupplyVoltage : ~CANFlexray_PhysicalSupplyVoltage_Port;
         port DigActualECUVoltagesMeas : DigActualECUVoltagesMeas_Port;
@@ -483,6 +506,300 @@ package SignalConditioningAndProcessing_XmiResolved {
         out item acceleratorPedalDioCtrl : AcceleratorPedalDioCtrl_Item;
     }
 
+    // Activity translated from the XMI-owned FunML Activity Diagram: AcceleratorPedalSignalProcessing.
+    // Source owner: AcpdSignalProcessing (its UML classifier behavior).
+    // The action uses direct boundary items, native start/fork/join/done controls, and no synthetic boundary action definitions.
+    // The XMI has one unnamed, untyped duplicate output flow from Get activation status from LCM and command the power supply;
+    // it is not represented as a second artificial boundary feature. The typed AcceleratorPedalDioCtrl output is retained.
+
+    action def ScaleSupplyVoltages {
+        in item rawSupplyVoltageAcceleratorPedalSensor1 : RawSupplyVoltageAcceleratorPedalSensor1_Item;
+        in item rawSupplyVoltageAcceleratorPedalSensor2 : RawSupplyVoltageAcceleratorPedalSensor2_Item;
+        out item scaledSupplyVoltage1 : ScaledSupplyVoltage1_Item;
+        out item scaledSupplyVoltage2 : ScaledSupplyVoltage2_Item;
+    }
+
+    action def CompareSupplyVoltagesAgainstAdcReferenceVoltages {
+        in item rawSupplyVoltageAcceleratorPedalSensor1 : RawSupplyVoltageAcceleratorPedalSensor1_Item;
+        in item rawSupplyVoltageAcceleratorPedalSensor2 : RawSupplyVoltageAcceleratorPedalSensor2_Item;
+        out item actualStatusSupplyVoltageAcceleratorPedalSensor1 : ActualStatusSupplyVoltageAcceleratorPedalSensor1_Item;
+        out item actualStatusSupplyVoltageAcceleratorPedalSensor2 : ActualStatusSupplyVoltageAcceleratorPedalSensor2_Item;
+        out item actualStatusVoltageAcceleratorPedalSensor1 : ActualStatusVoltageAcceleratorPedalSensor1_Item;
+        out item actualStatusVoltageAcceleratorPedalSensor2 : ActualStatusVoltageAcceleratorPedalSensor2_Item;
+    }
+
+    action def GetActivationStatusFromLcmAndCommandThePowerSupply {
+        in item acceleratorPedalPowerSupplyState : AcceleratorPedalPowerSupplyState_Item;
+        out item acceleratorPedalDioCtrl : AcceleratorPedalDioCtrl_Item;
+    }
+
+    action def CreateMeanValuesForAllSignals {
+        in item rawVoltageAcceleratorPedalSensor1 : RawVoltageAcceleratorPedalSensor1_Item;
+        in item rawVoltageAcceleratorPedalSensor2 : RawVoltageAcceleratorPedalSensor2_Item;
+        in item rawVoltageAcceleratorPedalSensorRedundant1 : RawVoltageAcceleratorPedalSensorRedundant1_Item;
+        in item rawVoltageAcceleratorPedalSensorRedundant2 : RawVoltageAcceleratorPedalSensorRedundant2_Item;
+        out item meanValueActualVoltageSensor1 : MeanValueActualVoltageSensor1_Item;
+        out item meanValueActualVoltageSensor1Redundant : MeanValueActualVoltageSensor1Redundant_Item;
+        out item meanValueActualVoltageSensor2 : MeanValueActualVoltageSensor2_Item;
+        out item meanValueActualVoltageSensor2Redundant : MeanValueActualVoltageSensor2Redundant_Item;
+    }
+
+    action def PerformRedundancyCheckForSensor1Voltage {
+        in item meanValueActualVoltageSensor1 : MeanValueActualVoltageSensor1_Item;
+        in item meanValueActualVoltageSensor1Redundant : MeanValueActualVoltageSensor1Redundant_Item;
+        out item actualStatusVoltageAcceleratorPedalSensor1 : ActualStatusVoltageAcceleratorPedalSensor1_Item;
+        out item actualVoltageAcceleratorPedalSensor1 : ActualVoltageAcceleratorPedalSensor1_Item;
+    }
+
+    action def PerformRedundancyCheckForSensor2Voltage {
+        in item meanValueActualVoltageSensor2 : MeanValueActualVoltageSensor2_Item;
+        in item meanValueActualVoltageSensor2Redundant : MeanValueActualVoltageSensor2Redundant_Item;
+        out item actualStatusVoltageAcceleratorPedalSensor2 : ActualStatusVoltageAcceleratorPedalSensor2_Item;
+        out item actualVoltageAcceleratorPedalSensor2 : ActualVoltageAcceleratorPedalSensor2_Item;
+    }
+
+    action def PerformLatencyAndJitterDetection {
+        in item adcIsr : ADC_ISR_Item;
+        out item isrErrorState : ISRErrorState_Item;
+    }
+
+    action def CreateMovingAverageForSupplyVoltages {
+        in item scaledSupplyVoltage1 : ScaledSupplyVoltage1_Item;
+        in item scaledSupplyVoltage2 : ScaledSupplyVoltage2_Item;
+        in item isrErrorState : ISRErrorState_Item;
+        out item actualSupplyVoltageAcceleratorPedalSensor1 : ActualSupplyVoltageAcceleratorPedalSensor1_Item;
+        out item actualSupplyVoltageAcceleratorPedalSensor2 : ActualSupplyVoltageAcceleratorPedalSensor2_Item;
+    }
+
+    action def AcceleratorPedalSignalProcessing {
+        in item rawVoltageAcceleratorPedalSensor1 : RawVoltageAcceleratorPedalSensor1_Item;
+        in item rawVoltageAcceleratorPedalSensor2 : RawVoltageAcceleratorPedalSensor2_Item;
+        in item rawVoltageAcceleratorPedalSensorRedundant1 : RawVoltageAcceleratorPedalSensorRedundant1_Item;
+        in item rawVoltageAcceleratorPedalSensorRedundant2 : RawVoltageAcceleratorPedalSensorRedundant2_Item;
+        in item rawSupplyVoltageAcceleratorPedalSensor1 : RawSupplyVoltageAcceleratorPedalSensor1_Item;
+        in item rawSupplyVoltageAcceleratorPedalSensor2 : RawSupplyVoltageAcceleratorPedalSensor2_Item;
+        in item acceleratorPedalPowerSupplyState : AcceleratorPedalPowerSupplyState_Item;
+        in item adcIsr : ADC_ISR_Item;
+
+        out item acceleratorPedalDioCtrl : AcceleratorPedalDioCtrl_Item;
+        out item actualStatusSupplyVoltageAcceleratorPedalSensor1 : ActualStatusSupplyVoltageAcceleratorPedalSensor1_Item;
+        out item actualStatusSupplyVoltageAcceleratorPedalSensor2 : ActualStatusSupplyVoltageAcceleratorPedalSensor2_Item;
+        out item actualStatusVoltageAcceleratorPedalSensor1 : ActualStatusVoltageAcceleratorPedalSensor1_Item;
+        out item actualStatusVoltageAcceleratorPedalSensor2 : ActualStatusVoltageAcceleratorPedalSensor2_Item;
+        out item actualVoltageAcceleratorPedalSensor1 : ActualVoltageAcceleratorPedalSensor1_Item;
+        out item actualVoltageAcceleratorPedalSensor2 : ActualVoltageAcceleratorPedalSensor2_Item;
+        out item actualSupplyVoltageAcceleratorPedalSensor1 : ActualSupplyVoltageAcceleratorPedalSensor1_Item;
+        out item actualSupplyVoltageAcceleratorPedalSensor2 : ActualSupplyVoltageAcceleratorPedalSensor2_Item;
+
+        action scaleSupplyVoltages : ScaleSupplyVoltages {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        action compareSupplyVoltagesAgainstAdcReferenceVoltages : CompareSupplyVoltagesAgainstAdcReferenceVoltages {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        action getActivationStatusFromLcmAndCommandThePowerSupply : GetActivationStatusFromLcmAndCommandThePowerSupply {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        action createMeanValuesForAllSignals : CreateMeanValuesForAllSignals {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        action performRedundancyCheckForSensor1Voltage : PerformRedundancyCheckForSensor1Voltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        action performRedundancyCheckForSensor2Voltage : PerformRedundancyCheckForSensor2Voltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        action performLatencyAndJitterDetection : PerformLatencyAndJitterDetection {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        action createMovingAverageForSupplyVoltages : CreateMovingAverageForSupplyVoltages {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+
+        fork initialFork;
+        fork afterScaleSupplyVoltagesFork;
+        fork afterCreateMeanValuesFork;
+        join redundancyChecksJoin;
+        join finalJoin;
+
+        succession startToInitialFork first start then initialFork;
+        succession initialForkToScaleSupplyVoltages first initialFork then scaleSupplyVoltages;
+        succession scaleSupplyVoltagesToAfterScaleSupplyVoltagesFork first scaleSupplyVoltages then afterScaleSupplyVoltagesFork;
+        succession afterScaleSupplyVoltagesForkToCompareSupplyVoltagesAgainstAdcReferenceVoltages first afterScaleSupplyVoltagesFork then compareSupplyVoltagesAgainstAdcReferenceVoltages;
+        succession compareSupplyVoltagesAgainstAdcReferenceVoltagesToFinalJoin first compareSupplyVoltagesAgainstAdcReferenceVoltages then finalJoin;
+        succession initialForkToGetActivationStatusFromLcmAndCommandThePowerSupply first initialFork then getActivationStatusFromLcmAndCommandThePowerSupply;
+        succession getActivationStatusFromLcmAndCommandThePowerSupplyToFinalJoin first getActivationStatusFromLcmAndCommandThePowerSupply then finalJoin;
+        succession initialForkToCreateMeanValuesForAllSignals first initialFork then createMeanValuesForAllSignals;
+        succession createMeanValuesForAllSignalsToAfterCreateMeanValuesFork first createMeanValuesForAllSignals then afterCreateMeanValuesFork;
+        succession afterCreateMeanValuesForkToPerformRedundancyCheckForSensor1Voltage first afterCreateMeanValuesFork then performRedundancyCheckForSensor1Voltage;
+        succession afterCreateMeanValuesForkToPerformRedundancyCheckForSensor2Voltage first afterCreateMeanValuesFork then performRedundancyCheckForSensor2Voltage;
+        succession performRedundancyCheckForSensor1VoltageToRedundancyChecksJoin first performRedundancyCheckForSensor1Voltage then redundancyChecksJoin;
+        succession performRedundancyCheckForSensor2VoltageToRedundancyChecksJoin first performRedundancyCheckForSensor2Voltage then redundancyChecksJoin;
+        succession redundancyChecksJoinToFinalJoin first redundancyChecksJoin then finalJoin;
+        succession initialForkToPerformLatencyAndJitterDetection first initialFork then performLatencyAndJitterDetection;
+        succession performLatencyAndJitterDetectionToCreateMovingAverageForSupplyVoltages first performLatencyAndJitterDetection then createMovingAverageForSupplyVoltages;
+        succession afterScaleSupplyVoltagesForkToCreateMovingAverageForSupplyVoltages first afterScaleSupplyVoltagesFork then createMovingAverageForSupplyVoltages;
+        succession createMovingAverageForSupplyVoltagesToFinalJoin first createMovingAverageForSupplyVoltages then finalJoin;
+        succession finalJoinToDone first finalJoin then done;
+
+        flow rawSupplyVoltage1ToScaleSupplyVoltages from rawSupplyVoltageAcceleratorPedalSensor1 to scaleSupplyVoltages.rawSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow rawSupplyVoltage2ToScaleSupplyVoltages from rawSupplyVoltageAcceleratorPedalSensor2 to scaleSupplyVoltages.rawSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow rawSupplyVoltage1ToCompareSupplyVoltages from rawSupplyVoltageAcceleratorPedalSensor1 to compareSupplyVoltagesAgainstAdcReferenceVoltages.rawSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow rawSupplyVoltage2ToCompareSupplyVoltages from rawSupplyVoltageAcceleratorPedalSensor2 to compareSupplyVoltagesAgainstAdcReferenceVoltages.rawSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualStatusSupplyVoltage1FromCompare from compareSupplyVoltagesAgainstAdcReferenceVoltages.actualStatusSupplyVoltageAcceleratorPedalSensor1 to actualStatusSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualStatusSupplyVoltage2FromCompare from compareSupplyVoltagesAgainstAdcReferenceVoltages.actualStatusSupplyVoltageAcceleratorPedalSensor2 to actualStatusSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualStatusVoltage1FromCompare from compareSupplyVoltagesAgainstAdcReferenceVoltages.actualStatusVoltageAcceleratorPedalSensor1 to actualStatusVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualStatusVoltage2FromCompare from compareSupplyVoltagesAgainstAdcReferenceVoltages.actualStatusVoltageAcceleratorPedalSensor2 to actualStatusVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow acceleratorPedalPowerSupplyStateToGetActivationStatus from acceleratorPedalPowerSupplyState to getActivationStatusFromLcmAndCommandThePowerSupply.acceleratorPedalPowerSupplyState {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        flow acceleratorPedalDioCtrlFromGetActivationStatus from getActivationStatusFromLcmAndCommandThePowerSupply.acceleratorPedalDioCtrl to acceleratorPedalDioCtrl {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        flow rawVoltage1ToCreateMeanValues from rawVoltageAcceleratorPedalSensor1 to createMeanValuesForAllSignals.rawVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow rawVoltage2ToCreateMeanValues from rawVoltageAcceleratorPedalSensor2 to createMeanValuesForAllSignals.rawVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow rawVoltageRedundant1ToCreateMeanValues from rawVoltageAcceleratorPedalSensorRedundant1 to createMeanValuesForAllSignals.rawVoltageAcceleratorPedalSensorRedundant1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow rawVoltageRedundant2ToCreateMeanValues from rawVoltageAcceleratorPedalSensorRedundant2 to createMeanValuesForAllSignals.rawVoltageAcceleratorPedalSensorRedundant2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow meanValue1ToRedundancyCheck1 from createMeanValuesForAllSignals.meanValueActualVoltageSensor1 to performRedundancyCheckForSensor1Voltage.meanValueActualVoltageSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow meanValue1RedundantToRedundancyCheck1 from createMeanValuesForAllSignals.meanValueActualVoltageSensor1Redundant to performRedundancyCheckForSensor1Voltage.meanValueActualVoltageSensor1Redundant {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow meanValue2ToRedundancyCheck2 from createMeanValuesForAllSignals.meanValueActualVoltageSensor2 to performRedundancyCheckForSensor2Voltage.meanValueActualVoltageSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow meanValue2RedundantToRedundancyCheck2 from createMeanValuesForAllSignals.meanValueActualVoltageSensor2Redundant to performRedundancyCheckForSensor2Voltage.meanValueActualVoltageSensor2Redundant {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualStatusVoltage1FromRedundancyCheck from performRedundancyCheckForSensor1Voltage.actualStatusVoltageAcceleratorPedalSensor1 to actualStatusVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualStatusVoltage2FromRedundancyCheck from performRedundancyCheckForSensor2Voltage.actualStatusVoltageAcceleratorPedalSensor2 to actualStatusVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualVoltage1FromRedundancyCheck from performRedundancyCheckForSensor1Voltage.actualVoltageAcceleratorPedalSensor1 to actualVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualVoltage2FromRedundancyCheck from performRedundancyCheckForSensor2Voltage.actualVoltageAcceleratorPedalSensor2 to actualVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow scaledSupplyVoltage1ToMovingAverage from scaleSupplyVoltages.scaledSupplyVoltage1 to createMovingAverageForSupplyVoltages.scaledSupplyVoltage1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow scaledSupplyVoltage2ToMovingAverage from scaleSupplyVoltages.scaledSupplyVoltage2 to createMovingAverageForSupplyVoltages.scaledSupplyVoltage2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualSupplyVoltage1FromMovingAverage from createMovingAverageForSupplyVoltages.actualSupplyVoltageAcceleratorPedalSensor1 to actualSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow actualSupplyVoltage2FromMovingAverage from createMovingAverageForSupplyVoltages.actualSupplyVoltageAcceleratorPedalSensor2 to actualSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow adcIsrToLatencyAndJitterDetection from adcIsr to performLatencyAndJitterDetection.adcIsr {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        flow isrErrorStateToMovingAverage from performLatencyAndJitterDetection.isrErrorState to createMovingAverageForSupplyVoltages.isrErrorState {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+    }
+
     // Main activity translated from XMI-owned FunML Activity Diagram: SignalConditioningAndProcessing_acpd_act.
     // Boundary action parameter types are resolved from XMI referenceExtension::referentPath where available.
     // For the six anonymous AcquireSensorAndSupplyVoltage inputs, the XMI has no direct pin/APN type,
@@ -505,12 +822,36 @@ package SignalConditioningAndProcessing_XmiResolved {
         out item acceleratorPedalPowerSupplyCtrl : AcceleratorPedalPowerSupplyCtrl_Item;
         in item acceleratorPedalPowerSupplyState : AcceleratorPedalPowerSupplyState_Item;
 
-        action acquireSensorAndSupplyVoltage : AcquireSensorAndSupplyVoltage;
-        action extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware : ExtractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware;
-        action processAndQualifySensorAndSupplyVoltages : ProcessAndQualifySensorAndSupplyVoltages;
-        action enableDisableThePowerSupply : EnableDisableThePowerSupply;
-        action commandDIOToEnableDisablePowerSupply : CommandDIOToEnableDisablePowerSupply;
-        action getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine : GetEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine;
+        action acquireSensorAndSupplyVoltage : AcquireSensorAndSupplyVoltage {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        action extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware : ExtractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        action processAndQualifySensorAndSupplyVoltages : ProcessAndQualifySensorAndSupplyVoltages {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        action enableDisableThePowerSupply : EnableDisableThePowerSupply {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        action commandDIOToEnableDisablePowerSupply : CommandDIOToEnableDisablePowerSupply {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        action getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine : GetEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
 
         fork initialFork;
         join finalJoin;
@@ -526,31 +867,131 @@ package SignalConditioningAndProcessing_XmiResolved {
         succession processAndQualifySensorAndSupplyVoltagesTofinalJoin first processAndQualifySensorAndSupplyVoltages then finalJoin;
         succession finalJoinTodone first finalJoin then done;
 
-        flow from acquireSensorAndSupplyVoltage.digActualMeasAcceleratorPedalSensor to extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.digActualMeasAcceleratorPedalSensor;
-        flow from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensor1 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensor1;
-        flow from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensorRedundant1 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensorRedundant1;
-        flow from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensor2 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensor2;
-        flow from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensorRedundant2 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensorRedundant2;
-        flow from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawSupplyVoltageAcceleratorPedalSensor1 to processAndQualifySensorAndSupplyVoltages.rawSupplyVoltageAcceleratorPedalSensor1;
-        flow from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawSupplyVoltageAcceleratorPedalSensor2 to processAndQualifySensorAndSupplyVoltages.rawSupplyVoltageAcceleratorPedalSensor2;
-        flow from processAndQualifySensorAndSupplyVoltages.actualVoltageAcceleratorPedalSensor1 to actualVoltageAcceleratorPedalSensor1;
-        flow from processAndQualifySensorAndSupplyVoltages.actualVoltageAcceleratorPedalSensor2 to actualVoltageAcceleratorPedalSensor2;
-        flow from processAndQualifySensorAndSupplyVoltages.actualStatusVoltageAcceleratorPedalSensor1 to actualStatusVoltageAcceleratorPedalSensor1;
-        flow from processAndQualifySensorAndSupplyVoltages.actualStatusVoltageAcceleratorPedalSensor2 to actualStatusVoltageAcceleratorPedalSensor2;
-        flow from processAndQualifySensorAndSupplyVoltages.actualSupplyVoltageAcceleratorPedalSensor1 to actualSupplyVoltageAcceleratorPedalSensor1;
-        flow from processAndQualifySensorAndSupplyVoltages.actualSupplyVoltageAcceleratorPedalSensor2 to actualSupplyVoltageAcceleratorPedalSensor2;
-        flow from processAndQualifySensorAndSupplyVoltages.actualStatusSupplyVoltageAcceleratorPedalSensor1 to actualStatusSupplyVoltageAcceleratorPedalSensor1;
-        flow from processAndQualifySensorAndSupplyVoltages.actualStatusSupplyVoltageAcceleratorPedalSensor2 to actualStatusSupplyVoltageAcceleratorPedalSensor2;
-        flow from batterySupply to acquireSensorAndSupplyVoltage.batterySupply;
-        flow from canFlexrayPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.canFlexrayPhysicalSupplyVoltage;
-        flow from vdd3v3PhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.vdd3v3PhysicalSupplyVoltage;
-        flow from vdd5dPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.vdd5dPhysicalSupplyVoltage;
-        flow from ethernetPLCPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.ethernetPLCPhysicalSupplyVoltage;
-        flow from wakeupVBATBusCommPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.wakeupVBATBusCommPhysicalSupplyVoltage;
-        flow from acceleratorPedalPowerSupplyState to getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine.acceleratorPedalPowerSupplyState;
-        flow from getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine.acceleratorPedalDioCtrl to commandDIOToEnableDisablePowerSupply.acceleratorPedalDioCtrl;
-        flow from commandDIOToEnableDisablePowerSupply.acceleratorPedalHwCtrl to enableDisableThePowerSupply.acceleratorPedalHwCtrl;
-        flow from enableDisableThePowerSupply.acceleratorPedalPowerSupplyCtrl to acceleratorPedalPowerSupplyCtrl;
+        flow activityObjectFlow_01 from acquireSensorAndSupplyVoltage.digActualMeasAcceleratorPedalSensor to extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.digActualMeasAcceleratorPedalSensor {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_02 from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensor1 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_03 from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensorRedundant1 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensorRedundant1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_04 from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensor2 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_05 from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawVoltageAcceleratorPedalSensorRedundant2 to processAndQualifySensorAndSupplyVoltages.rawVoltageAcceleratorPedalSensorRedundant2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_06 from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawSupplyVoltageAcceleratorPedalSensor1 to processAndQualifySensorAndSupplyVoltages.rawSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_07 from extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware.rawSupplyVoltageAcceleratorPedalSensor2 to processAndQualifySensorAndSupplyVoltages.rawSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_08 from processAndQualifySensorAndSupplyVoltages.actualVoltageAcceleratorPedalSensor1 to actualVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_09 from processAndQualifySensorAndSupplyVoltages.actualVoltageAcceleratorPedalSensor2 to actualVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_10 from processAndQualifySensorAndSupplyVoltages.actualStatusVoltageAcceleratorPedalSensor1 to actualStatusVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_11 from processAndQualifySensorAndSupplyVoltages.actualStatusVoltageAcceleratorPedalSensor2 to actualStatusVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_12 from processAndQualifySensorAndSupplyVoltages.actualSupplyVoltageAcceleratorPedalSensor1 to actualSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_13 from processAndQualifySensorAndSupplyVoltages.actualSupplyVoltageAcceleratorPedalSensor2 to actualSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_14 from processAndQualifySensorAndSupplyVoltages.actualStatusSupplyVoltageAcceleratorPedalSensor1 to actualStatusSupplyVoltageAcceleratorPedalSensor1 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_15 from processAndQualifySensorAndSupplyVoltages.actualStatusSupplyVoltageAcceleratorPedalSensor2 to actualStatusSupplyVoltageAcceleratorPedalSensor2 {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_16 from batterySupply to acquireSensorAndSupplyVoltage.batterySupply {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_17 from canFlexrayPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.canFlexrayPhysicalSupplyVoltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_18 from vdd3v3PhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.vdd3v3PhysicalSupplyVoltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_19 from vdd5dPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.vdd5dPhysicalSupplyVoltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_20 from ethernetPLCPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.ethernetPLCPhysicalSupplyVoltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_21 from wakeupVBATBusCommPhysicalSupplyVoltage to acquireSensorAndSupplyVoltage.wakeupVBATBusCommPhysicalSupplyVoltage {
+            @ASIL {
+                level = ASILLevel::ASIL_C;
+            }
+        }
+        flow activityObjectFlow_22 from acceleratorPedalPowerSupplyState to getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine.acceleratorPedalPowerSupplyState {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        flow activityObjectFlow_23 from getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine.acceleratorPedalDioCtrl to commandDIOToEnableDisablePowerSupply.acceleratorPedalDioCtrl {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        flow activityObjectFlow_24 from commandDIOToEnableDisablePowerSupply.acceleratorPedalHwCtrl to enableDisableThePowerSupply.acceleratorPedalHwCtrl {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
+        flow activityObjectFlow_25 from enableDisableThePowerSupply.acceleratorPedalPowerSupplyCtrl to acceleratorPedalPowerSupplyCtrl {
+            @ASIL {
+                level = ASILLevel::QM;
+            }
+        }
     }
 
     // Main logical cluster.
@@ -561,6 +1002,9 @@ package SignalConditioningAndProcessing_XmiResolved {
     // - boundary lifelines reuse the exact XMI-derived boundary/external port usages and PortDef types,
     // - each real XMI message is represented exactly once as message ... from event to event,
     // - no artificial messages are generated.
+    // No ASIL metadata is added here: the XMI interaction SignalConditioningAndProcessing_acpd_seq
+    // has no direct Safety Integrity Level constraint reference on the interaction, lifelines, messages,
+    // combined fragments, operands, events, or duration constraints. No inference has been made.
     action def SignalConditioningAndProcessing_acpd_seq {
 
         // Guard extracted from the UML alt operand: "activation status is enable".
@@ -888,9 +1332,21 @@ package SignalConditioningAndProcessing_XmiResolved {
         part acpdSignalProcessing : AcpdSignalProcessing;
         part signalConversion : SignalConversion;
         part inputOutputDriver : InputOutputDriver;
-        part voltageTemperatureSignalProcessing : VoltageTemperatureSignalProcessing;
-        part onChipVTSupervisionDriver : OnChipVTSupervisionDriver;
-        part onChipVTSupervision : OnChipVTSupervision;
+        part voltageTemperatureSignalProcessing : VoltageTemperatureSignalProcessing {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        part onChipVTSupervisionDriver : OnChipVTSupervisionDriver {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
+        part onChipVTSupervision : OnChipVTSupervision {
+            @ASIL {
+                level = ASILLevel::ASIL_D;
+            }
+        }
 
         perform action mainBehavior : SignalConditioningAndProcessingMain;
         perform action acpdSequence : SignalConditioningAndProcessing_acpd_seq;
