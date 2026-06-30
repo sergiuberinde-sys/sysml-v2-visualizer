@@ -28,3 +28,7 @@ java-parser-wrapper/target/
 *.sln
 *.sw?
 *.vsix
+
+# Claude Code tool data (memory, conversation state, agent git worktrees)
+.claude/projects/
+.claude/worktrees/

@@ -341,7 +341,11 @@
       "Bash(awk '/\"type\": \"PartDefinition\",/{flag=1; lines=0} flag && /AcpdCdd_Runtime_Sequence/{matched=1} flag && matched{print; if\\(++lines>40\\) exit}' /tmp/parse12.txt)",
       "Bash(SYSML_STDLIB_PATH=/Users/sergiu/sysml-v2-visualizer/parser-service/sysml-stdlib /opt/homebrew/opt/openjdk@21/bin/java *)",
       "Bash(awk '/SignalConditioningAndProcessing_acpd_seq/,/^[[:space:]]*}/')",
-      "Bash(awk 'NR>=570 && NR<=800' demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full/SignalConditioningAndProcessing_Platform4_sequence_actiondef_control_fragments_boundary_types_fixed.sysml)"
+      "Bash(awk 'NR>=570 && NR<=800' demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full/SignalConditioningAndProcessing_Platform4_sequence_actiondef_control_fragments_boundary_types_fixed.sysml)",
+      "Bash(JAVA_HOME=/opt/homebrew/opt/openjdk@21 JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn package -q -DskipTests)",
+      "Bash(java -jar java-parser-wrapper/target/sysml-parse-cli.jar \"demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full/SignalConditioningAndProcessing_Platform4_action_boundary_types_fixed_fdd_delegation_bindings_complementary.sysml\")",
+      "Bash(java -jar target/sysml-parse-cli.jar --help)",
+      "Bash(java -jar target/sysml-parse-cli.jar \"../demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full/SignalConditioningAndProcessing_Platform4_action_boundary_types_fixed_fdd_delegation_bindings_complementary.sysml\")"
     ]
   }
 }
