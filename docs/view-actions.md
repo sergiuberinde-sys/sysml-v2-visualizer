@@ -74,6 +74,9 @@ and control nodes.
   with the guard expression; the source node shows a `◆ N branches` badge.
 - Steps with no outgoing successors show a terminal circle at the bottom.
 - The initial step (the one with no incoming flow) shows an entry circle.
+- An action carrying an `@ASIL { level = … }` metadata annotation shows a
+  colour-coded **ASIL badge** (`ASIL D` … `QM`) under its name (see the
+  Interconnect view doc, *Safety & realization metadata*, for the badge legend).
 
 ---
 

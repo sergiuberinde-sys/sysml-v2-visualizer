@@ -91,12 +91,12 @@ For the canonical graphical representation of parts and ports, see **Figure 15**
 
 - Each `part` appears as a box labelled `name : TypeName`.
 - Each `port` appears as a small labelled square on the box boundary.
-- The symbol inside the square shows the port's declared direction:
-  `▸` out · `◂` in · `⇄` inout.
-- The `connect` statement is drawn as a plain undirected wire between the two
-  port squares.
-- The `control` port (`⇄`) has both `in` and `out` features inside `ControlPort`,
-  so it is rendered as bidirectional.
+- The arrow inside the square shows the port's declared direction: pointing
+  **into** the shape for `in`, **out** for `out`, bidirectional for `inout`.
+- The `connect` statement is drawn as a wire between the two port squares, with
+  an arrowhead pointing into the consuming (`in`) port.
+- The `control` port has both `in` and `out` features inside `ControlPort`, so it
+  is rendered with a bidirectional arrow.
 
 ---
 
@@ -136,20 +136,30 @@ port def BidirectionalBus {
 }
 
 part def Controller {
-    port bus : BidirectionalBus;   // ⇄ — has both in and out features
+    port bus : BidirectionalBus;   // bidirectional — has both in and out features
 }
 ```
 
-| Features inside `port def` | Displayed symbol |
+| Features inside `port def` | Arrow drawn in the port square |
 |---|---|
-| Only `out` features | `▸` |
-| Only `in` features | `◂` |
-| Both `in` and `out` features | `⇄` |
-| No directional features | square with no symbol |
+| Only `out` features | Arrow pointing **out of** the shape |
+| Only `in` features | Arrow pointing **into** the shape |
+| Both `in` and `out` features | Bidirectional arrow |
+| No directional features | square with no arrow |
+
+The arrow is oriented relative to the box edge the square sits on: an `in` port
+always points inward, an `out` port outward — so the same direction reads
+correctly whether the square is on the left or the right edge.
 
 **Note on `ref` features:** A `ReferenceUsage` declared with a direction
 modifier (e.g. `out ref :>> someFeature`) inside a `port def` is also
 recognised by the plugin and contributes to the direction shown.
+
+**Port placement and edge arrowheads:** Port squares are placed on whichever
+side faces the part they connect to (connection topology), not by direction —
+so wires run straight across rather than wrapping around a box. Direction is
+conveyed by the in/out arrow inside the square and by the connection
+arrowhead, which always points **into the consuming (`in`) port**.
 
 ---
 
@@ -206,8 +216,16 @@ part def Subsystem {
 }
 ```
 
-Boundary ports appear on the **left edge** of the assembly box in the
-Interconnect view, separate from the internal part boxes.
+Boundary ports straddle the assembly frame and are placed on whichever frame
+edge (left or right) is nearest the internal part they wire to, so each
+delegation line is as short and straight as possible (no U-turns). The in/out
+arrow inside the square shows the direction; the edge it sits on is chosen for
+layout, not direction.
+
+**Toolbar — hide unconnected ports:** A toggle in the Interconnect toolbar hides
+ports that have no in-scope connection, shrinking each box to only its wired
+ports. Boxes, layout, and boundary anchoring all recompute against the reduced
+set; the leaf-component view is unaffected.
 
 ---
 
@@ -232,6 +250,14 @@ part def Vehicle {
 
 **Difference from `connect`:** `connect` creates a structural link between
 two port *instances*; `bind` equates the *values* of two features.
+
+**Rendering:** Binding connectors are drawn as delegation lines, the same as
+`interface … connect` (an `interconnect` edge). The delegated boundary port and
+the internal port it binds to are placed on the same frame edge so the line runs
+straight across. Because a binding equates *values* rather than conjugating
+ports, the two ends are expected to have the **same** type (not complementary),
+so the type-conjugation validator rule (SML-CONN-TYPING-001) does not apply to
+`bind` edges.
 
 **Spec reference:** §7.13.3 Binding Connectors as Usages (SysML v2.0).
 
@@ -302,15 +328,15 @@ port def DrivePort {
 }
 
 part def Engine {
-    port drive  : DrivePort;    // ▸ torque out,  ◂ speed in  → rendered ⇄
+    port drive  : DrivePort;    // torque out, speed in   → rendered bidirectional
 }
 
 part def Transmission {
-    port input  : ~DrivePort;   // ◂ torque in,   ▸ speed out → rendered ⇄
+    port input  : ~DrivePort;   // torque in,  speed out  → rendered bidirectional
 }
 ```
 
-The symbol `⇄` is shown when both `in` and `out` features exist (whether
+A bidirectional arrow is shown when both `in` and `out` features exist (whether
 from the original or conjugated port).
 
 **Spec reference:** §7.12 Ports, conjugated ports (SysML v2.0).
@@ -352,7 +378,47 @@ primary list; leaf-level component definitions appear in a separate group.
 
 ---
 
-## 16. Specification references
+## 16. Safety & realization metadata (`@ASIL`, `@Realization`)
+
+SysML v2 metadata is defined with a `metadata def` and applied to an element with
+the `@` annotation. The visualizer renders an applied metadata usage as a small
+textual badge on the element (per the spec, metadata is shown as a textual
+annotation), so safety- and realization-relevant elements stand out.
+
+```sysml
+enum def ASILLevel { QM; ASIL_A; ASIL_B; ASIL_C; ASIL_D; }
+metadata def ASIL { attribute level : ASILLevel; }
+
+enum def RealizationKind { HW; SW; }
+metadata def Realization { attribute kind : RealizationKind; }
+
+part def SignalConversion {
+    @ASIL { level = ASILLevel::ASIL_B; }   // inside body → annotates SignalConversion
+    // ...
+}
+
+@Realization { kind = RealizationKind::SW; }   // prefix → annotates the next part
+part voltageTemperatureSignalProcessing : VoltageTemperatureSignalProcessing;
+```
+
+| Metadata | Badge | Colours |
+|---|---|---|
+| `@ASIL { level = X }` | `ASIL D` / `QM` … | QM neutral → ASIL D red (ISO 26262 escalation) |
+| `@Realization { kind = X }` | `HW` / `SW` | HW cyan, SW violet |
+
+- **Where shown:** Part boxes display the badge for their own `@ASIL`/`@Realization`
+  or, if absent, the one on their typing `part def`. Action steps in the Actions
+  view show their `@ASIL`. Flow edges append their `@ASIL` level to the label.
+- **Host resolution:** Metadata written inside an element's body annotates that
+  element; **prefix** metadata (`@Meta {…} part X`) annotates the following
+  part/action `X`.
+
+**Spec reference:** §7.24 Metadata (SysML v2.0); metadata is rendered as a
+textual annotation on the annotated element.
+
+---
+
+## 17. Specification references
 
 Both documents are freely available from the OMG website and the
 [SysML-v2-Release GitHub repository](https://github.com/Systems-Modeling/SysML-v2-Release/tree/master/doc).
@@ -382,7 +448,7 @@ Both documents are freely available from the OMG website and the
 
 ---
 
-## 17. Checklist before opening in the plugin
+## 18. Checklist before opening in the plugin
 
 - [ ] Each `part def` that models an assembly contains at least two `part`
       usages and at least one `connect` or `flow` statement.

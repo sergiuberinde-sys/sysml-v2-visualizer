@@ -107,6 +107,11 @@ which cover the `message` form and its visual representation.
   show when each participant is active (i.e. is the source or target of at
   least one message in the current range).
 
+**Toolbar — zoom & fit:** The sequence diagram is hand-drawn SVG. The toolbar
+provides **−/100%/+** zoom buttons (0.25×–4×; click the percentage to reset to
+100%) and **⌘/Ctrl + scroll-wheel** zoom; pan by scrolling while zoomed in. The
+**Fit** button scales the whole diagram to the panel; zooming turns Fit off.
+
 ---
 
 ## 3. Message syntax in detail

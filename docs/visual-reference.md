@@ -102,24 +102,29 @@ Notable UI elements:
 
 **Visual elements:**
 - Each `part` usage is a dark-green rounded rectangle labelled
-  `«part» name : TypeName`.
+  `«part» name : TypeName`. If the part (or its typing `part def`) carries
+  `@ASIL`/`@Realization` metadata, a colour-coded badge (`ASIL D` … `QM`;
+  `HW`/`SW`) appears under the name.
 - Each `port` usage is a small square on the edge of the part box, labelled
-  with the port name.  The symbol inside the square shows direction:
-  - `→` out-only port
-  - `←` in-only port
-  - `↔` bidirectional port (both `in` and `out` features)
-- A `connect` statement is a plain line between two port squares (no
-  arrowhead, not animated).
-- A `flow` statement is an animated dashed line with a filled arrowhead at the
-  target end.
+  with the port name. The arrow inside the square points **into** the shape for
+  an `in` port and **out** for an `out` port (bidirectional for `inout`),
+  oriented to the edge the square sits on.
+- A `connect` / `interface connect` / `bind` line carries a filled arrowhead
+  pointing **into the consuming (`in`) port**.
+- A `flow` statement is an animated dashed line with a filled arrowhead; its
+  label also shows the flow's `@ASIL` level when present.
+- A toolbar toggle **hides ports with no connection** (boxes shrink to only
+  their wired ports).
 
 ### Port squares close-up
 
 ![Interconnect view — port squares](img/interconnect-ports.png)
 
 The port squares are positioned on the **left or right edge** of the part box
-depending on their direction.  The label appears outside the box next to the
-square.  Bidirectional ports (`↔`) can appear on either edge.
+by connection topology — the side facing the part (or frame edge) they connect
+to, so wires run straight across — not by direction. Direction is shown by the
+in/out arrow inside the square. The label appears just below the connection line
+next to the square.
 
 ### Single part box
 
@@ -129,7 +134,8 @@ A part box shows:
 - `«part»` stereotype in small text at the top
 - Part usage name in bold
 - `: TypeName` below the name
-- Port squares on the left edge (in-ports) and right edge (out-ports)
+- `@ASIL` / `@Realization` badge(s) below the type, when present
+- Port squares on whichever edge faces the connected part/frame (topology-based)
 
 ### Code + diagram side by side
 
@@ -150,7 +156,7 @@ graph: step boxes, sequencing arrows, guarded branches, and fork/join bars.
 
 | Element | Appearance |
 |---|---|
-| `action` step | Cyan-bordered rounded rectangle; `«action»` stereotype above the name |
+| `action` step | Cyan-bordered rounded rectangle; `«action»` stereotype above the name; a colour-coded `@ASIL` badge under the name when the action carries one |
 | Initial node | Filled circle at the top of the first step |
 | Terminal node | Hollow circle at the bottom of the last step |
 | Unconditional flow (`first X then Y`) | Plain arrow between steps |
@@ -184,6 +190,10 @@ fragments for conditional branches.
 | `alt` combined fragment | Bordered box spanning the relevant lifelines; top-left corner shows `alt`; each branch is separated by a dashed horizontal divider; guard condition label in brackets at the top-left of each section |
 
 Messages are drawn top-to-bottom in the order they appear in the source.
+
+The toolbar provides **−/100%/+** zoom buttons and **⌘/Ctrl + scroll-wheel**
+zoom (pan by scrolling while zoomed in), plus a **Fit** toggle that scales the
+diagram to the panel.
 The `else` branch guard label is automatically inferred as the negation of the
 `if` condition (e.g. `[credentialsValid]` → `[not credentialsValid]`).
 
