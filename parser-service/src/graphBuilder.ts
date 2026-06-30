@@ -135,13 +135,31 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
 
   const seenTypedBy = new Set<string>();
   for (const n of nodes) {
-    if (n.type !== 'FeatureTyping') continue;
+    if (n.type !== 'FeatureTyping' && n.type !== 'ConjugatedPortTyping') continue;
     if (n.label === n.type) continue;
 
     const usageId = findUsageAncestor(n.id);
     if (!usageId) continue;
 
-    // Check for ConjugatedPortDefinition first (typed by ~SomeDef).
+    // ConjugatedPortTyping: the node label is the BASE PortDefinition name (extracted
+    // from ConjugatedPortTyping.portDefinition by the Java wrapper).  Always emit a
+    // typedBy edge to the base def and mark the usage as conjugated so resolvePortDir
+    // can flip the direction from the PortDef's payload direction.
+    if (n.type === 'ConjugatedPortTyping') {
+      const defId = defByName.get(n.label);
+      if (defId) {
+        const edgeId = `${usageId}->typedBy->${defId}`;
+        if (!seenTypedBy.has(edgeId)) {
+          seenTypedBy.add(edgeId);
+          edges.push({ id: edgeId, source: usageId, target: defId, type: 'typedBy' });
+        }
+      }
+      const usageNode = nodeById.get(usageId);
+      if (usageNode) usageNode.isConjugated = true;
+      continue;
+    }
+
+    // FeatureTyping: check for ConjugatedPortDefinition first (typed by ~SomeDef via name match).
     const conjId = conjDefByName.get(n.label);
     if (conjId !== undefined) {
       const basePortDefId = conjToPortDef.get(conjId);

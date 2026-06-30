@@ -742,6 +742,14 @@ public class SysmlParseCli {
             name = crossRefName(obj, "redefinedFeature");
             if (name == null) name = crossRefName(obj, "subsettedFeature");
         }
+        // ConjugatedPortTyping.portDefinition names the BASE PortDefinition for ~Port typings.
+        // When a port is typed by ~XPort, the SysML API creates a ConjugatedPortTyping (a
+        // FeatureTyping subtype) whose portDefinition reference points to the base XPort def.
+        // Extracting it here lets graphBuilder emit a typedBy edge to the base def and mark
+        // the port usage as isConjugated=true so direction can be correctly flipped.
+        if ("ConjugatedPortTyping".equals(emfType) && name == null) {
+            name = crossRefName(obj, "portDefinition");
+        }
 
         // Feature.direction attribute (FeatureDirectionKind enum: in, out, inout, none).
         // Emit when explicitly set to a directional value; omit for "none" (unset).
