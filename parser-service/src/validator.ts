@@ -501,6 +501,12 @@ export function validateModel(graph: ContainmentGraph): Diagnostic[] {
 
   for (const e of graph.edges) {
     if (e.type !== 'connection' && e.type !== 'interconnect') continue;
+    // `bind a = b;` delegation edges are emitted as 'interconnect' but are BINDING
+    // connectors, not conjugated connections: a binding asserts its two ends hold
+    // the SAME value, so the ports must have the SAME (conformant) type — NOT
+    // complementary (P / ~P).  The conjugation rule of §10.3.3.3 applies only to
+    // ConnectionUsage/InterfaceUsage, so skip delegation bindings here.
+    if (e.id.startsWith('bind:')) continue;
     const src = nodeById.get(e.source);
     const tgt = nodeById.get(e.target);
     if (!src || !tgt) continue;
@@ -721,6 +727,7 @@ export function validateModel(graph: ContainmentGraph): Diagnostic[] {
 
   for (const e of graph.edges) {
     if (e.type !== 'connection' && e.type !== 'interconnect') continue;
+    if (e.id.startsWith('bind:')) continue; // delegation bindings: see SML-CONN-TYPING-001
     const src = nodeById.get(e.source);
     const tgt = nodeById.get(e.target);
     if (!src || !tgt) continue;
