@@ -156,12 +156,16 @@ interface PortHandlesProps {
   /** When true, both source and target handles are always visible so
    *  edges can attach to either side regardless of port direction. */
   showBothHandles?:  boolean;
+  /** When true, the port label sits just BELOW the connection line instead of
+   *  vertically centred on it, so it never overlaps the wire. */
+  labelBelowLine?:   boolean;
 }
 
 export function PortHandles(props: PortHandlesProps) {
   const { ports, isLR, sourcePos, targetPos, nodeH, onPortClick } = props;
   const portAreaTop    = props.portAreaTop ?? 48;
   const showBothHandles = props.showBothHandles ?? false;
+  const labelBelowLine  = props.labelBelowLine ?? false;
 
   return (
     <>
@@ -227,9 +231,11 @@ export function PortHandles(props: PortHandlesProps) {
           cursor:     onPortClick ? 'pointer' : 'default',
           whiteSpace: 'nowrap',
           zIndex:     10,
+          // Y: centred on the line by default; nudged just below it (top edge ~2px
+          // under the line) when labelBelowLine, so the text never sits on the wire.
           ...(labelGoesRight
-            ? { right: -12, top: topPx, transform: 'translate(100%, -50%)' }
-            : { left:  -12, top: topPx, transform: 'translate(-100%, -50%)' }
+            ? { right: -12, top: topPx, transform: `translate(100%, ${labelBelowLine ? '2px' : '-50%'})` }
+            : { left:  -12, top: topPx, transform: `translate(-100%, ${labelBelowLine ? '2px' : '-50%'})` }
           ),
           ...p.labelStyle,
         };

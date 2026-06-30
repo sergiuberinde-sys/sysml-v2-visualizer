@@ -552,6 +552,36 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'interconnect' });
   }
 
+  // ── BindingConnectorAsUsage (delegation) edges ───────────────────────────────
+  //
+  // `bind boundaryPort = part.internalPort;` produces a BindingConnectorAsUsage
+  // with the SAME EndFeatureMembership structure as ConnectionUsage/InterfaceUsage:
+  // one end is a single-segment ReferenceSubsetting (the scope's own boundary port),
+  // the other a FeatureChaining path into a sub-part.  These are delegation
+  // connectors, so we emit them as 'interconnect' edges — identical handling to
+  // `interface … connect` (direction inference, boundary-side placement, etc.).
+  const seenBind = new Set<string>();
+  for (const n of nodes) {
+    if (n.type !== 'BindingConnectorAsUsage') continue;
+
+    const chains = collectEndpointChains(n.id);
+    if (chains.length < 2) continue;
+
+    const [chainA, chainB] = chains;
+    // Pass the enclosing PartDef so the 1-element boundary-port end resolves to the
+    // scope's own port rather than a same-named port on a sub-PartDef.
+    const scopeDefId = findEnclosingPartDef(n.id);
+    const srcId = resolveFlowChain(chainA, scopeDefId);
+    const tgtId = resolveFlowChain(chainB, scopeDefId);
+    if (!srcId || !tgtId || srcId === tgtId) continue;
+
+    const edgeId = `bind:${srcId}:${tgtId}`;
+    if (seenBind.has(edgeId)) continue;
+    seenBind.add(edgeId);
+
+    edges.push({ id: edgeId, source: srcId, target: tgtId, type: 'interconnect' });
+  }
+
   // ── Pass 6: specialization edges (Superclassing between PartDefinitions) ─────
   //
   // `part def A :> B` → PartDefinition A has a Superclassing child whose label
