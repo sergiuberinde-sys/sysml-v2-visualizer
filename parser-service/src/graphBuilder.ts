@@ -25,6 +25,8 @@ export interface GraphNode {
   isConjugated?: boolean;
   /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
   asil?: string;
+  /** Realization kind (e.g. 'HW', 'SW') from an applied `@Realization` metadata usage. */
+  realization?: string;
   startLine?: number;
   endLine?: number;
 }
@@ -200,38 +202,72 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     childrenOf.get(parentId)?.push(childId);
   }
 
-  // ── ASIL metadata annotations ────────────────────────────────────────────────
-  // `@ASIL { level = ASILLevel::X }` parses to a MetadataUsage typed by 'ASIL' whose
-  // 'level' feature value references the enum literal (a named Membership in the
-  // subtree). Attach that level to the annotated host element (nearest non-membership
-  // ancestor) so views can render a safety badge — SysML v2 shows metadata as a
-  // textual annotation on the element.
+  // ── Metadata annotations (@ASIL, @Realization) ──────────────────────────────
+  // `@Meta { feat = Kind::X }` parses to a MetadataUsage typed by the metadata def
+  // ('ASIL'/'Realization') whose feature value references an enum literal (a named
+  // Membership in the subtree). Attach the value to the annotated host so views can
+  // render a badge — SysML v2 shows metadata as a textual annotation on the element.
+  //
+  // Host resolution: a metadata usage written inside an element's body annotates
+  // that element (its owner). Prefix metadata (`@Meta {…} part X`) is stored by the
+  // parser as a sibling immediately before X, so when the metadata's next sibling is
+  // a part/action it is treated as a prefix and attached to that following element.
+  // (Ports/endpoints are not prefix targets here, so body annotations on
+  // PartDefinition/ActionUsage/FlowUsage keep resolving to their owner.)
+  const PREFIX_TARGET_TYPES = new Set([
+    'PartUsage', 'PartDefinition', 'ActionUsage', 'PerformActionUsage', 'ActionDefinition',
+  ]);
+  const descendToSemantic = (id: string): GraphNode | undefined => {
+    let cur: GraphNode | undefined = nodeById.get(id);
+    while (cur && MEMBERSHIP_WRAPPERS.has(cur.type)) {
+      const kids = childrenOf.get(cur.id) ?? [];
+      cur = kids.length ? nodeById.get(kids[0]) : undefined;
+    }
+    return cur;
+  };
   for (const n of nodes) {
     if (n.type !== 'MetadataUsage') continue;
     const kids = childrenOf.get(n.id) ?? [];
-    const typing = kids.map(id => nodeById.get(id)).find(k => k?.type === 'FeatureTyping');
-    if (typing?.label !== 'ASIL') continue;
-    // Descend to the first named Membership — the referenced enum literal (the level).
-    let level: string | undefined;
-    const findLevel = (id: string): void => {
+    const metaDef = kids.map(id => nodeById.get(id)).find(k => k?.type === 'FeatureTyping')?.label;
+    if (metaDef !== 'ASIL' && metaDef !== 'Realization') continue;
+    // Descend to the first named Membership — the referenced enum literal (the value).
+    let value: string | undefined;
+    const findValue = (id: string): void => {
       for (const cid of childrenOf.get(id) ?? []) {
         const c = nodeById.get(cid);
         if (!c) continue;
-        if (c.type === 'Membership' && c.label && c.label !== c.type) { level = c.label; return; }
-        findLevel(cid);
-        if (level) return;
+        if (c.type === 'Membership' && c.label && c.label !== c.type) { value = c.label; return; }
+        findValue(cid);
+        if (value) return;
       }
     };
-    findLevel(n.id);
-    if (!level) continue;
-    // Walk up to the annotated host (skip membership wrappers).
-    let hostId = parentOf.get(n.id);
-    while (hostId !== undefined) {
-      const h = nodeById.get(hostId);
-      if (!h) break;
-      if (!MEMBERSHIP_WRAPPERS.has(h.type)) { h.asil = level; break; }
-      hostId = parentOf.get(hostId);
+    findValue(n.id);
+    if (!value) continue;
+    // Resolve the host: climb to the owner (first non-wrapper ancestor), tracking the
+    // wrapper that is the owner's direct child; if the next sibling resolves to a
+    // part/action, this is prefix metadata → attach there instead of the owner.
+    let host: GraphNode | undefined;
+    let childOfOwner = n.id;
+    let pid = parentOf.get(n.id);
+    while (pid !== undefined) {
+      const p = nodeById.get(pid);
+      if (!p) break;
+      if (!MEMBERSHIP_WRAPPERS.has(p.type)) {
+        host = p;
+        const sibs = childrenOf.get(p.id) ?? [];
+        const idx  = sibs.indexOf(childOfOwner);
+        if (idx >= 0 && idx + 1 < sibs.length) {
+          const next = descendToSemantic(sibs[idx + 1]);
+          if (next && PREFIX_TARGET_TYPES.has(next.type)) host = next;
+        }
+        break;
+      }
+      childOfOwner = pid;
+      pid = parentOf.get(pid);
     }
+    if (!host) continue;
+    if (metaDef === 'ASIL')        host.asil = value;
+    else if (metaDef === 'Realization') host.realization = value;
   }
 
   // Build name→[id] index for PortUsage nodes so we can resolve endpoint chains.

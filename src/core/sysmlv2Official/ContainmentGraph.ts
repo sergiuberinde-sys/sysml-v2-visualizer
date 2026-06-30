@@ -27,6 +27,8 @@ export interface GraphNode {
   isConjugated?: boolean;
   /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
   asil?: string;
+  /** Realization kind (e.g. 'HW', 'SW') from an applied `@Realization` metadata usage. */
+  realization?: string;
   startLine?: number;
   endLine?: number;
 }

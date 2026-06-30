@@ -40,3 +40,27 @@ export function AsilBadge({ level, style }: { level: string; style?: CSSProperti
     </span>
   );
 }
+
+// ── Realization (@Realization { kind = HW | SW }) ─────────────────────────────
+// Another applied metadata def; shown the same way. HW vs SW get distinct hues so
+// hardware/software realizations are easy to tell apart.
+const REALIZATION_COLORS: Record<string, { bg: string; fg: string }> = {
+  HW: { bg: '#0e4a5e', fg: '#a5e8ff' },
+  SW: { bg: '#3b2a6b', fg: '#d6c8ff' },
+};
+
+export function RealizationBadge({ kind, style }: { kind: string; style?: CSSProperties }) {
+  const c = REALIZATION_COLORS[kind] ?? { bg: '#334155', fg: '#cbd5e1' };
+  return (
+    <span
+      title={`Realization: ${kind}`}
+      style={{
+        display: 'inline-block', fontFamily: 'monospace', fontSize: 8.5, fontWeight: 700,
+        lineHeight: 1, padding: '2px 4px', borderRadius: 3, letterSpacing: '0.3px',
+        background: c.bg, color: c.fg, whiteSpace: 'nowrap', ...style,
+      }}
+    >
+      {kind}
+    </span>
+  );
+}
