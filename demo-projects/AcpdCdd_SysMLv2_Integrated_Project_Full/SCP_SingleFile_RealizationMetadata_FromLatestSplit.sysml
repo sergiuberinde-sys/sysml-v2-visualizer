@@ -1,116 +1,197 @@
 package SignalConditioningAndProcessing_XmiResolved {
 
     /*
-     * XMI-resolved reconstruction of the Accelerator Pedal Interface logical cluster
+     * Consolidated SysML v2 model of the Accelerator Pedal Interface logical cluster
      * SignalConditioningAndProcessing.
      *
-     * Source: Functional Architecture Platform_4.xml, MagicDraw UML 2024x v6 export.
-     * Target class id: _2024x_1_86c020f_1739133149275_721475_275.
+     * This file is mechanically flattened from the latest OEM-split project:
+     * SCP_RealizationMetadata_Fresh_Checked.zip.
      *
-     * Modeling choices kept from the previous pass:
-     * - Single SysML v2 file; no multi-file split.
-     * - UML logical-interface classes become port definitions.
-     * - UML logical-information signals / referenced signal names become item definitions.
-     * - Conjugated UML ports are represented as SysML v2 ~PortDef usages.
-     * - UML connectors become interface connect usages.
-     * - The action view uses native SysML v2 start/fork/join/done control notation.
-     * - Activity boundary items are modeled directly, not by synthetic activity input/output actions.
-     * - Swimlanes/activity partitions are represented by action-to-performed-action allocations.
+     * The split package boundaries and import declarations have been removed only to
+     * place all existing content into one compilation unit. Definitions, ASIL metadata,
+     * Realization metadata, behavior, interactions, ports, bindings, connections,
+     * allocations, and flows are otherwise preserved.
      */
 
-    // ASIL metadata reconstructed from the XMI Safety Integrity Level constraint references.
-    // Source traceability remains in the accompanying extraction report.
+// ===== Flattened source: 00_foundation/00_SCP_Foundation.sysml (SCP_Foundation) =====
+
+    // Shared logical-information items and the ASIL metadata definition.
+    // Owned by the logical-information / safety-modeling team.
+
     enum def ASILLevel { QM; ASIL_A; ASIL_B; ASIL_C; ASIL_D; }
 
     metadata def ASIL {
         attribute level : ASILLevel;
     }
 
-    // Logical information item definitions.
+    enum def RealizationKind { HW; SW; }
+
+    metadata def Realization {
+        attribute kind : RealizationKind;
+    }
+
     item def AcceleratorPedalDioCtrl_Item;
+
     item def AcceleratorPedalHwCtrl_Item;
+
     item def AcceleratorPedalPowerSupplyCtrl_Item;
+
     item def AcceleratorPedalPowerSupplyState_Item;
+
     item def ActualDieTemperatures_Item;
+
     item def ActualReferenceVoltage_Item;
+
     item def ActualStatusSupplyVoltageAcceleratorPedalSensor1_Item;
+
     item def ActualStatusSupplyVoltageAcceleratorPedalSensor2_Item;
+
     item def ActualStatusVoltageAcceleratorPedalSensor1_Item;
+
     item def ActualStatusVoltageAcceleratorPedalSensor2_Item;
+
     item def ActualSupplyVoltageAcceleratorPedalSensor1_Item;
+
     item def ActualSupplyVoltageAcceleratorPedalSensor2_Item;
+
     item def ActualSupplyVoltageAcceleratorPedal_Item;
+
     item def ActualVoltageAcceleratorPedalSensor1_Item;
+
     item def ActualVoltageAcceleratorPedalSensor2_Item;
+
     item def ActualVoltageAcceleratorPedal_Item;
+
     item def Bandgap_voltage_value_Item;
+
     item def BatterySupply_Item;
+
     item def CANFlexRay_ActualSupplyVoltage_Item;
+
     item def CANFlexray_PhysicalSupplyVoltage_Item;
+
     item def CANFlexray_RawSupplyVoltage_Item;
+
     item def CAN_Standby_MeasuredVoltage_Item;
+
     item def ChipExternalSupplyRailsActualVoltages_Item;
+
     item def ChipExternalSupplyVoltageRails_Item;
+
     item def ChipExternalVoltageRailsThresholdsConfigHW_Item;
+
     item def ChipExternalVoltageRailsThresholdsConfig_Item;
+
     item def ChipInternalSupplyRailsActualVoltages_Item;
+
     item def ChipInternalSupplyVoltageRails_Item;
+
     item def ChipInternalVoltageRailsThresholdsConfigHW_Item;
+
     item def ChipInternalVoltageRailsThresholdsConfig_Item;
+
     item def Clamp30OVMeasActualVoltage_Item;
+
     item def Clamp30OVMeasRawVoltage_Item;
+
     item def Clamp30UVMeasActualVoltage_Item;
+
     item def Clamp30UVMeasRawVoltage_Item;
+
     item def DieTemperaturesThresholdConfigHW_Item;
+
     item def DieTemperaturesThresholdConfig_Item;
+
     item def DigActualMeasAcceleratorPedalSensor_Item;
+
     item def DigActualMeasAcceleratorPedal_Item;
+
     item def DigActualVoltagesMeas_Item;
+
     item def ETH_ActualSupplyVoltage_Item;
+
     item def ETH_PhysicalSupplyVoltage_Item;
+
     item def ETH_RawSupplyVoltage_Item;
+
     item def ErrorAlarmSignal_Item;
+
     item def InterMicrocontrollersComm_ActualSupplyVoltage_Item;
+
     item def InterMicrocontrollers_PhysicalSupplyVoltage_Item;
+
     item def InterMicrocontrollers_RawSupplyVoltage_Item;
+
     item def OnChipTemperature_Item;
+
     item def PDD_Result_Item;
+
     item def PeripheralSupply_Item;
+
     item def PhysActualVoltageAcceleratorPedalSensor_Item;
+
     item def PhysSupplyVoltageAcceleratorPedalSensorChannel1_Item;
+
     item def PortEmergencyStop_PinLevels_Item;
+
     item def Pulldown_Control_Item;
+
     item def RawDieTemperatures_Item;
+
     item def RawSupplyVoltageAcceleratorPedalSensor1_Item;
+
     item def RawSupplyVoltageAcceleratorPedalSensor2_Item;
+
     item def RawSupplyVoltageAcceleratorPedalSensor_Item;
+
     item def RawVoltageAcceleratorPedalSensor1_Item;
+
     item def RawVoltageAcceleratorPedalSensor2_Item;
+
     item def RawVoltageAcceleratorPedalSensorRedundant1_Item;
+
     item def RawVoltageAcceleratorPedalSensorRedundant2_Item;
+
     item def RawVoltageAcceleratorSensor_Item;
+
     item def Trcvs_Standby_RawVoltage_Item;
+
     item def Trcvs_Standby_VoltageValue_Item;
+
     item def VDD5DActualSupplyVoltage_Item;
+
     item def VDD5D_PhysicalSupplyVoltage_Item;
+
     item def VDD5D_RawSupplyVoltage_Item;
+
     item def WakeupVBATBusComm_PhysicalSupplyVoltage_Item;
+
     item def WakeupVBATBusComm_RawSupplyVoltage_Item;
+
     item def WakeupVBATComm_ActualSupplyVoltage_Item;
+
     item def p29_Item;
 
-    // Intermediate information items named by the AcceleratorPedalSignalProcessing XMI object flows.
-    // The XMI gives no independent signal type for these intermediate flows, so the exact flow names are retained.
     item def ADC_ISR_Item;
+
     item def ISRErrorState_Item;
+
     item def MeanValueActualVoltageSensor1_Item;
+
     item def MeanValueActualVoltageSensor1Redundant_Item;
+
     item def MeanValueActualVoltageSensor2_Item;
+
     item def MeanValueActualVoltageSensor2Redundant_Item;
+
     item def ScaledSupplyVoltage1_Item;
+
     item def ScaledSupplyVoltage2_Item;
 
-    // Logical interface port definitions.
+// ===== Flattened source: 10_interfaces/10_SCP_InterfaceDefinitions.sysml (SCP_Interfaces) =====
+
+    // Reusable logical-interface port definitions.
+    // Owned by the interface architecture team.
     port def AcceleratorPedalDioCtrl_Port {
         out item payload : AcceleratorPedalDioCtrl_Item;
     }
@@ -343,114 +424,10 @@ package SignalConditioningAndProcessing_XmiResolved {
         inout item payload : p29_Item;
     }
 
-    // Internal logical-function definitions.
-    part def AcpdSignalProcessing {
-        port AcceleratorPedalPowerSupplyState : ~AcceleratorPedalPowerSupplyState_Port;
-        port ActualSupplyVoltageAcceleratorPedal : ActualSupplyVoltageAcceleratorPedal_Port;
-        port ActualVoltageAcceleratorPedal : ActualVoltageAcceleratorPedal_Port;
-        port RawSupplyVoltageAcceleratorPedalSensor : ~RawSupplyVoltageAcceleratorPedalSensor_Port;
-        port RawVoltageAcceleratorSensor : ~RawVoltageAcceleratorSensor_Port;
-        port p1 : AcceleratorPedalDioCtrl_Port;
+// ===== Flattened source: 20_behavior/20_SCP_MainActionSignatures.sysml (SCP_MainActionSignatures) =====
 
-        perform action getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachinePerformed : GetEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine;
-        perform action processAndQualifySensorAndSupplyVoltagesPerformed : ProcessAndQualifySensorAndSupplyVoltages;
-        perform action acceleratorPedalSignalProcessingPerformed : AcceleratorPedalSignalProcessing;
-    }
-
-    part def InputOutputDriver {
-        port CANFlexray_RawSupplyVoltage : CANFlexray_RawSupplyVoltage_Port;
-        port Clamp30OVMeasRawVoltage : Clamp30OVMeasRawVoltage_Port;
-        port Clamp30UVMeasRawVoltage : Clamp30UVMeasRawVoltage_Port;
-        port DigActualECUVoltagesMeas : ~DigActualECUVoltagesMeas_Port;
-        port ETH_RawSupplyVoltage : ETH_RawSupplyVoltage_Port;
-        port InterMicrocontrollers_RawSupplyVoltage : InterMicrocontrollers_RawSupplyVoltage_Port;
-        port VDD5DRawSupplyVoltage : VDD5DRawSupplyVoltage_Port;
-        port WakeupVBATBusComm_RawSupplyVoltage : WakeupVBATBusComm_RawSupplyVoltage_Port;
-        port p10 : Trcvs_StandbyPins_RawVoltage_Port;
-        port p11 : PortEmergencyStop_PinLevels_Port;
-        port p12 : Bandgap_voltage_value_Port;
-        port p2 : RawVoltageAcceleratorSensor_Port;
-        port p3 : ~DigActualMeasAcceleratorPedal_Port;
-        port p5 : RawSupplyVoltageAcceleratorPedalSensor_Port;
-        port p7 : ~AcceleratorPedalDioCtrl_Port;
-        port p8 : AcceleratorPedalHwCtrl_Port;
-        port p9 : ~CAN_Standby_VoltageMeas_Port;
-
-        perform action commandDIOToEnableDisablePowerSupplyPerformed : CommandDIOToEnableDisablePowerSupply;
-        perform action extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardwarePerformed : ExtractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware;
-    }
-
-    part def OnChipVTSupervision {
-        port AlarmSignalInfo : AlarmSignalInfo_Port;
-        port ChipExternalSupplyRailsRawVoltages : ChipExternalSupplyRailsRawVoltages_Port;
-        port ChipExternalSupplyVoltageRailsThresholdsConfigHw : ~ChipExternalSupplyVoltageRailsThresholdsConfigHw_Port;
-        port ChipInternalSupplyRailsRawVoltages : ChipInternalSupplyRailsRawVoltages_Port;
-        port ChipInternalSupplyVoltageRailsThresholdsConfigHW : ~ChipInternalSupplyVoltageRailsThresholdsConfigHW_Port;
-        port DieTemperaturesThresholdsConfigHW : ~DieTemperaturesThresholdsConfigHW_Port;
-        port RawDieTemperatures : RawDieTemperatures_Port;
-        port p3 : ~OnChipTemperature_Port;
-        port p5 : ~ChipPeripheralSupply_Port;
-    }
-
-    part def OnChipVTSupervisionDriver {
-        port ActualDieTemperatures : ActualDieTemperatures_Port;
-        port ChipExternalSupplyRailsActualVoltages : ChipExternalSupplyRailsActualVoltages_Port;
-        port ChipExternalSupplyRailsRawVoltages : ~ChipExternalSupplyRailsRawVoltages_Port;
-        port ChipExternalSupplyVoltageRailsThresholdsConfigHw : ChipExternalSupplyVoltageRailsThresholdsConfigHw_Port;
-        port ChipInternalSupplyRailsActualVoltages : ChipInternalSupplyRailsActualVoltages_Port;
-        port ChipInternalSupplyRailsRawVoltages : ~ChipInternalSupplyRailsRawVoltages_Port;
-        port ChipInternalSupplyVoltageRailsThresholdsConfigHW : ChipInternalSupplyVoltageRailsThresholdsConfigHW_Port;
-        port ConfigureChipExternalSupplyVoltageRailsThresholds : ~ConfigureChipExternalSupplyVoltageRailsThresholds_Port;
-        port ConfigureChipInternalSupplyVoltageRailsThresholds : ~ConfigureChipInternalSupplyVoltageRailsThresholds_Port;
-        port ConfigureDieTemperaturesThresholds : ~ConfigureDieTemperaturesThresholds_Port;
-        port DieTemperaturesThresholdsConfigHW : DieTemperaturesThresholdsConfigHW_Port;
-        port RawDieTemperatures : ~RawDieTemperatures_Port;
-    }
-
-    part def SignalConversion {
-        @ASIL {
-            level = ASILLevel::ASIL_B;
-        }
-        port BatterySupply_In : ~BatterySupply_In_Port;
-        port CANFlexray_PhysicalSupplyVoltage : ~CANFlexray_PhysicalSupplyVoltage_Port;
-        port DigActualECUVoltagesMeas : DigActualECUVoltagesMeas_Port;
-        port EthernetPLCPhysicalSupplyVoltage : ~EthernetPLCPhysicalSupplyVoltage_Port;
-        port VDD3V3PhysicalSupplyVoltage : ~VDD3V3PhysicalSupplyVoltage_Port;
-        port VDD5DPhysicalSupplyVoltage : ~VDD5DPhysicalSupplyVoltage_Port;
-        port WakeupVBATBusComm_PhysicalSupplyVoltage : ~WakeupVBATBusComm_PhysicalSupplyVoltage_Port;
-        port p3 : ~PhysActualVoltageAcceleratorPedalSensor_Port;
-        port p4 : DigActualMeasAcceleratorPedal_Port;
-        port p5 : ~PhysSupplyVoltageAcceleratorPedalSensorChannel1_Port;
-        port p6 : ~AcceleratorPedalHwCtrl_Port;
-        port p7 : AcceleratorPedalPowerSupplyCtrl_Port;
-        port p8 : ~CAN_Standby_PhysicalVoltage_Port;
-        port p9 : CAN_Standby_VoltageMeas_Port;
-
-        perform action acquireSensorAndSupplyVoltagePerformed : AcquireSensorAndSupplyVoltage;
-        perform action enableDisableThePowerSupplyPerformed : EnableDisableThePowerSupply;
-    }
-
-    part def VoltageTemperatureSignalProcessing {
-        port ActualReferenceVoltage : ActualReferenceVoltage_Port;
-        port CANFlexray_ActualSupplyVoltage : CANFlexray_ActualSupplyVoltage_Port;
-        port CANFlexray_RawSupplyVoltage : ~CANFlexray_RawSupplyVoltage_Port;
-        port ChipExternalSupplyRailsActualVoltages : ~ChipExternalSupplyRailsActualVoltages_Port;
-        port ChipInternalSupplyRailsActualVoltages : ~ChipInternalSupplyRailsActualVoltages_Port;
-        port Clamp30OVMeasActualVoltage : Clamp30OVMeasActualVoltage_Port;
-        port Clamp30OVMeasRawVoltage : ~Clamp30OVMeasRawVoltage_Port;
-        port Clamp30UVMeasActualVoltage : Clamp30UVMeasActualVoltage_Port;
-        port Clamp30UVMeasRawVoltage : ~Clamp30UVMeasRawVoltage_Port;
-        port ETH_ActualSupplyVoltage : ETH_ActualSupplyVoltage_Port;
-        port ETH_RawSupplyVoltage : ~ETH_RawSupplyVoltage_Port;
-        port InterMicrocontrollers_ActualSupplyVoltage : InterMicrocontrollers_ActualSupplyVoltage_Port;
-        port InterMicrocontrollers_RawSupplyVoltage : ~InterMicrocontrollers_RawSupplyVoltage_Port;
-        port VDD5DRawSupplyVoltage : ~VDD5DRawSupplyVoltage_Port;
-        port VDD5D_ActualSupplyVoltage : VDD5D_ActualSupplyVoltage_Port;
-        port WakeupVBATBusComm_ActualSupplyVoltage : WakeupVBATBusComm_ActualSupplyVoltage_Port;
-        port WakeupVBATBusComm_RawSupplyVoltage : ~WakeupVBATBusComm_RawSupplyVoltage_Port;
-    }
-
-    // Primitive action definitions extracted from the XMI activity.
+    // Action signatures used by SignalConditioningAndProcessingMain.
+    // Owned by the cluster behavior team.
     action def AcquireSensorAndSupplyVoltage {
         // The six input pins are anonymous/untyped in the UML CallBehaviorAction itself.
         // They are resolved through the XMI-derived structural boundary ports connected to
@@ -506,12 +483,10 @@ package SignalConditioningAndProcessing_XmiResolved {
         out item acceleratorPedalDioCtrl : AcceleratorPedalDioCtrl_Item;
     }
 
-    // Activity translated from the XMI-owned FunML Activity Diagram: AcceleratorPedalSignalProcessing.
-    // Source owner: AcpdSignalProcessing (its UML classifier behavior).
-    // The action uses direct boundary items, native start/fork/join/done controls, and no synthetic boundary action definitions.
-    // The XMI has one unnamed, untyped duplicate output flow from Get activation status from LCM and command the power supply;
-    // it is not represented as a second artificial boundary feature. The typed AcceleratorPedalDioCtrl output is retained.
+// ===== Flattened source: 20_behavior/21_SCP_AcpdActionSignatures.sysml (SCP_AcpdActionSignatures) =====
 
+    // Action signatures used by the AcpdSignalProcessing classifier behavior.
+    // Owned by the AcpdSignalProcessing behavior team.
     action def ScaleSupplyVoltages {
         in item rawSupplyVoltageAcceleratorPedalSensor1 : RawSupplyVoltageAcceleratorPedalSensor1_Item;
         in item rawSupplyVoltageAcceleratorPedalSensor2 : RawSupplyVoltageAcceleratorPedalSensor2_Item;
@@ -571,6 +546,10 @@ package SignalConditioningAndProcessing_XmiResolved {
         out item actualSupplyVoltageAcceleratorPedalSensor2 : ActualSupplyVoltageAcceleratorPedalSensor2_Item;
     }
 
+// ===== Flattened source: 20_behavior/22_SCP_AcpdSignalProcessingBehavior.sysml (SCP_AcpdBehavior) =====
+
+    // Activity behavior translated from AcceleratorPedalSignalProcessing.
+    // Owns only the action body; primitive action signatures remain in 21_SCP_AcpdActionSignatures.sysml.
     action def AcceleratorPedalSignalProcessing {
         in item rawVoltageAcceleratorPedalSensor1 : RawVoltageAcceleratorPedalSensor1_Item;
         in item rawVoltageAcceleratorPedalSensor2 : RawVoltageAcceleratorPedalSensor2_Item;
@@ -800,10 +779,10 @@ package SignalConditioningAndProcessing_XmiResolved {
         }
     }
 
-    // Main activity translated from XMI-owned FunML Activity Diagram: SignalConditioningAndProcessing_acpd_act.
-    // Boundary action parameter types are resolved from XMI referenceExtension::referentPath where available.
-    // For the six anonymous AcquireSensorAndSupplyVoltage inputs, the XMI has no direct pin/APN type,
-    // so the types are taken from the corresponding XMI-derived structural boundary ports connected to SignalConversion.
+// ===== Flattened source: 20_behavior/23_SCP_MainBehavior.sysml (SCP_MainBehavior) =====
+
+    // Activity behavior translated from SignalConditioningAndProcessing_acpd_act.
+    // Owns action control, object flows, and extracted ASIL annotations.
     action def SignalConditioningAndProcessingMain {
         out item actualVoltageAcceleratorPedalSensor1 : ActualVoltageAcceleratorPedalSensor1_Item;
         out item actualVoltageAcceleratorPedalSensor2 : ActualVoltageAcceleratorPedalSensor2_Item;
@@ -994,17 +973,123 @@ package SignalConditioningAndProcessing_XmiResolved {
         }
     }
 
-    // Main logical cluster.
-    // Sequence diagram translated from XMI-owned FunML Sequence Diagram: SignalConditioningAndProcessing_acpd_seq.
-    // Action-definition form with native SysML v2 control actions:
-    // - the whole interaction is an action definition, so if/else and loop are valid action nodes,
-    // - lifelines are reference participants with event occurrences,
-    // - boundary lifelines reuse the exact XMI-derived boundary/external port usages and PortDef types,
-    // - each real XMI message is represented exactly once as message ... from event to event,
-    // - no artificial messages are generated.
-    // No ASIL metadata is added here: the XMI interaction SignalConditioningAndProcessing_acpd_seq
-    // has no direct Safety Integrity Level constraint reference on the interaction, lifelines, messages,
-    // combined fragments, operands, events, or duration constraints. No inference has been made.
+// ===== Flattened source: 30_functions/30_SCP_LogicalFunctionDefinitions.sysml (SCP_LogicalFunctions) =====
+
+    // Internal logical-function definitions and their XMI-derived port usages.
+    // Owned by logical-function architects; no cluster-level connectors are defined here.
+    part def AcpdSignalProcessing {
+        port AcceleratorPedalPowerSupplyState : ~AcceleratorPedalPowerSupplyState_Port;
+        port ActualSupplyVoltageAcceleratorPedal : ActualSupplyVoltageAcceleratorPedal_Port;
+        port ActualVoltageAcceleratorPedal : ActualVoltageAcceleratorPedal_Port;
+        port RawSupplyVoltageAcceleratorPedalSensor : ~RawSupplyVoltageAcceleratorPedalSensor_Port;
+        port RawVoltageAcceleratorSensor : ~RawVoltageAcceleratorSensor_Port;
+        port p1 : AcceleratorPedalDioCtrl_Port;
+
+        perform action getEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachinePerformed : GetEnableDisableAcceleratorPedalSupplyStatusFromSystemStateMachine;
+        perform action processAndQualifySensorAndSupplyVoltagesPerformed : ProcessAndQualifySensorAndSupplyVoltages;
+        perform action acceleratorPedalSignalProcessingPerformed : AcceleratorPedalSignalProcessing;
+    }
+
+    part def InputOutputDriver {
+        @Realization {
+            kind = RealizationKind::SW;
+        }
+        port CANFlexray_RawSupplyVoltage : CANFlexray_RawSupplyVoltage_Port;
+        port Clamp30OVMeasRawVoltage : Clamp30OVMeasRawVoltage_Port;
+        port Clamp30UVMeasRawVoltage : Clamp30UVMeasRawVoltage_Port;
+        port DigActualECUVoltagesMeas : ~DigActualECUVoltagesMeas_Port;
+        port ETH_RawSupplyVoltage : ETH_RawSupplyVoltage_Port;
+        port InterMicrocontrollers_RawSupplyVoltage : InterMicrocontrollers_RawSupplyVoltage_Port;
+        port VDD5DRawSupplyVoltage : VDD5DRawSupplyVoltage_Port;
+        port WakeupVBATBusComm_RawSupplyVoltage : WakeupVBATBusComm_RawSupplyVoltage_Port;
+        port p10 : Trcvs_StandbyPins_RawVoltage_Port;
+        port p11 : PortEmergencyStop_PinLevels_Port;
+        port p12 : Bandgap_voltage_value_Port;
+        port p2 : RawVoltageAcceleratorSensor_Port;
+        port p3 : ~DigActualMeasAcceleratorPedal_Port;
+        port p5 : RawSupplyVoltageAcceleratorPedalSensor_Port;
+        port p7 : ~AcceleratorPedalDioCtrl_Port;
+        port p8 : AcceleratorPedalHwCtrl_Port;
+        port p9 : ~CAN_Standby_VoltageMeas_Port;
+
+        perform action commandDIOToEnableDisablePowerSupplyPerformed : CommandDIOToEnableDisablePowerSupply;
+        perform action extractDigitalValuesForSensorAndSupplyVoltagesFromADCHardwarePerformed : ExtractDigitalValuesForSensorAndSupplyVoltagesFromADCHardware;
+    }
+
+    part def OnChipVTSupervision {
+        port AlarmSignalInfo : AlarmSignalInfo_Port;
+        port ChipExternalSupplyRailsRawVoltages : ChipExternalSupplyRailsRawVoltages_Port;
+        port ChipExternalSupplyVoltageRailsThresholdsConfigHw : ~ChipExternalSupplyVoltageRailsThresholdsConfigHw_Port;
+        port ChipInternalSupplyRailsRawVoltages : ChipInternalSupplyRailsRawVoltages_Port;
+        port ChipInternalSupplyVoltageRailsThresholdsConfigHW : ~ChipInternalSupplyVoltageRailsThresholdsConfigHW_Port;
+        port DieTemperaturesThresholdsConfigHW : ~DieTemperaturesThresholdsConfigHW_Port;
+        port RawDieTemperatures : RawDieTemperatures_Port;
+        port p3 : ~OnChipTemperature_Port;
+        port p5 : ~ChipPeripheralSupply_Port;
+    }
+
+    part def OnChipVTSupervisionDriver {
+        port ActualDieTemperatures : ActualDieTemperatures_Port;
+        port ChipExternalSupplyRailsActualVoltages : ChipExternalSupplyRailsActualVoltages_Port;
+        port ChipExternalSupplyRailsRawVoltages : ~ChipExternalSupplyRailsRawVoltages_Port;
+        port ChipExternalSupplyVoltageRailsThresholdsConfigHw : ChipExternalSupplyVoltageRailsThresholdsConfigHw_Port;
+        port ChipInternalSupplyRailsActualVoltages : ChipInternalSupplyRailsActualVoltages_Port;
+        port ChipInternalSupplyRailsRawVoltages : ~ChipInternalSupplyRailsRawVoltages_Port;
+        port ChipInternalSupplyVoltageRailsThresholdsConfigHW : ChipInternalSupplyVoltageRailsThresholdsConfigHW_Port;
+        port ConfigureChipExternalSupplyVoltageRailsThresholds : ~ConfigureChipExternalSupplyVoltageRailsThresholds_Port;
+        port ConfigureChipInternalSupplyVoltageRailsThresholds : ~ConfigureChipInternalSupplyVoltageRailsThresholds_Port;
+        port ConfigureDieTemperaturesThresholds : ~ConfigureDieTemperaturesThresholds_Port;
+        port DieTemperaturesThresholdsConfigHW : DieTemperaturesThresholdsConfigHW_Port;
+        port RawDieTemperatures : ~RawDieTemperatures_Port;
+    }
+
+    part def SignalConversion {
+        @ASIL {
+            level = ASILLevel::ASIL_B;
+        }
+        port BatterySupply_In : ~BatterySupply_In_Port;
+        port CANFlexray_PhysicalSupplyVoltage : ~CANFlexray_PhysicalSupplyVoltage_Port;
+        port DigActualECUVoltagesMeas : DigActualECUVoltagesMeas_Port;
+        port EthernetPLCPhysicalSupplyVoltage : ~EthernetPLCPhysicalSupplyVoltage_Port;
+        port VDD3V3PhysicalSupplyVoltage : ~VDD3V3PhysicalSupplyVoltage_Port;
+        port VDD5DPhysicalSupplyVoltage : ~VDD5DPhysicalSupplyVoltage_Port;
+        port WakeupVBATBusComm_PhysicalSupplyVoltage : ~WakeupVBATBusComm_PhysicalSupplyVoltage_Port;
+        port p3 : ~PhysActualVoltageAcceleratorPedalSensor_Port;
+        port p4 : DigActualMeasAcceleratorPedal_Port;
+        port p5 : ~PhysSupplyVoltageAcceleratorPedalSensorChannel1_Port;
+        port p6 : ~AcceleratorPedalHwCtrl_Port;
+        port p7 : AcceleratorPedalPowerSupplyCtrl_Port;
+        port p8 : ~CAN_Standby_PhysicalVoltage_Port;
+        port p9 : CAN_Standby_VoltageMeas_Port;
+
+        perform action acquireSensorAndSupplyVoltagePerformed : AcquireSensorAndSupplyVoltage;
+        perform action enableDisableThePowerSupplyPerformed : EnableDisableThePowerSupply;
+    }
+
+    part def VoltageTemperatureSignalProcessing {
+        port ActualReferenceVoltage : ActualReferenceVoltage_Port;
+        port CANFlexray_ActualSupplyVoltage : CANFlexray_ActualSupplyVoltage_Port;
+        port CANFlexray_RawSupplyVoltage : ~CANFlexray_RawSupplyVoltage_Port;
+        port ChipExternalSupplyRailsActualVoltages : ~ChipExternalSupplyRailsActualVoltages_Port;
+        port ChipInternalSupplyRailsActualVoltages : ~ChipInternalSupplyRailsActualVoltages_Port;
+        port Clamp30OVMeasActualVoltage : Clamp30OVMeasActualVoltage_Port;
+        port Clamp30OVMeasRawVoltage : ~Clamp30OVMeasRawVoltage_Port;
+        port Clamp30UVMeasActualVoltage : Clamp30UVMeasActualVoltage_Port;
+        port Clamp30UVMeasRawVoltage : ~Clamp30UVMeasRawVoltage_Port;
+        port ETH_ActualSupplyVoltage : ETH_ActualSupplyVoltage_Port;
+        port ETH_RawSupplyVoltage : ~ETH_RawSupplyVoltage_Port;
+        port InterMicrocontrollers_ActualSupplyVoltage : InterMicrocontrollers_ActualSupplyVoltage_Port;
+        port InterMicrocontrollers_RawSupplyVoltage : ~InterMicrocontrollers_RawSupplyVoltage_Port;
+        port VDD5DRawSupplyVoltage : ~VDD5DRawSupplyVoltage_Port;
+        port VDD5D_ActualSupplyVoltage : VDD5D_ActualSupplyVoltage_Port;
+        port WakeupVBATBusComm_ActualSupplyVoltage : WakeupVBATBusComm_ActualSupplyVoltage_Port;
+        port WakeupVBATBusComm_RawSupplyVoltage : ~WakeupVBATBusComm_RawSupplyVoltage_Port;
+    }
+
+// ===== Flattened source: 40_interactions/40_SCP_InteractionBehavior.sysml (SCP_Interactions) =====
+
+    // Interaction behavior translated from SignalConditioningAndProcessing_acpd_seq.
+    // Retains the current event-occurrence endpoints, real XMI messages, and control-fragment representation unchanged.
     action def SignalConditioningAndProcessing_acpd_seq {
 
         // Guard extracted from the UML alt operand: "activation status is enable".
@@ -1280,6 +1365,10 @@ package SignalConditioningAndProcessing_XmiResolved {
         }
     }
 
+// ===== Flattened source: 50_assembly/50_SCP_ClusterAssembly.sysml (SCP_Assembly) =====
+
+    // Authoritative cluster assembly.
+    // Owns boundary ports, contained function usages, FDD-filtered delegation bindings, assembly connections, and allocations.
     part def SignalConditioningAndProcessing {
 
         // Boundary ports owned by SignalConditioningAndProcessing.
@@ -1332,15 +1421,24 @@ package SignalConditioningAndProcessing_XmiResolved {
         part acpdSignalProcessing : AcpdSignalProcessing;
         part signalConversion : SignalConversion;
         part inputOutputDriver : InputOutputDriver;
+        @Realization {
+            kind = RealizationKind::SW;
+        }
         part voltageTemperatureSignalProcessing : VoltageTemperatureSignalProcessing {
             @ASIL {
                 level = ASILLevel::ASIL_D;
             }
         }
+        @Realization {
+            kind = RealizationKind::SW;
+        }
         part onChipVTSupervisionDriver : OnChipVTSupervisionDriver {
             @ASIL {
                 level = ASILLevel::ASIL_D;
             }
+        }
+        @Realization {
+            kind = RealizationKind::HW;
         }
         part onChipVTSupervision : OnChipVTSupervision {
             @ASIL {
