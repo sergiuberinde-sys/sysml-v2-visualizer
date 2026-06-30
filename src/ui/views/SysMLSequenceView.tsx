@@ -1,6 +1,12 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
 import type { SelectionState } from '../../app/selection';
+
+// ── Zoom bounds ────────────────────────────────────────────────────────────────
+const ZOOM_MIN  = 0.25;
+const ZOOM_MAX  = 4;
+const ZOOM_STEP = 1.2; // multiplicative step per button click / wheel notch
+const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 
 interface Props {
   graph: ContainmentGraph | undefined;
@@ -441,6 +447,10 @@ const C_ALT_SEP    = '#475569';
 export default function SysMLSequenceView({ graph, selection, onSelect }: Props) {
   const [selectedSeqId, setSelectedSeqId] = useState<string>('');
   const [fitMode, setFitMode]             = useState(false);
+  const [zoom, setZoom]                   = useState(1);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const zoomBy = (factor: number) => { setFitMode(false); setZoom(z => clampZoom(z * factor)); };
 
   const { nodeById, childrenOf } = useMemo(() => {
     if (!graph) return { nodeById: new Map<string, GraphNode>(), childrenOf: new Map<string, string[]>() };
@@ -467,6 +477,22 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
       }
     }
   }, [selection, sequenceDefs]);
+
+  // ⌘/Ctrl + wheel zooms (native non-passive listener so preventDefault works and
+  // the diagram doesn't scroll while zooming). Keyed on sequenceDefs.length so it
+  // (re)attaches once the diagram container is actually mounted.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      setFitMode(false);
+      setZoom(z => clampZoom(z * (e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [sequenceDefs.length]);
 
   if (!graph) {
     return <div style={{ padding: 24, color: '#64748b', fontSize: 13 }}>No graph data available. Ensure the SysML v2 parser service is running.</div>;
@@ -519,6 +545,23 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
             </button>
           ))}
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+          {(() => {
+            const zBtn: React.CSSProperties = {
+              fontSize: 12, lineHeight: 1, width: 24, height: 22, borderRadius: 4, cursor: 'pointer',
+              border: '1px solid #2a2a3a', background: '#111827', color: '#9ca3af',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+            };
+            return <>
+              <button title="Zoom out" onClick={() => zoomBy(1 / ZOOM_STEP)} style={zBtn}>−</button>
+              <button title="Reset zoom to 100%" onClick={() => { setFitMode(false); setZoom(1); }}
+                style={{ ...zBtn, width: 44, fontSize: 11 }}>
+                {Math.round((fitMode ? 1 : zoom) * 100)}%
+              </button>
+              <button title="Zoom in" onClick={() => zoomBy(ZOOM_STEP)} style={zBtn}>+</button>
+            </>;
+          })()}
+        </div>
         <button title="Fit view" onClick={() => setFitMode(v => !v)} style={{
           fontSize: 11, padding: '3px 9px', borderRadius: 4, cursor: 'pointer', flexShrink: 0,
           border:     `1px solid ${fitMode ? '#38bdf8' : '#2a2a3a'}`,
@@ -530,9 +573,9 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
       </div>
 
       {/* ── Diagram ─────────────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflow: fitMode ? 'hidden' : 'auto', padding: fitMode ? 0 : 16 }}>
+      <div ref={scrollRef} style={{ flex: 1, overflow: fitMode ? 'hidden' : 'auto', padding: fitMode ? 0 : 16 }}>
         <svg
-          width={fitMode ? '100%' : totalW} height={fitMode ? '100%' : totalH}
+          width={fitMode ? '100%' : totalW * zoom} height={fitMode ? '100%' : totalH * zoom}
           viewBox={`0 0 ${totalW} ${totalH}`}
           preserveAspectRatio="xMidYMid meet"
           style={{ fontFamily: 'monospace', userSelect: 'none', display: 'block' }}
