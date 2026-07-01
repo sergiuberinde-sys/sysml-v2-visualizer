@@ -243,6 +243,9 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     };
     findValue(n.id);
     if (!value) continue;
+    // In multi-file projects the enum literal resolves to a qualified name
+    // (e.g. 'ASILLevel::ASIL_D'); keep only the literal (last '::' segment).
+    value = value.split('::').pop() ?? value;
     // Resolve the host: climb to the owner (first non-wrapper ancestor), tracking the
     // wrapper that is the owner's direct child; if the next sibling resolves to a
     // part/action, this is prefix metadata → attach there instead of the owner.
@@ -862,6 +865,27 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
  * resolving their direction from the context models (imported files).
  * Called after buildGraph() when the parse result includes contextModels.
  */
+/**
+ * Build a graph from the primary model unioned with all context-file models.
+ *
+ * In a multi-file project the primary file's `model` contains only its own
+ * content; the part/port *definitions* it references (and the internal endpoints
+ * of its `connect`/`bind` statements) live in other files. Building from just the
+ * primary leaves typedBy edges and connection endpoints unresolved — e.g. the
+ * cluster assembly renders as boxes with no ports and no wires. Concatenating the
+ * context roots gives every referenced definition to the resolver; buildGraph
+ * indexes each root by position, so ids never collide. For a self-contained file
+ * (no context) this is identical to `buildGraph(model)`.
+ */
+export function buildGraphWithContext(
+  model: ModelNode[],
+  contextModels: ModelNode[][] = [],
+): ContainmentGraph {
+  return contextModels.length
+    ? buildGraph([...model, ...contextModels.flat()])
+    : buildGraph(model);
+}
+
 export function enrichWithContextModels(
   graph: ContainmentGraph,
   contextModels: ModelNode[][],

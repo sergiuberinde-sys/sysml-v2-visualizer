@@ -10,7 +10,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { createHash } from 'crypto';
 import { createOfficialBackendClient } from './officialBackendClient';
-import { buildGraph } from './graphBuilder';
+import { buildGraphWithContext } from './graphBuilder';
 import { buildBehavior } from './behaviorBuilder';
 import type { SysMLV2ParseResult } from './types';
 
@@ -125,8 +125,8 @@ app.post('/parse', async (req: Request, res: Response): Promise<void> => {
   // Build and embed the containment graph (including connection edges) so
   // callers can read graph.edges without running the frontend adapter.
   if (result.model) {
-    result.graph    = buildGraph(result.model);
-    result.behavior = buildBehavior(result.model);
+    result.graph    = buildGraphWithContext(result.model, result.contextModels ?? []);
+    result.behavior = buildBehavior(result.model, result.contextModels ?? []);
   } else {
     if (!result.graph)    result.graph    = { nodes: [], edges: [] };
     if (!result.behavior) result.behavior = { actions: [], flows: [], conditionals: [] };

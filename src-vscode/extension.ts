@@ -4,7 +4,7 @@ import { promises as fsAsync } from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
 import { JavaWrapperClient } from '../parser-service/src/javaWrapperClient';
-import { buildGraph, enrichWithContextModels, type ContainmentGraph } from '../parser-service/src/graphBuilder';
+import { buildGraphWithContext, type ContainmentGraph } from '../parser-service/src/graphBuilder';
 import { buildBehavior } from '../parser-service/src/behaviorBuilder';
 import { validateModel } from '../parser-service/src/validator';
 import type { SysMLV2ParseResult } from '../parser-service/src/types';
@@ -13,7 +13,7 @@ import { ensureJava } from './javaInstaller';
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g39';
+const GRAPH_VERSION      = 'g40';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -286,8 +286,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       if (phase1.model && !phase1.graph) {
-        phase1.graph    = buildGraph(phase1.model);
-        if (phase1.contextModels?.length) enrichWithContextModels(phase1.graph, phase1.contextModels);
+        phase1.graph    = buildGraphWithContext(phase1.model, phase1.contextModels ?? []);
         phase1.behavior = buildBehavior(phase1.model, phase1.contextModels ?? []);
       }
 
@@ -331,8 +330,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       if (result.model && !result.graph) {
-        result.graph    = buildGraph(result.model);
-        if (result.contextModels?.length) enrichWithContextModels(result.graph, result.contextModels);
+        result.graph    = buildGraphWithContext(result.model, result.contextModels ?? []);
         result.behavior = buildBehavior(result.model, result.contextModels ?? []);
       }
 
