@@ -570,6 +570,14 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
 
   roots.forEach((root, i) => visit(root, String(i), null));
 
+  // Also traverse context files so cross-file behaviors and their swimlane
+  // `allocate` statements — which in a multi-file project often live in a separate
+  // assembly file from the behavior definition — are collected. Prefixed ids keep
+  // context nodes distinct from primary-file ids. (No-op for single-file models.)
+  contextRoots.forEach((ctx, ci) => {
+    ctx.forEach((root, i) => visit(root, `ctx${ci}_${i}`, null));
+  });
+
   // Inherit ports onto typed ActionUsages from their ActionDefinition.
   // Primary model first, then context files (cross-file defs don't override local ones).
   const defPortsByName = new Map<string, ActionPort[]>();
