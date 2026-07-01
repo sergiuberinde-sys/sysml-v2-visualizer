@@ -398,6 +398,19 @@ html, body, #root {
   position: relative;
 }
 
+/* Parsing overlay spinner */
+.parse-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid #334155;
+  border-top-color: #60a5fa;
+  border-radius: 50%;
+  animation: parse-spin 0.8s linear infinite;
+}
+@keyframes parse-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ── React Flow overrides ────────────────────────────────── */
 
 .react-flow__controls {

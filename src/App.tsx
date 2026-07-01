@@ -1425,6 +1425,21 @@ export default function App() {
             )}
           </div>
           <div className="view-area">
+            {/* ── Parsing overlay: covers the view until the full model is ready ── */}
+            {officialParseLoading && (
+              <div style={{
+                position: 'absolute', inset: 0, zIndex: 50,
+                background: 'rgba(30,30,46,0.9)',
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                gap: 14, fontFamily: 'monospace',
+              }}>
+                <div className="parse-spinner" />
+                <div style={{ fontSize: 13, color: '#93c5fd', fontWeight: 600 }}>Working… parsing model</div>
+                <div style={{ fontSize: 11, color: '#64748b' }}>
+                  Resolving the full model — the view updates when everything is ready.
+                </div>
+              </div>
+            )}
             {/* ── Parser status banner ──────────────────────────────────── */}
             <div style={{
               padding: '10px 16px',

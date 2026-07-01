@@ -270,6 +270,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const primaryText = document.getText();
     console.log(`[sysml-visualizer] START parse: ${path.basename(uri.fsPath)}`);
 
+    // Best result available if a later phase throws — used to clear the webview's
+    // parsing overlay even on failure.
+    let phase1ForFallback: SysMLV2ParseResult | undefined;
+
     try {
       // ── Phase 1: primary-only parse (no context file reads) ──────────────────
       // Gives immediate feedback without touching the workspace filesystem.
@@ -289,17 +293,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         phase1.graph    = buildGraphWithContext(phase1.model, phase1.contextModels ?? []);
         phase1.behavior = buildBehavior(phase1.model, phase1.contextModels ?? []);
       }
+      phase1ForFallback = phase1;
 
-      // Publish phase-1 result immediately so the UI is never blank while waiting.
-      applyResult(document, phase1);
-
-      // Proceed to Phase 2 if Phase 1 has resolve errors OR the file imports other
-      // namespaces. The JVM parser silently accepts unresolved imports in Phase 1,
-      // so 0 diagnostics does not mean the file is self-contained when `import`
-      // statements are present.
+      // Decide whether a context (Phase 2) parse is needed. When it is, we do NOT
+      // publish the primary-only result: the webview keeps its "parsing" overlay up
+      // until the full result is ready, so the diagram never flashes a partial
+      // (portless / wireless) render mid-parse. The JVM parser silently accepts
+      // unresolved imports in Phase 1, so 0 diagnostics does not mean self-contained
+      // when `import` statements are present.
       const needsPhase2 = hasResolveErrors(phase1) || hasImports(primaryText);
       if (!needsPhase2) {
-        // Truly self-contained. Cache and stop.
+        applyResult(document, phase1); // self-contained → this is the final result
         if (!phase1FromCache) {
           parseCacheSet(primaryOnlyKey, phase1);
           void diskCacheSet(primaryOnlyKey, phase1);
@@ -311,7 +315,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // ── Phase 2: re-parse with context (file has cross-file references) ──────
       const contextFiles   = await collectContextFiles(uri);
       if (contextFiles.length === 0) {
-        // No other workspace files — Phase 1 is the best we can do.
+        // No other workspace files — Phase 1 is the best we can do; publish it.
+        applyResult(document, phase1);
         if (!phase1FromCache) {
           parseCacheSet(primaryOnlyKey, phase1);
           void diskCacheSet(primaryOnlyKey, phase1);
@@ -345,6 +350,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[sysml-visualizer] parse ERROR:', msg);
+      // Clear the webview's parsing overlay even on failure: publish the best result
+      // we have (primary-only), or an empty graph if we never got that far.
+      if (phase1ForFallback) {
+        applyResult(document, phase1ForFallback);
+      } else if (activePanel) {
+        void activePanel.webview.postMessage({
+          type: 'updateGraph', graph: { nodes: [], edges: [] }, behavior: null,
+          success: false, diagnostics: [],
+        });
+      }
       if (msg.includes('ENOENT') || msg.includes('spawn')) {
         void vscode.window.showErrorMessage(
           'SysML v2 Visualizer: Java runtime not found. ' +
