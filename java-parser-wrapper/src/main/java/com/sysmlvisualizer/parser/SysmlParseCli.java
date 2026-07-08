@@ -749,6 +749,22 @@ public class SysmlParseCli {
         // the port usage as isConjugated=true so direction can be correctly flipped.
         if ("ConjugatedPortTyping".equals(emfType) && name == null) {
             name = crossRefName(obj, "portDefinition");
+            // In a multi-file project the portDefinition reference is a cross-file proxy
+            // with no source node of its own, so crossRefName() returns null. Recover the
+            // base port-def name from the typing node's own source text (e.g.
+            // "~AcceleratorPedalHwCtrl_Port" → "AcceleratorPedalHwCtrl_Port").
+            if (name == null) {
+                try {
+                    ICompositeNode cn = NodeModelUtils.getNode(obj);
+                    if (cn != null) {
+                        String t = NodeModelUtils.getTokenText(cn).trim();
+                        if (t.startsWith("~")) t = t.substring(1).trim();
+                        int ci = t.lastIndexOf("::");
+                        if (ci >= 0) t = t.substring(ci + 2).trim();
+                        if (!t.isEmpty() && !t.contains(" ")) name = t;
+                    }
+                } catch (Exception ignored) { }
+            }
         }
 
         // Feature.direction attribute (FeatureDirectionKind enum: in, out, inout, none).

@@ -416,9 +416,19 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       return portConnDir.get(port.id) ?? '';
     }
 
+    // Label a port by its TYPE (its typing PortDefinition, prefixed with ~ when the
+    // usage is conjugated) instead of its declared name; falls back to the name when
+    // the port is untyped.
+    function portTypeLabel(port: GraphNode): string {
+      const typeEdge = typedByEdges.find(e => e.source === port.id);
+      const typeName = typeEdge ? nodeById.get(typeEdge.target)?.label : undefined;
+      if (!typeName) return port.label;
+      return port.isConjugated ? `~${typeName}` : typeName;
+    }
+
     function portDisplay(port: GraphNode): PortDisplay {
       const dir = resolvePortDir(port);
-      return makeBoundaryPortDisplay(port.id, port.label, dir, '', dir);
+      return makeBoundaryPortDisplay(port.id, portTypeLabel(port), dir, '', dir);
     }
 
     // ── Leaf-part view: scope has no nested PartUsages ──────────────────────────
@@ -1221,7 +1231,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       // One visible square per boundary port: left-side ports show sqL (on left boundary),
       // right-side ports show sqR (on right boundary). The hidden handle stays in the DOM
       // so React Flow can still route edges to/from it.
-      const basePd = makeBoundaryPortDisplay(port.id, port.label, dir, '', dir);
+      const basePd = makeBoundaryPortDisplay(port.id, portTypeLabel(port), dir, '', dir);
       const pd: PortDisplay = {
         ...basePd,
         showLeft: !isRight,
