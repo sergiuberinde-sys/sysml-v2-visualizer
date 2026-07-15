@@ -11,6 +11,17 @@ package SCP_Assembly {
     private import SCP_MainBehavior::*;
     private import SCP_Interactions::*;
 
+    part def BatteryComponent {
+        port BattOutPort : BatterySupply_In_Port;
+    }
+
+    part def AssemblyTest {
+        part battout : BatteryComponent;
+        part scp : SignalConditioningAndProcessing;
+
+        connect battout.BattOutPort to scp.BatterySupply_In;
+    }
+
     part def SignalConditioningAndProcessing {
 
         // Boundary ports owned by SignalConditioningAndProcessing.

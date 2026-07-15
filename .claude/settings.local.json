@@ -350,7 +350,17 @@
       "Bash(grep -n \"function WiringPartNode\\\\|function getTypeName\\\\|partLbl:  part.label\\\\|typeName: typeName ?? null\\\\|const label = conn.label\\\\|label,$\\\\|fontSize: 12.5, fontWeight: 600, color: PART_NAME\" src/ui/views/StructuralWiringView.tsx)",
       "Bash(grep -n \"^          label,\\\\|label,$\\\\|labelStyle:      {\" src/ui/views/StructuralWiringView.tsx)",
       "Bash(grep -iE \"readme|\\\\.md$|docs/|CHANGELOG|\\\\.mdx$\")",
-      "Bash(grep -viE \"\\\\.png$|\\\\.jpg$|\\\\.svg$|\\\\.gif$\")"
+      "Bash(grep -viE \"\\\\.png$|\\\\.jpg$|\\\\.svg$|\\\\.gif$\")",
+      "Bash(xargs stat -f \"%m %N\")",
+      "Bash(JAVA_HOME=/opt/homebrew/opt/openjdk@21 mvn package -q -DskipTests)",
+      "Read(//tmp/**)",
+      "Bash(echo \"build exit=$?\")",
+      "Bash(grep -n \"nodeTypes\\\\s*=\\\\|wiringPart:\\\\|wiringScopePort:\\\\|wiringScopeContainer:\\\\|wiringLeaf:\\\\|type: 'wiringPart'\\\\|type: 'wiringScopeContainer'\\\\|id: \\\\`wpart-\" src/ui/views/StructuralWiringView.tsx)",
+      "Bash(NODE_PATH=/Users/sergiu/sysml-v2-visualizer/node_modules node *)",
+      "Bash(echo \"compile:extension exit=$?\")",
+      "Bash(echo \"parser tsc exit=$? \\(non-zero = pre-existing test type-errors; JS still emitted\\)\")",
+      "Bash(node drive-expand.mjs)",
+      "Bash(pkill -f vite)"
     ]
   }
 }

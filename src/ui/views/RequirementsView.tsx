@@ -33,9 +33,11 @@ const ASIL_COLOR: Record<string, string> = {
 };
 
 export default function RequirementsView({ result, selection, onSelect, trlcData }: Props) {
-  const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef');
+  // Depict only requirements declared in the open file; trace links stay full so a
+  // primary requirement's targets (possibly in other files) still resolve.
+  const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef' && n.fromPrimary !== false);
   const links = result.nodes.filter((n): n is TL => n.kind === 'traceLink');
-  const isOfficial = result.parserMode === 'sysmlV2OfficialFuture';
+  const isOfficial = true; // the official parser is the only parser
 
   // Official mode with TRLC: show TRLC requirements
   if (isOfficial && trlcData) {

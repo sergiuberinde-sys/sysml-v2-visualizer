@@ -1,5 +1,3 @@
-import type { ParserMode } from './parserMode';
-
 export interface ParseDiagnostic {
   line: number;
   column?: number;
@@ -13,7 +11,7 @@ export interface ParseDiagnostic {
 // Internal body-only nodes (port, partAlias, etc.) live inside their parent's
 // body and don't have a namespace.
 
-export type SysMLNode =
+export type SysMLNode = (
   | { kind: 'package';        name: string;                                                                                         line: number }
   | { kind: 'packageDef';     name: string; namespace: string; body: SysMLNode[];                                        line: number; endLine?: number }
   | { kind: 'interfaceDef';   name: string; namespace: string;                                                                      line: number }
@@ -37,7 +35,11 @@ export type SysMLNode =
   | { kind: 'stateEntry';     name: string;                                                                                         line: number }
   | { kind: 'transition';     from: string; to: string; event: string;                                                              line: number }
   | { kind: 'requirementDef'; name: string; namespace: string; reqId: string; text: string; priority: string;           line: number; endLine?: number }
-  | { kind: 'traceLink';      namespace: string; linkType: 'satisfy' | 'verify' | 'trace'; source: string; target: string;         line: number };
+  | { kind: 'traceLink';      namespace: string; linkType: 'satisfy' | 'verify' | 'trace'; source: string; target: string;         line: number }
+) & {
+  /** True when declared in the primary (open) file; false/undefined otherwise. Set by convertGraph. */
+  fromPrimary?: boolean;
+};
 
 export type PackageDefNode = Extract<SysMLNode, { kind: 'packageDef' }>;
 
@@ -47,9 +49,4 @@ export interface ParseResult {
   /** Top-level packageDef nodes (tree, for the package explorer). */
   packages: PackageDefNode[];
   diagnostics: ParseDiagnostic[];
-  /**
-   * The parser mode that produced this result.
-   * Currently always 'legacySubset' — see parserMode.ts.
-   */
-  parserMode: ParserMode;
 }

@@ -29,6 +29,13 @@ export interface GraphNode {
   realization?: string;
   startLine?: number;
   endLine?: number;
+  /**
+   * True when this element is declared in the primary (currently-open) file rather
+   * than a context file. Set by buildGraphWithContext. Undefined ≡ primary (used by
+   * single-model callers that pass no context). Views depict only primary-owned
+   * elements while keeping context nodes for cross-file resolution.
+   */
+  fromPrimary?: boolean;
 }
 
 export interface GraphEdge {
@@ -881,9 +888,22 @@ export function buildGraphWithContext(
   model: ModelNode[],
   contextModels: ModelNode[][] = [],
 ): ContainmentGraph {
-  return contextModels.length
-    ? buildGraph([...model, ...contextModels.flat()])
-    : buildGraph(model);
+  if (!contextModels.length) {
+    // Self-contained file: every element is primary-owned.
+    const graph = buildGraph(model);
+    for (const n of graph.nodes) n.fromPrimary = true;
+    return graph;
+  }
+  // buildGraph indexes roots by position and every node id begins with its root
+  // index. The primary model is passed first, so a node is primary-owned iff its
+  // root index is below the primary root count.
+  const primaryCount = model.length;
+  const graph = buildGraph([...model, ...contextModels.flat()]);
+  for (const n of graph.nodes) {
+    const rootIdx = Number(n.id.split('.', 1)[0]);
+    n.fromPrimary = Number.isFinite(rootIdx) && rootIdx < primaryCount;
+  }
+  return graph;
 }
 
 export function enrichWithContextModels(

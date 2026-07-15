@@ -518,16 +518,22 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     type AI   = Extract<VizNode, { kind: 'actionInst' }>;
     type ACTD = Extract<VizNode, { kind: 'actionDef' }>;
 
-    const ifaceDefs       = result.nodes.filter((n): n is ID   => n.kind === 'interfaceDef');
-    const portDefs        = result.nodes.filter((n): n is PRD  => n.kind === 'portDef');
-    const attrDefs        = result.nodes.filter((n): n is AD   => n.kind === 'attributeDef');
-    const itemDefs        = result.nodes.filter((n): n is ITMD => n.kind === 'itemDef');
-    const behaviorDefs    = result.nodes.filter((n): n is BD   => n.kind === 'behaviorDef');
-    const simpleActDefs   = result.nodes.filter((n): n is ACTD => n.kind === 'actionDef');
-    const allPartDefs     = result.nodes.filter((n): n is PD   => n.kind === 'partDef');
-    const allPartUsages   = result.nodes.filter((n): n is PU   => n.kind === 'partUsage');
-    const partDefMap      = new Map(allPartDefs.map(n => [n.name, n]));
-    const itemDefMap      = new Map(itemDefs.map(n => [n.name, n]));
+    // Depict only elements declared in the open file. `fromPrimary === false` marks
+    // context-file elements — excluded from the rendered lists but still reachable via
+    // the full-set lookup maps below so cross-file types resolve.
+    const isPrimary = (n: VizNode) => n.fromPrimary !== false;
+    const ifaceDefs       = result.nodes.filter((n): n is ID   => n.kind === 'interfaceDef').filter(isPrimary);
+    const portDefs        = result.nodes.filter((n): n is PRD  => n.kind === 'portDef').filter(isPrimary);
+    const attrDefs        = result.nodes.filter((n): n is AD   => n.kind === 'attributeDef').filter(isPrimary);
+    const itemDefs        = result.nodes.filter((n): n is ITMD => n.kind === 'itemDef').filter(isPrimary);
+    const behaviorDefs    = result.nodes.filter((n): n is BD   => n.kind === 'behaviorDef').filter(isPrimary);
+    const simpleActDefs   = result.nodes.filter((n): n is ACTD => n.kind === 'actionDef').filter(isPrimary);
+    const allPartDefs     = result.nodes.filter((n): n is PD   => n.kind === 'partDef').filter(isPrimary);
+    const allPartUsages   = result.nodes.filter((n): n is PU   => n.kind === 'partUsage').filter(isPrimary);
+    // Full-set type-resolution lookups (include context defs so a primary part typed by
+    // a def in another file still resolves its contents).
+    const partDefMap      = new Map(result.nodes.filter((n): n is PD   => n.kind === 'partDef').map(n => [n.name, n]));
+    const itemDefMap      = new Map(result.nodes.filter((n): n is ITMD => n.kind === 'itemDef').map(n => [n.name, n]));
     // A body child triggers composition rendering when it is a partAlias/itemAlias
     // with a non-empty type. The type does NOT need to be defined in the same file —
     // cross-file typed parts are shown as instance nodes without a local type-def box.
@@ -545,7 +551,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     const composedUsages   = allPartUsages.filter(n =>  n.body.some(isCompAlias));
     const standaloneUsages = allPartUsages.filter(n => !n.body.some(isCompAlias));
 
-    const allOccs           = result.nodes.filter((n): n is OD => n.kind === 'occurrenceDef');
+    const allOccs           = result.nodes.filter((n): n is OD => n.kind === 'occurrenceDef').filter(isPrimary);
     const legacyStructOccs  = allOccs.filter(o => o.body.some(b => b.kind === 'partAlias' || b.kind === 'itemAlias'));
     const scenarios         = allOccs.filter(o => !o.body.some(b => b.kind === 'partAlias' || b.kind === 'itemAlias'));
 

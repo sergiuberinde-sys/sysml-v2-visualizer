@@ -19,6 +19,7 @@ import org.omg.sysml.xtext.xmi.SysMLxStandaloneSetup;
 
 import org.eclipse.xtext.nodemodel.ICompositeNode;
 import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
+import org.eclipse.xtext.resource.XtextResource;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -168,7 +169,8 @@ public class SysmlParseCli {
             }
 
             boolean success = trueErrors.isEmpty();
-            emit(toJson(success, diags, model));
+            List<Occ> occs = collectOccurrences(resource);
+            emit(toJson(success, diags, model, List.of(), occs));
             System.exit(success ? 0 : 1);
 
         } catch (Exception e) {
@@ -349,7 +351,8 @@ public class SysmlParseCli {
                 diags.add(new Diag("warning", d.getMessage(), d.getLine(), d.getColumn()));
             }
 
-            return toJson(trueErrors.isEmpty(), diags, model, contextModelsList);
+            List<Occ> occs = collectOccurrences(resource);
+            return toJson(trueErrors.isEmpty(), diags, model, contextModelsList, occs);
         } catch (Exception e) {
             return wrapperErrorJson(e);
         }
@@ -861,6 +864,144 @@ public class SysmlParseCli {
         }
     }
 
+    // ── Occurrence table (symbols): per-identifier source positions for IDE features ──
+    // Reproduces, from the authoritative parser, what the retired TypeScript analyzer's
+    // symbol table used to give: every identifier occurrence (declaration or reference)
+    // with a 0-based line/column/length, a stable symbolKey (qualified name when resolved),
+    // and a semantic token type. Powers hover, references, rename, semantic tokens,
+    // completion and document symbols on the extension side.
+
+    private record Occ(int line, int column, int length, String role, String symbolKey, String tokenType) {}
+
+    /** 0-based offsets of the start of each line in `text` (for column computation). */
+    private static int[] computeLineStarts(String text) {
+        List<Integer> starts = new ArrayList<>();
+        starts.add(0);
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) == '\n') starts.add(i + 1);
+        }
+        int[] arr = new int[starts.size()];
+        for (int i = 0; i < arr.length; i++) arr[i] = starts.get(i);
+        return arr;
+    }
+
+    /**
+     * Convert an Xtext parse-tree node to an occurrence. Trims leading hidden tokens
+     * (whitespace/comments that findNodesForFeature may include) and, for qualified
+     * references like `Pkg::Type`, narrows to the final `Type` segment so rename/references
+     * target the identifier, not the path.
+     */
+    private static Occ nodeToOcc(org.eclipse.xtext.nodemodel.INode n, int[] lineStarts,
+                                 String role, String symbolKey, String tokenType) {
+        if (n == null || symbolKey == null || symbolKey.isBlank()) return null;
+        String tok = NodeModelUtils.getTokenText(n);
+        if (tok == null) return null;
+        int lead = 0;
+        while (lead < tok.length() && Character.isWhitespace(tok.charAt(lead))) lead++;
+        int trailing = 0;
+        while (trailing < tok.length() - lead && Character.isWhitespace(tok.charAt(tok.length() - 1 - trailing))) trailing++;
+        String trimmed = tok.substring(lead, tok.length() - trailing);
+        if (trimmed.isEmpty()) return null;
+        int offset = n.getOffset() + lead;
+        int sep = trimmed.lastIndexOf("::");
+        if (sep >= 0) {
+            offset += sep + 2;
+            trimmed = trimmed.substring(sep + 2);
+        }
+        if (trimmed.startsWith("~")) { offset += 1; trimmed = trimmed.substring(1); }
+        if (trimmed.isEmpty()) return null;
+        int length = trimmed.length();
+        int line = java.util.Arrays.binarySearch(lineStarts, offset);
+        if (line < 0) line = -line - 2;
+        if (line < 0) line = 0;
+        int column = offset - lineStarts[line];
+        return new Occ(line, column, length, role, symbolKey, tokenType);
+    }
+
+    /** Resolved cross-reference target key: qualified name if resolvable, else the source text. */
+    private static String refTargetKey(EObject obj, EReference ref) {
+        try {
+            Object val = obj.eGet(ref);
+            EObject target = null;
+            if (val instanceof EObject e) target = e;
+            else if (val instanceof EList<?> l && !l.isEmpty() && l.get(0) instanceof EObject e) target = e;
+            if (target != null && !target.eIsProxy()) {
+                String qn = literalValue(target, "qualifiedName");
+                if (qn != null && !qn.isBlank()) return qn;
+                String nm = nameOf(target);
+                if (nm != null && !nm.isBlank()) return nm;
+            }
+        } catch (Exception ignored) { }
+        return crossRefName(obj, ref.getName());
+    }
+
+    /** Map an EMF definition/usage type to a SysML semantic token type (see SYSML_TOKEN_TYPES). */
+    private static String tokenTypeFor(String emfType) {
+        if (emfType == null) return "variable";
+        switch (emfType) {
+            case "InterfaceDefinition":
+                return "interface";
+            case "PartDefinition": case "OccurrenceDefinition": case "BehaviorDefinition":
+            case "StateDefinition": case "RequirementDefinition": case "ItemDefinition":
+            case "ActionDefinition": case "ConnectionDefinition": case "AttributeDefinition":
+            case "AllocationDefinition": case "UseCaseDefinition": case "ViewDefinition":
+            case "MetadataDefinition": case "EnumerationDefinition":
+                return "class";
+            case "PortDefinition": case "PortUsage":
+                return "property";
+            case "ActionUsage": case "PerformActionUsage": case "StateUsage":
+                return "function";
+            default:
+                return "variable";
+        }
+    }
+
+    /** Walk the primary resource and build the occurrence table (declarations + references). */
+    private static List<Occ> collectOccurrences(Resource resource) {
+        List<Occ> occs = new ArrayList<>();
+        try {
+            if (!(resource instanceof XtextResource xr) || xr.getParseResult() == null) return occs;
+            ICompositeNode root = xr.getParseResult().getRootNode();
+            if (root == null) return occs;
+            int[] lineStarts = computeLineStarts(root.getText());
+
+            java.util.Iterator<EObject> it = resource.getAllContents();
+            while (it.hasNext()) {
+                EObject obj;
+                try { obj = it.next(); } catch (Exception e) { break; }
+                try {
+                    // Declaration name occurrence.
+                    EStructuralFeature nameFeat = obj.eClass().getEStructuralFeature("declaredName");
+                    if (nameFeat == null) nameFeat = obj.eClass().getEStructuralFeature("name");
+                    String declName = nameOf(obj);
+                    if (nameFeat != null && declName != null && !declName.isBlank()) {
+                        var nodes = NodeModelUtils.findNodesForFeature(obj, nameFeat);
+                        if (!nodes.isEmpty()) {
+                            String key = literalValue(obj, "qualifiedName");
+                            if (key == null || key.isBlank()) key = declName;
+                            Occ o = nodeToOcc(nodes.get(0), lineStarts, "decl", key,
+                                              tokenTypeFor(obj.eClass().getName()));
+                            if (o != null) occs.add(o);
+                        }
+                    }
+                    // Cross-reference occurrences.
+                    for (EReference ref : obj.eClass().getEAllReferences()) {
+                        if (ref.isContainment() || ref.isContainer()) continue;
+                        var nodes = NodeModelUtils.findNodesForFeature(obj, ref);
+                        if (nodes.isEmpty()) continue;
+                        String key = refTargetKey(obj, ref);
+                        if (key == null || key.isBlank()) continue;
+                        for (var n : nodes) {
+                            Occ o = nodeToOcc(n, lineStarts, "ref", key, "type");
+                            if (o != null) occs.add(o);
+                        }
+                    }
+                } catch (Exception ignored) { }
+            }
+        } catch (Exception ignored) { }
+        return occs;
+    }
+
     // ── stdout helpers ────────────────────────────────────────────────────────
 
     private static void emit(String json) {
@@ -871,11 +1012,16 @@ public class SysmlParseCli {
     // ── JSON serialization — no external dependency ───────────────────────────
 
     private static String toJson(boolean success, List<Diag> diags, List<Node> model) {
-        return toJson(success, diags, model, List.of());
+        return toJson(success, diags, model, List.of(), List.of());
     }
 
     private static String toJson(boolean success, List<Diag> diags, List<Node> model,
                                   List<List<Node>> contextModels) {
+        return toJson(success, diags, model, contextModels, List.of());
+    }
+
+    private static String toJson(boolean success, List<Diag> diags, List<Node> model,
+                                  List<List<Node>> contextModels, List<Occ> occurrences) {
         var sb = new StringBuilder();
         sb.append("{\n  \"success\": ").append(success).append(",\n  \"diagnostics\": [");
         for (int i = 0; i < diags.size(); i++) {
@@ -907,6 +1053,20 @@ public class SysmlParseCli {
                 }
                 if (!cm.isEmpty()) sb.append("\n    ");
                 sb.append("]");
+            }
+            sb.append("\n  ]");
+        }
+        if (!occurrences.isEmpty()) {
+            sb.append(",\n  \"symbols\": [");
+            for (int i = 0; i < occurrences.size(); i++) {
+                if (i > 0) sb.append(",");
+                Occ o = occurrences.get(i);
+                sb.append("\n    {\"line\": ").append(o.line())
+                  .append(", \"column\": ").append(o.column())
+                  .append(", \"length\": ").append(o.length())
+                  .append(", \"role\": \"").append(o.role()).append("\"")
+                  .append(", \"tokenType\": \"").append(o.tokenType()).append("\"")
+                  .append(", \"symbolKey\": ").append(jsonStr(o.symbolKey())).append("}");
             }
             sb.append("\n  ]");
         }

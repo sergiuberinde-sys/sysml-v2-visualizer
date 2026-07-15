@@ -30,7 +30,6 @@ import type { ContainmentGraph, GraphEdge, GraphNode } from '../sysmlv2Official/
 import type { SysMLV2ParseResult } from '../sysmlv2Official/SysMLV2ParseResult';
 import type { SysMLNode, PackageDefNode, ParseDiagnostic } from '../modelTypes';
 import type { VisualizerModel } from '../visualizerModel';
-import { PARSER_MODE } from '../parserMode';
 
 // ── Containment graph builder ─────────────────────────────────────────────────
 
@@ -745,7 +744,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
   }));
 
   if (!graph || graph.nodes.length === 0) {
-    return { parserMode: 'sysmlV2OfficialFuture', nodes: [], packages: [], diagnostics };
+    return { nodes: [], packages: [], diagnostics };
   }
 
   // Index nodes and build adjacency from CONTAINMENT edges only.
@@ -1146,6 +1145,9 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
         };
       }
 
+      // Carry file provenance so vizModel-based views can depict only primary-file elements.
+      finalNode.fromPrimary = gNode.fromPrimary;
+
       console.log(`[convertGraph] ${gNode.type}[${gNode.label}] → kind:${finalNode.kind}` +
         (typeName ? ` typeName:${typeName}` : ''));
 
@@ -1220,25 +1222,9 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
     return `${n.kind}:${String(any['name'] ?? '?')}${any['type'] ? `:${any['type']}` : ''}`;
   }));
 
-  return { parserMode: 'sysmlV2OfficialFuture', nodes, packages, diagnostics };
+  return { nodes, packages, diagnostics };
 }
 
-// ── VisualizerModel conversion (placeholder — kept for reference) ─────────────
-
-/**
- * Placeholder for a future full SysML v2 semantic adapter.
- * Typed `never` so it cannot accidentally be called until properly implemented.
- */
-export type OfficialParseOutput = never;
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function convert(_output: OfficialParseOutput): VisualizerModel {
-  throw new Error(
-    `[sysml-viz] Official SysML v2 semantic adapter is not yet implemented. ` +
-    `Active parser mode: "${PARSER_MODE}". ` +
-    `See docs/OFFICIAL_SYSML_V2_INTEGRATION_PLAN.md for the implementation plan.`,
-  );
-}
 
 // ── Element kind mapping (reference) ─────────────────────────────────────────
 //

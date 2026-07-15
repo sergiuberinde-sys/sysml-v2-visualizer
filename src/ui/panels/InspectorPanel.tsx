@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { VisualizerModel, VizNode, VizPackageNode, VizDiagnostic } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
 import type { ImpactTrace, ImpactedElement, ImpactedFlow, AttributeEntry } from '../../core/sysmlv2Official';
-import { elementLines } from '../../core/validator';
+import { elementLines } from '../../core/visualizerModel/elementLines';
 import ActionModal, { type FieldDef } from '../components/ActionModal';
 import {
   insertInterface, insertPartDef, insertPort,

@@ -17,12 +17,14 @@ import {
   ReactFlow, Background, Controls, MarkerType,
   applyNodeChanges, Handle, Position,
   type Node, type Edge, type NodeChange, type NodeProps, type EdgeMouseHandler,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import { PortHandles, makeBoundaryPortDisplay, resolvePortDirection, type PortDisplay } from '../layout/PortHandles';
 import { AsilBadge, RealizationBadge, asilLabel } from '../layout/AsilBadge';
 import { fitNodeWidth, type TextRow } from '../layout/nodeSize';
 import '@xyflow/react/dist/style.css';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
+import type { IncrementalEdit } from '../../core/editDescriptor';
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
 import type { SelectionState } from '../../app/selection';
@@ -101,6 +103,26 @@ function WiringPartNode({ data }: NodeProps) {
   const asil          = (data['asil']          as string | undefined);
   const realization   = (data['realization']   as string | undefined);
   const onPortSelect  = data['onPortSelect']   as ((p: PortDisplay, e: React.MouseEvent) => void) | undefined;
+  const expandable    = (data['expandable']    as boolean | undefined) ?? false;
+  const expanded      = (data['expanded']      as boolean | undefined) ?? false;
+  const graphPartId   =  data['graphPartId']   as string | undefined;
+  const onToggleExpand = data['onToggleExpand'] as ((id: string) => void) | undefined;
+
+  const toggle = expandable && onToggleExpand && graphPartId ? (
+    <button
+      title={expanded ? 'Collapse internals' : 'Expand internals'}
+      onClick={(e) => { e.stopPropagation(); onToggleExpand(graphPartId); }}
+      style={{
+        position: 'absolute', top: 4, right: 4, zIndex: 30,
+        width: 16, height: 16, lineHeight: '14px', textAlign: 'center',
+        padding: 0, borderRadius: 3, cursor: 'pointer',
+        background: '#0b1e14', border: `1px solid ${PART_BORDER}`, color: PART_NAME,
+        fontFamily: 'monospace', fontSize: 12, fontWeight: 700,
+      }}
+    >
+      {expanded ? '−' : '+'}
+    </button>
+  ) : null;
 
   return (
     <>
@@ -113,24 +135,35 @@ function WiringPartNode({ data }: NodeProps) {
         sourcePos={Position.Right}
         targetPos={Position.Left}
         nodeH={nodeH}
-        portAreaTop={42}
+        portAreaTop={expanded ? 30 : 42}
         labelBelowLine
         onPortClick={onPortSelect}
       />
 
-      <div style={{ fontFamily: 'monospace', width: '100%' }}>
-        <div style={{ textAlign: 'center', marginBottom: ports.length > 0 ? 6 : 0 }}>
-          <div style={{ fontSize: 9, color: '#4ade8088', letterSpacing: '0.3px' }}>«part»</div>
-          <div style={{ fontSize: 12.5, fontWeight: 600, color: PART_NAME }}>{partLbl}</div>
-          {typeName && <div style={{ fontSize: 10, color: PART_TYPE, marginTop: 1 }}>: {typeName}</div>}
-          {(asil || realization) && (
-            <div style={{ marginTop: 3, display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
-              {asil && <AsilBadge level={asil} />}
-              {realization && <RealizationBadge kind={realization} />}
-            </div>
-          )}
+      {toggle}
+
+      {expanded ? (
+        // Container mode: header pinned top-left; ReactFlow renders child nodes inside.
+        <div style={{ position: 'absolute', top: 8, left: 12, fontFamily: 'monospace', pointerEvents: 'none' }}>
+          <span style={{ fontSize: 9, color: '#4ade8088', letterSpacing: '0.3px' }}>«part» </span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: PART_NAME }}>{partLbl}</span>
+          {typeName && <span style={{ fontSize: 10, color: PART_TYPE, marginLeft: 4 }}>: {typeName}</span>}
         </div>
-      </div>
+      ) : (
+        <div style={{ fontFamily: 'monospace', width: '100%' }}>
+          <div style={{ textAlign: 'center', marginBottom: ports.length > 0 ? 6 : 0 }}>
+            <div style={{ fontSize: 9, color: '#4ade8088', letterSpacing: '0.3px' }}>«part»</div>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: PART_NAME }}>{partLbl}</div>
+            {typeName && <div style={{ fontSize: 10, color: PART_TYPE, marginTop: 1 }}>: {typeName}</div>}
+            {(asil || realization) && (
+              <div style={{ marginTop: 3, display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
+                {asil && <AsilBadge level={asil} />}
+                {realization && <RealizationBadge kind={realization} />}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -237,20 +270,111 @@ const WIRING_NODE_TYPES = {
   wiringScopePort:      WiringScopePortNode,
 } as const;
 
+// ── Embedded sub-diagram id remapping ─────────────────────────────────────────
+// Prepend `prefix` to every node id (and edge source/target and parentId) of a
+// computed sub-diagram so an embedded copy never collides with the outer diagram.
+// Port-handle ids are node-relative and stay unchanged, so edges keep binding.
+function prefixDiagram(
+  sub: { nodes: Node[]; edges: Edge[]; width: number; height: number },
+  prefix: string,
+): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
+  const nodes = sub.nodes.map(n => ({
+    ...n,
+    id: prefix + n.id,
+    ...(n.parentId ? { parentId: prefix + n.parentId } : {}),
+  }));
+  const edges = sub.edges.map(e => ({
+    ...e,
+    id: prefix + e.id,
+    source: prefix + e.source,
+    target: prefix + e.target,
+  }));
+  return { nodes, edges, width: sub.width, height: sub.height };
+}
+
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
   graph:     ContainmentGraph | null | undefined;
   selection: SelectionState;
   onSelect:  (s: SelectionState) => void;
+  /** Full source text — used to compute where to insert new elements. */
+  source?:   string;
+  /** Apply a source edit (write-back). Present only in editable (VS Code) mode. */
+  onIncrementalEdit?: (edit: IncrementalEdit) => void;
+  /** Add a member (e.g. `port p : X;`) to a named definition, wherever it lives. */
+  onAddMemberToDef?: (defName: string, memberText: string) => void;
+}
+
+// ── Add-element helpers ─────────────────────────────────────────────────────────
+
+function leadingWhitespace(line: string): string {
+  const m = /^[ \t]*/.exec(line);
+  return m ? m[0] : '';
+}
+
+/**
+ * Build the source edit that inserts a new `part <name> : <Type>;` into the scope
+ * PartDefinition body — after the last existing part usage, else just before the
+ * scope's closing brace. Indentation is copied from a sibling.
+ */
+function buildAddPartEdit(
+  source: string,
+  scopeDef: GraphNode,
+  partUsages: GraphNode[],
+  name: string,
+  typeName: string | null,
+): IncrementalEdit | null {
+  const lines = source.split('\n');
+  const decl  = typeName ? `part ${name} : ${typeName};` : `part ${name};`;
+
+  const withLines = partUsages.filter(p => (p.endLine ?? 0) > 0);
+  if (withLines.length > 0) {
+    const ref = withLines.reduce((a, b) => ((b.endLine ?? 0) > (a.endLine ?? 0) ? b : a));
+    const indent = leadingWhitespace(lines[(ref.startLine ?? 1) - 1] ?? '');
+    return { kind: 'insert', position: { line: (ref.endLine ?? 1) + 1, column: 1 }, text: `${indent}${decl}\n` };
+  }
+  if (scopeDef.endLine && scopeDef.endLine > 0) {
+    const indent = leadingWhitespace(lines[(scopeDef.startLine ?? 1) - 1] ?? '') + '    ';
+    return { kind: 'insert', position: { line: scopeDef.endLine, column: 1 }, text: `${indent}${decl}\n` };
+  }
+  return null;
+}
+
+/**
+ * Build the source edit that inserts a boundary `port <name> : <PortDef>;` as the
+ * first member of the scope PartDefinition (right after its opening line).
+ */
+function buildAddPortEdit(
+  source: string,
+  scopeDef: GraphNode,
+  name: string,
+  typeName: string | null,
+): IncrementalEdit | null {
+  if (!scopeDef.startLine || !scopeDef.endLine) return null;
+  const lines  = source.split('\n');
+  const indent = leadingWhitespace(lines[scopeDef.startLine - 1] ?? '') + '    ';
+  const decl   = typeName ? `port ${name} : ${typeName};` : `port ${name};`;
+  // Insert as the first body member (assumes `part def … {` opens on startLine).
+  return { kind: 'insert', position: { line: scopeDef.startLine + 1, column: 1 }, text: `${indent}${decl}\n` };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function StructuralWiringView({ graph, selection, onSelect }: Props) {
+export default function StructuralWiringView({ graph, selection, onSelect, source, onIncrementalEdit, onAddMemberToDef }: Props) {
   const [scopeName, setScopeName] = useState('');
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [hideUnconnectedPorts, setHideUnconnectedPorts] = useState(false);
+  // Part usages (by graph id) whose type-def internals are expanded in place.
+  const [expandedParts, setExpandedParts] = useState<Set<string>>(new Set());
+  const onToggleExpand = useCallback((partId: string) => {
+    setExpandedParts(prev => {
+      const next = new Set(prev);
+      if (next.has(partId)) next.delete(partId); else next.add(partId);
+      return next;
+    });
+  }, []);
 
   // ── Drag-position persistence ────────────────────────────────────────────────
   // displayNodes is the source-of-truth for React Flow; it is initialised from
@@ -276,6 +400,9 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
     const leafDefs:     string[] = [];
     for (const n of graph.nodes) {
       if (n.type !== 'PartDefinition' || n.label === n.type) continue;
+      // Offer only definitions declared in the open file as scopes; context-file defs
+      // stay in `nb`/`graph` purely to resolve the primary scope's contents.
+      if (n.fromPrimary === false) continue;
       const hasPartUsage = directSemanticChildren(n.id, ch, nb).some(c => c.type === 'PartUsage');
       if (hasPartUsage) interconnect.push(n.label);
       else               leafDefs.push(n.label);
@@ -286,6 +413,9 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
 
   const activeScopeName = scopeOptions.includes(scopeName) ? scopeName
     : (interconnectScopeOptions[0] ?? scopeOptions[0] ?? '');
+
+  // Reset expansion when the scope changes — expanded ids belong to the old scope.
+  useEffect(() => { setExpandedParts(new Set()); }, [activeScopeName]);
 
   // Must be defined before the main useMemo that references it in the dep array.
   const onPortSelect = useCallback((port: PortDisplay, e: React.MouseEvent) => {
@@ -305,10 +435,17 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
   const { rfNodes, rfEdges } = useMemo(() => {
     if (!graph || !activeScopeName) return { rfNodes: [], rfEdges: [] };
 
-    const scopeDef = graph.nodes.find(
+    const scopeDefTop = graph.nodes.find(
       n => n.type === 'PartDefinition' && n.label === activeScopeName,
     );
-    if (!scopeDef) return { rfNodes: [], rfEdges: [] };
+    if (!scopeDefTop) return { rfNodes: [], rfEdges: [] };
+
+    // Reusable interconnect computation for one PartDefinition scope. Called for the
+    // top scope and, recursively, for the type def of every expanded part usage so an
+    // expanded part shows the exact diagram the top-level view renders for that def.
+    // Returns natural (unprefixed) ids; embedding remaps them via prefixDiagram().
+    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set()): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
+      if (!graph) return { nodes: [], edges: [], width: 0, height: 0 };
 
     // Semantic children of the scope PartDef
     const scopeChildren = directSemanticChildren(scopeDef.id, childrenOf, nodeById);
@@ -470,7 +607,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       const leafNodeH = Math.max(96, insideH, PORT_AREA_TOP + portColH);
 
       const maxInsideLabel = Math.max(
-        activeScopeName.length,
+        scopeDef.label.length,
         ...scopeItems.map(i => i.label.length),
         ...scopeActions.map(a => a.label.length),
         0,
@@ -487,7 +624,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         type: 'wiringLeaf',
         position: { x: 0, y: 0 },
         data: {
-          scopeName: activeScopeName,
+          scopeName: scopeDef.label,
           ports: scopePorts.map(portDisplay),
           items:    scopeItems.map(i => ({ id: i.id, label: i.label })),
           actions:  scopeActions.map(a => ({ id: a.id, label: a.label })),
@@ -552,7 +689,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         };
       });
 
-      return { rfNodes: [selfNode, ...rfPortDefNodes], rfEdges: [] };
+      return { nodes: [selfNode, ...rfPortDefNodes], edges: [], width: 0, height: 0 };
     }
 
     // For each PartUsage, collect its ports from the typed PartDef body first.
@@ -616,6 +753,44 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       const edge = typedByEdges.find(e => e.source === nodeId);
       if (!edge) return null;
       return nodeById.get(edge.target)?.label ?? null;
+    }
+
+    // A part is expandable when its type definition owns nested part usages.
+    const typeDefOf = (partId: string): GraphNode | undefined => {
+      const e = typedByEdges.find(x => x.source === partId);
+      return e ? nodeById.get(e.target) : undefined;
+    };
+    const isExpandable = (partId: string): boolean => {
+      const td = typeDefOf(partId);
+      return !!td && directSemanticChildren(td.id, childrenOf, nodeById).some(n => n.type === 'PartUsage');
+    };
+
+    // Nested white-box internals for each expanded part (relative-positioned children).
+    // Expanded parts embed the FULL interconnect diagram of their type def, computed by
+    // the same routine used for the top scope (recursive) — so an expanded part shows
+    // exactly what selecting that def as the scope would render.
+    const expandedInternals = new Map<string, {
+      childNodes: Node[]; childEdges: Edge[]; width: number; height: number; boundaryPortIds: Set<string>;
+    }>();
+    for (const part of partUsages) {
+      if (!expandedParts.has(part.id)) continue;
+      const td = typeDefOf(part.id);
+      if (!td || seen.has(td.id)) continue; // guard against self-referential recursion
+      const tdChildren = directSemanticChildren(td.id, childrenOf, nodeById);
+      if (!tdChildren.some(n => n.type === 'PartUsage')) continue;
+      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]));
+      if (!sub.nodes.length) continue;
+      const prefix  = `wpart-${part.id}::`;
+      const frameId = `wpart-${part.id}`;
+      const pref = prefixDiagram(sub, prefix);
+      // Drop the sub's own scope-container frame (the expanded part box replaces it) and
+      // reparent the sub's top-level nodes into the part box, preserving nested parenting.
+      const childNodes = pref.nodes
+        .filter(n => n.id !== `${prefix}wscope-container`)
+        .map(n => (n.parentId ? n : { ...n, parentId: frameId, extent: 'parent' as const }));
+      const boundaryPortIds = new Set(
+        tdChildren.filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition').map(n => n.id));
+      expandedInternals.set(part.id, { childNodes, childEdges: pref.edges, width: sub.width, height: sub.height, boundaryPortIds });
     }
 
     // ASIL / Realization for a part box: the PartUsage's own metadata, else its
@@ -871,15 +1046,17 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       });
     }
 
-    // Helper: rendered height for a part (header + one row per port).
+    // Helper: rendered height for a part (header + one row per port); an expanded
+    // part instead claims the height of its nested internals.
     const nodeHeightOf = (partId: string) =>
-      PART_BASE_H + (partPorts.get(partId)?.length ?? 0) * PORT_ROW_H;
+      expandedInternals.get(partId)?.height ??
+      (PART_BASE_H + (partPorts.get(partId)?.length ?? 0) * PORT_ROW_H);
 
-    // Column widths: widest node in each rank.
+    // Column widths: widest node in each rank (expanded parts use their internals' width).
     const colWidth = byRank.map(ids =>
       ids.reduce((mx, id) => {
         const p = partUsages.find(q => q.id === id)!;
-        return Math.max(mx, wiringNodeWidth(p.label, getTypeName(id)));
+        return Math.max(mx, expandedInternals.get(id)?.width ?? wiringNodeWidth(p.label, getTypeName(id)));
       }, PART_MIN_W),
     );
 
@@ -1155,7 +1332,8 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       const typeName = getTypeName(part.id);
       const ports    = partPorts.get(part.id) ?? [];
       const nodeH    = nodeHeightOf(part.id);
-      const partW    = wiringNodeWidth(part.label, typeName);
+      const internals = expandedInternals.get(part.id);
+      const partW    = internals?.width ?? wiringNodeWidth(part.label, typeName);
       const id       = partRfId(part.id);
       const pos      = layoutPos.get(part.id) ?? { x: 0, y: Y_PARTS };
       const isSel    = selection?.extra?.graphId === part.id
@@ -1170,7 +1348,13 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           typeName: typeName ?? null,
           asil:        getPartAsil(part.id),
           realization: getPartRealization(part.id),
-          ports:    ports.map(p => {
+          expandable:    isExpandable(part.id),
+          expanded:      !!internals,
+          graphPartId:   part.id,
+          onToggleExpand,
+          // When expanded the part becomes a frame; its boundary ports are rendered as
+          // embedded wsport child nodes, so the box itself shows no port handles.
+          ports:    internals ? [] : ports.map(p => {
             const pd         = portDisplay(p);
             const showsLeft  = portsShowLeft.has(p.id);
             const showsRight = portsShowRight.has(p.id);
@@ -1199,13 +1383,14 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
           } satisfies SelectionState,
         },
         style: {
-          background:     PART_BG,
+          background:     internals ? '#08160e' : PART_BG,
           border:         `1.5px solid ${isSel ? PART_SEL : PART_BORDER}`,
           borderRadius:   8,
           width:          partW,
           minHeight:      nodeH,
-          padding:        '8px 12px',
-          display:        'flex',
+          height:         internals ? internals.height : undefined,
+          padding:        internals ? 0 : '8px 12px',
+          display:        internals ? 'block' : 'flex',
           alignItems:     'center',
           justifyContent: 'center',
           overflow:       'visible',
@@ -1291,6 +1476,16 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         .filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition');
       for (const op of ownPorts) {
         if (!portToRfId.has(op.id)) portToRfId.set(op.id, partRfId(part.id));
+      }
+    }
+    // For an expanded part, reroute its boundary-port connections from the part box to
+    // the embedded boundary-port node on the part's inner frame, so the wire lands there.
+    for (const [partId, emb] of expandedInternals) {
+      const prefix = `wpart-${partId}::`;
+      for (const [pid, rf] of [...portToRfId]) {
+        if (rf !== partRfId(partId)) continue;
+        const canon = canonicalPortId.get(pid) ?? pid;
+        if (emb.boundaryPortIds.has(canon)) portToRfId.set(pid, `${prefix}wsport-${canon}`);
       }
     }
 
@@ -1461,7 +1656,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       draggable:  false,
       selectable: false,
       focusable:  false,
-      data:       { scopeName: activeScopeName },
+      data:       { scopeName: scopeDef.label },
       style: {
         width:         containerW,
         height:        containerH,
@@ -1473,13 +1668,23 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
       },
     };
 
-    return {
-      rfNodes: [scopeContainerNode, ...rfPartNodes, ...rfScopePortNodes],
-      rfEdges: rfConnEdges,
-    };
+    // Nested internals of expanded parts (children must follow their parent node).
+    const internalChildNodes = [...expandedInternals.values()].flatMap(v => v.childNodes);
+    const internalChildEdges = [...expandedInternals.values()].flatMap(v => v.childEdges);
+
+      return {
+        nodes: [scopeContainerNode, ...rfPartNodes, ...internalChildNodes, ...rfScopePortNodes],
+        edges: [...rfConnEdges, ...internalChildEdges],
+        width: containerW,
+        height: containerH,
+      };
+    } // ── end computeInterconnect ──────────────────────────────────────────────
+
+    const top = computeInterconnect(scopeDefTop);
+    return { rfNodes: top.nodes, rfEdges: top.edges };
   // layoutVersion in deps forces position recomputation when user clicks Reset
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph, activeScopeName, nodeById, childrenOf, selection, layoutVersion, hideUnconnectedPorts, onPortSelect]);
+  }, [graph, activeScopeName, nodeById, childrenOf, selection, layoutVersion, hideUnconnectedPorts, onPortSelect, expandedParts, onToggleExpand]);
 
   // When rfNodes changes (model reload, scope switch, selection, layout reset)
   // merge into displayNodes: preserve existing drag positions unless this is a
@@ -1518,6 +1723,116 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
 
   // Pane click clears selection — also clears the edge spotlight.
   const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
+
+  // ── Add-element (palette drag-drop → source edit) ─────────────────────────────
+  const editable = !!onIncrementalEdit || !!onAddMemberToDef;
+
+  // Scope PartDefinition + its part usages (for insert position) and the list of
+  // PartDefinitions offered as the new part's type.
+  const addContext = useMemo(() => {
+    if (!graph || !activeScopeName) return null;
+    const scopeDef = graph.nodes.find(n => n.type === 'PartDefinition' && n.label === activeScopeName);
+    if (!scopeDef) return null;
+    const kids       = directSemanticChildren(scopeDef.id, childrenOf, nodeById);
+    const partUsages = kids.filter(n => n.type === 'PartUsage');
+    const usedNames  = new Set(partUsages.map(p => p.label));
+    const scopePortNames = new Set(
+      kids.filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition').map(n => n.label),
+    );
+    const partDefs   = [...new Set(
+      graph.nodes.filter(n => n.type === 'PartDefinition' && n.label !== n.type).map(n => n.label),
+    )].sort();
+    const portDefs   = [...new Set(
+      graph.nodes.filter(n => n.type === 'PortDefinition' && n.label !== n.type).map(n => n.label),
+    )].sort();
+    return { scopeDef, partUsages, usedNames, scopePortNames, partDefs, portDefs };
+  }, [graph, activeScopeName, childrenOf, nodeById]);
+
+  const wiringPaneRef = useRef<HTMLDivElement>(null);
+  const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+  // When set, the add-element form is shown at {x,y} within the canvas.
+  // target: 'scope' → insert into the scope def (active file); { defName } → add to
+  // the usage's type definition (possibly in another file).
+  const [addForm, setAddForm] = useState<{
+    x: number; y: number; kind: 'part' | 'port'; name: string; type: string;
+    target: 'scope' | { defName: string };
+  } | null>(null);
+  // Transient "invalid drop target" toast.
+  const [dropReject, setDropReject] = useState<{ x: number; y: number; msg: string } | null>(null);
+
+  const onCanvasDragOver = useCallback((e: React.DragEvent) => {
+    if (!editable) return;
+    if (e.dataTransfer.types.includes('application/sysml-add')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  }, [editable]);
+
+  const onCanvasDrop = useCallback((e: React.DragEvent) => {
+    if (!editable || !addContext) return;
+    const kind = e.dataTransfer.getData('application/sysml-add');
+    if (kind !== 'part' && kind !== 'port') return;
+    e.preventDefault();
+    const rect = wiringPaneRef.current?.getBoundingClientRect();
+    const x = rect ? e.clientX - rect.left : 40;
+    const y = rect ? e.clientY - rect.top  : 40;
+    const noun = kind === 'part' ? 'part' : 'port';
+    const reject = (msg: string) => { setDropReject({ x, y, msg }); window.setTimeout(() => setDropReject(null), 2600); };
+
+    // Determine the drop target from what's under the cursor.
+    //   • a part usage  → add the member to that usage's TYPE DEFINITION (cross-file)
+    //   • the scope frame → add to the scope PartDefinition (active file)
+    //   • a boundary port / outside the frame → reject (not a valid container)
+    let target: 'scope' | { defName: string } = 'scope';
+    const inst = rfInstanceRef.current;
+    if (inst) {
+      const flow    = inst.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      const hit     = inst.getIntersectingNodes({ x: flow.x, y: flow.y, width: 1, height: 1 });
+      const partHit = hit.find(n => n.type === 'wiringPart');
+      const portHit = hit.find(n => n.type === 'wiringScopePort');
+      const onScope = hit.some(n => n.type === 'wiringScopeContainer' || n.type === 'wiringLeaf');
+      if (portHit) { reject(`A ${noun} can't be added to a port.`); return; }
+      if (partHit) {
+        if (!onAddMemberToDef) { reject('Editing definitions is unavailable.'); return; }
+        const partId = String(partHit.id).replace(/^wpart-/, '');
+        const tEdge  = graph?.edges.find(ed => ed.type === 'typedBy' && ed.source === partId);
+        const defN   = tEdge ? graph?.nodes.find(nd => nd.id === tEdge.target) : undefined;
+        if (!defN) { reject('This part usage has no definition to add to.'); return; }
+        target = { defName: defN.label };
+      } else if (!onScope) {
+        reject(`Drop onto a part definition to add a ${noun}.`);
+        return;
+      }
+    }
+
+    const isScope = target === 'scope';
+    if (kind === 'part') {
+      let n = 1, name = 'newPart';
+      while (isScope && addContext.usedNames.has(name)) { n += 1; name = `newPart${n}`; }
+      setAddForm({ x, y, kind: 'part', name, type: addContext.partDefs[0] ?? '', target });
+    } else {
+      let n = 1, name = 'newPort';
+      while (isScope && addContext.scopePortNames.has(name)) { n += 1; name = `newPort${n}`; }
+      setAddForm({ x, y, kind: 'port', name, type: addContext.portDefs[0] ?? '', target });
+    }
+  }, [editable, addContext, activeScopeName, graph, onAddMemberToDef]);
+
+  const submitAdd = useCallback(() => {
+    if (!addForm || !addContext) { setAddForm(null); return; }
+    const name = addForm.name.trim();
+    if (!name) { setAddForm(null); return; }
+    if (addForm.target === 'scope') {
+      if (!onIncrementalEdit || source == null) { setAddForm(null); return; }
+      const edit = addForm.kind === 'part'
+        ? buildAddPartEdit(source, addContext.scopeDef, addContext.partUsages, name, addForm.type || null)
+        : buildAddPortEdit(source, addContext.scopeDef, name, addForm.type || null);
+      if (edit) onIncrementalEdit(edit);
+    } else {
+      const decl = `${addForm.kind} ${name}${addForm.type ? ` : ${addForm.type}` : ''};`;
+      onAddMemberToDef?.(addForm.target.defName, decl);
+    }
+    setAddForm(null);
+  }, [addForm, addContext, onIncrementalEdit, onAddMemberToDef, source]);
 
   // ── Empty states ───────────────────────────────────────────────────────────
 
@@ -1611,6 +1926,36 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
         >
           {hideUnconnectedPorts ? '◎ Unconnected ports: hidden' : '◉ Unconnected ports: shown'}
         </button>
+
+        {/* ── Palette: drag onto the canvas to add an element ──────────────── */}
+        {editable && addContext && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+            <span style={{ color: '#475569', fontSize: 10 }}>Drag to add:</span>
+            <div
+              draggable
+              onDragStart={e => { e.dataTransfer.setData('application/sysml-add', 'part'); e.dataTransfer.effectAllowed = 'copy'; }}
+              title="Drag onto the part-def frame to add a part usage"
+              style={{
+                ...actionBtn, cursor: 'grab', userSelect: 'none',
+                background: '#0b1e14', border: `1px solid ${PART_BORDER}`, color: PART_NAME,
+              }}
+            >
+              «part»
+            </div>
+            <div
+              draggable
+              onDragStart={e => { e.dataTransfer.setData('application/sysml-add', 'port'); e.dataTransfer.effectAllowed = 'copy'; }}
+              title="Drag onto the part-def frame to add a boundary port"
+              style={{
+                ...actionBtn, cursor: 'grab', userSelect: 'none',
+                background: '#0a1628', border: `1px solid ${SCOPE_BDR}`, color: '#7dd3fc',
+              }}
+            >
+              «port»
+            </div>
+          </div>
+        )}
+
         <span style={{ marginLeft: 'auto', color: '#1e3a5f', fontSize: 10 }}>
           Structural wiring · part usages + connections
         </span>
@@ -1618,7 +1963,71 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
 
       {/* ── Wiring diagram ─────────────────────────────────────────────── */}
       {rfNodes.length > 0 ? (
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div
+          ref={wiringPaneRef}
+          style={{ flex: 1, minHeight: 0, position: 'relative' }}
+          onDragOver={onCanvasDragOver}
+          onDrop={onCanvasDrop}
+        >
+          {dropReject && (
+            <div style={{
+              position: 'absolute', left: Math.max(8, dropReject.x), top: Math.max(8, dropReject.y), zIndex: 100,
+              background: '#3f1d1d', border: '1px solid #7f1d1d', color: '#fecaca',
+              padding: '6px 10px', borderRadius: 6, fontFamily: 'monospace', fontSize: 11,
+              maxWidth: 240, boxShadow: '0 8px 24px rgba(0,0,0,0.5)', pointerEvents: 'none',
+            }}>
+              ⊘ {dropReject.msg}
+            </div>
+          )}
+          {addForm && addContext && (
+            <div
+              style={{
+                position: 'absolute', left: Math.max(8, addForm.x), top: Math.max(8, addForm.y), zIndex: 100,
+                background: '#0f172a', border: '1px solid #334155', borderRadius: 6,
+                padding: 10, width: 240, fontFamily: 'monospace', fontSize: 12,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.5)', display: 'flex', flexDirection: 'column', gap: 8,
+              }}
+              onClick={e => e.stopPropagation()}
+            >
+              <div style={{ color: '#bbf7d0', fontWeight: 600 }}>
+                Add {addForm.kind}
+                {' → '}
+                <span style={{ color: '#7dd3fc' }}>
+                  {addForm.target === 'scope' ? activeScopeName : addForm.target.defName}
+                </span>
+              </div>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3, color: '#94a3b8' }}>
+                Name
+                <input
+                  autoFocus
+                  value={addForm.name}
+                  onChange={e => setAddForm(f => f && { ...f, name: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') submitAdd(); if (e.key === 'Escape') setAddForm(null); }}
+                  style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 3, padding: '3px 6px', fontFamily: 'monospace', fontSize: 12 }}
+                />
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 3, color: '#94a3b8' }}>
+                Type
+                <select
+                  value={addForm.type}
+                  onChange={e => setAddForm(f => f && { ...f, type: e.target.value })}
+                  style={{ background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 3, padding: '3px 6px', fontFamily: 'monospace', fontSize: 12 }}
+                >
+                  <option value="">(untyped)</option>
+                  {(addForm.kind === 'part' ? addContext.partDefs : addContext.portDefs).map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </label>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button style={actionBtn} onClick={() => setAddForm(null)}>Cancel</button>
+                <button
+                  style={{ ...actionBtn, background: '#14532d', borderColor: PART_BORDER, color: '#bbf7d0' }}
+                  onClick={submitAdd}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
           <ReactFlow
             nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
             edges={rfEdges}
@@ -1627,6 +2036,7 @@ export default function StructuralWiringView({ graph, selection, onSelect }: Pro
             onEdgeClick={handleEdgeClick}
             onPaneClick={handlePaneClick}
             onNodesChange={handleNodesChange}
+            onInit={inst => { rfInstanceRef.current = inst; }}
             fitView
             fitViewOptions={{ padding: 0.3 }}
             nodesConnectable={false}

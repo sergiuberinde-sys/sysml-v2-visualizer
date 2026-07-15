@@ -91,6 +91,27 @@ export interface BehaviorData {
   allocations?: BehaviorAllocation[];
 }
 
+/**
+ * A single identifier occurrence in the primary source file, emitted by the official
+ * parser (SysmlParseCli). Powers the extension's IDE language features (hover, references,
+ * rename, semantic tokens, completion, document symbols) — replacing the retired
+ * TypeScript analyzer's symbol table.
+ */
+export interface SourceOccurrence {
+  /** 0-based line. */
+  line: number;
+  /** 0-based column. */
+  column: number;
+  /** Length of the identifier in characters. */
+  length: number;
+  /** 'decl' = declaration of the symbol; 'ref' = a reference/use of it. */
+  role: 'decl' | 'ref';
+  /** Stable symbol identity — the resolved qualified name when available, else the source text. */
+  symbolKey: string;
+  /** Semantic token type (see SYSML_TOKEN_TYPES in the extension). */
+  tokenType: string;
+}
+
 export interface SysMLV2ParseResult {
   success: boolean;
   diagnostics: Diagnostic[];
@@ -99,6 +120,8 @@ export interface SysMLV2ParseResult {
   contextModels?: ModelNode[][];
   graph?: import('./graphBuilder').ContainmentGraph;
   behavior?: BehaviorData;
+  /** Identifier occurrence table for the primary file (IDE language features). */
+  symbols?: SourceOccurrence[];
   rawResponse?: unknown;
   error?: string;
 }

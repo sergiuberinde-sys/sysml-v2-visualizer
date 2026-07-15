@@ -31,6 +31,12 @@ export interface GraphNode {
   realization?: string;
   startLine?: number;
   endLine?: number;
+  /**
+   * True when this element is declared in the primary (currently-open) file rather
+   * than a context file. Undefined ≡ primary. Views depict only primary-owned
+   * elements while keeping context nodes for cross-file resolution.
+   */
+  fromPrimary?: boolean;
 }
 
 export interface GraphEdge {

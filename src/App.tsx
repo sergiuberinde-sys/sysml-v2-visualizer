@@ -256,7 +256,6 @@ function findElementAtLineOfficial(
 
 // Empty model used in official mode until VisualizerModel mapping is implemented
 const OFFICIAL_EMPTY_VIZ_MODEL: VisualizerModel = {
-  parserMode: 'sysmlV2OfficialFuture',
   nodes: [],
   packages: [],
   diagnostics: [],
@@ -406,7 +405,8 @@ export default function App() {
   const behavioralOccurrences = useMemo(
     () => vizModel.nodes
       .filter((n): n is Extract<VizNode, { kind: 'occurrenceDef' }> =>
-        n.kind === 'occurrenceDef' && n.body.some(b => b.kind === 'message'))
+        n.kind === 'occurrenceDef' && n.fromPrimary !== false &&
+        n.body.some(b => b.kind === 'message'))
       .map(n => n.name),
     [vizModel],
   );
@@ -414,15 +414,18 @@ export default function App() {
   const behaviorDefNames = useMemo(() => {
     if (!officialParseResult?.behavior) return [];
     const beh = officialParseResult.behavior;
+    // buildBehavior prefixes context-file IDs with `ctx…`; keep only primary-file
+    // entries so behavior/sequence tab selectors offer behaviors declared in the open file.
+    const actions = beh.actions.filter(a => !String(a.id).startsWith('ctx'));
     const CTRL = new Set(['DecisionNode', 'ForkNode', 'JoinNode', 'MergeNode']);
     // Include both ActionDefinition entries and ActionUsage entries that have an inline
     // body (detected by having sub-actions with ownerId pointing to them).
-    const actionDefEntries = beh.actions
+    const actionDefEntries = actions
       .filter(a =>
         a.type === 'ActionDefinition' ||
         ((a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.owningDefName),
       )
-      .filter(def => beh.actions.some(a =>
+      .filter(def => actions.some(a =>
         (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL.has(a.type)) &&
         a.ownerId === def.id,
       ))
@@ -432,14 +435,14 @@ export default function App() {
     // ActionDefinition (not ActionUsage). Detect this case: an ActionDefinition inside a
     // structural def that is NOT referenced by a typed usage in the same structural def.
     const referencedDefNames = new Set(
-      beh.actions
+      actions
         .filter(a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage') &&
                      a.owningDefName && !a.ownerId && a.actionType)
         .map(a => `${a.owningDefName}::${a.actionType}`),
     );
     const seen = new Set<string>();
     const partDefEntries: string[] = [];
-    for (const a of beh.actions) {
+    for (const a of actions) {
       // Typed usage: action init : Init;
       if ((a.type === 'ActionUsage' || a.type === 'PerformActionUsage') && a.owningDefName && !a.ownerId) {
         const key = `part def::${a.owningDefName}`;
@@ -457,7 +460,8 @@ export default function App() {
 
   const stateMachineNames = useMemo(
     () => vizModel.nodes
-      .filter((n): n is Extract<VizNode, { kind: 'stateDef' }> => n.kind === 'stateDef')
+      .filter((n): n is Extract<VizNode, { kind: 'stateDef' }> =>
+        n.kind === 'stateDef' && n.fromPrimary !== false)
       .map(n => n.name),
     [vizModel],
   );
@@ -1578,6 +1582,17 @@ export default function App() {
                   graph={officialParseResult?.graph}
                   selection={selection}
                   onSelect={setSelection}
+                  source={source}
+                  onIncrementalEdit={
+                    APP_MODE === 'vscode'
+                      ? (edit: IncrementalEdit) => getVsCodeApi()?.postMessage({ type: 'applyIncrementalEdit', edit })
+                      : undefined
+                  }
+                  onAddMemberToDef={
+                    APP_MODE === 'vscode'
+                      ? (defName: string, memberText: string) => getVsCodeApi()?.postMessage({ type: 'addMemberToDef', defName, memberText })
+                      : undefined
+                  }
                 />
               )}
             </ErrorBoundary>

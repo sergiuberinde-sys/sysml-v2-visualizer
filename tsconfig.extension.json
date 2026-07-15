@@ -15,7 +15,6 @@
   },
   "include": ["src-vscode"],
   "files": [
-    "src/core/modelBuilder.ts",
     "parser-service/src/types.ts",
     "parser-service/src/javaWrapperClient.ts",
     "parser-service/src/graphBuilder.ts",

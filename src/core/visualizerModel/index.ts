@@ -3,5 +3,4 @@ export type {
   VizNode,
   VizPackageNode,
   VizDiagnostic,
-  ParserMode,
 } from './types';

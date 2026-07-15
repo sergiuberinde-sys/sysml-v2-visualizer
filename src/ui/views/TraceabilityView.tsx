@@ -181,9 +181,11 @@ interface Props {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function TraceabilityView({ result, selection, onSelect, trlcData, graph }: Props) {
-  const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef');
+  // Depict only requirements declared in the open file; links/targets stay full so a
+  // primary requirement's trace targets (possibly in other files) still resolve.
+  const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef' && n.fromPrimary !== false);
   const links = result.nodes.filter((n): n is TL => n.kind === 'traceLink');
-  const isOfficial = result.parserMode === 'sysmlV2OfficialFuture';
+  const isOfficial = true; // the official parser is the only parser
 
   // Scroll the selected requirement card into view when selection changes.
   const cardRefs = useRef(new Map<string, HTMLDivElement>());

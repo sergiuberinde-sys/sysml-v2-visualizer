@@ -7,13 +7,13 @@ import { JavaWrapperClient } from '../parser-service/src/javaWrapperClient';
 import { buildGraphWithContext, type ContainmentGraph } from '../parser-service/src/graphBuilder';
 import { buildBehavior } from '../parser-service/src/behaviorBuilder';
 import { validateModel } from '../parser-service/src/validator';
-import type { SysMLV2ParseResult } from '../parser-service/src/types';
+import type { SysMLV2ParseResult, SourceOccurrence } from '../parser-service/src/types';
 import { ensureJava } from './javaInstaller';
 
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g42';
+const GRAPH_VERSION      = 'g43';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -82,17 +82,7 @@ async function diskCacheSet(key: string, result: SysMLV2ParseResult): Promise<vo
     console.warn('[sysml-visualizer] disk cache write failed:', e);
   }
 }
-import {
-  analyzeSysML,
-  getSymbolAtPosition,
-  getDefinitionForSymbol,
-  getReferencesToSymbol,
-  getIntraBlockReferences,
-} from '../src/core/analyzer/analyzeSysML';
-import { getCompletions } from '../src/core/language/completions';
-import type { SysMLCompletion } from '../src/core/language/completions';
 import { formatSysML } from '../src/core/language/formatter';
-import type { SysMLNode } from '../src/core/modelTypes';
 import { scanRawAnnotations } from '../src/core/trlc/extractTraces';
 
 
@@ -219,15 +209,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return /(^|\n)\s*(?:private\s+)?import\b/.test(text);
   }
 
-  /** Read all .sysml files in the workspace except primaryUri. */
+  /** Read all .sysml files in the workspace except primaryUri.
+   *  Prefers the in-memory text of open documents so unsaved edits (including
+   *  programmatic cross-file edits) are reflected in the parse. */
   async function collectContextFiles(primaryUri: vscode.Uri): Promise<{ name: string; text: string }[]> {
     const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+    const openByUri = new Map(vscode.workspace.textDocuments.map(d => [d.uri.toString(), d]));
     const contextFiles: { name: string; text: string }[] = [];
     await Promise.all(allSysml.map(async (u) => {
       if (u.toString() === primaryUri.toString()) return;
+      const name = u.path.split('/').pop() ?? u.path;
+      const openDoc = openByUri.get(u.toString());
+      if (openDoc) { contextFiles.push({ name, text: openDoc.getText() }); return; }
       try {
         const bytes = await vscode.workspace.fs.readFile(u);
-        contextFiles.push({ name: u.path.split('/').pop() ?? u.path, text: Buffer.from(bytes).toString('utf8') });
+        contextFiles.push({ name, text: Buffer.from(bytes).toString('utf8') });
       } catch { /* skip unreadable files */ }
     }));
     return contextFiles;
@@ -377,10 +373,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
 
   context.subscriptions.push(
-    // Re-publish whenever any .sysml document changes.
-    // Uses e.document (the actual changed document) directly — no currentSysmlUri filter.
+    // Re-publish whenever any .sysml document changes. Re-parse the file currently
+    // being visualized (the primary): a change to a context file affects the
+    // primary's cross-file resolution, and a change to the primary itself needs
+    // re-parsing — either way, keep the view on the current primary rather than
+    // switching it to whichever file was edited.
     vscode.workspace.onDidChangeTextDocument(e => {
-      publishDiagnosticsForDocument(e.document);
+      if (!e.document.fileName.endsWith('.sysml')) return;
+      if (currentSysmlUri && currentSysmlUri.toString() !== e.document.uri.toString()) {
+        void vscode.workspace.openTextDocument(currentSysmlUri).then(
+          doc => publishDiagnosticsForDocument(doc),
+          () => publishDiagnosticsForDocument(e.document),
+        );
+      } else {
+        publishDiagnosticsForDocument(e.document);
+      }
     }),
 
     // Diagnose newly opened .sysml files.
@@ -523,6 +530,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       semanticId?: string;
       startLine?: number;
       name?: string;
+      defName?: string;
+      memberText?: string;
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
@@ -593,6 +602,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
         // onDidChangeTextDocument fires from applyEdit → publishDiagnosticsForDocument called automatically.
         console.log(`[sysml-visualizer] applyIncrementalEdit (${ie.kind}) succeeded`);
+
+      } else if (msg.type === 'addMemberToDef') {
+        // Cross-file add: insert `memberText` as the first member of the definition
+        // named `defName`, wherever in the workspace it lives (a part usage's ports
+        // belong to its type definition, often in another file than the assembly).
+        const defName = msg.defName, memberText = msg.memberText;
+        if (!defName || !memberText) {
+          vscode.window.showErrorMessage('SysML Visualizer: malformed addMemberToDef');
+          return;
+        }
+        const escaped = defName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const declRe  = new RegExp(`^([ \\t]*)(?:abstract\\s+)?(?:part|port|item|action|interface|connection|attribute)\\s+def\\s+${escaped}\\b`, 'm');
+        const files   = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+        let done = false;
+        for (const uri of files) {
+          const doc  = await vscode.workspace.openTextDocument(uri);
+          const text = doc.getText();
+          const m    = declRe.exec(text);
+          if (!m) continue;
+          const braceIdx = text.indexOf('{', m.index);
+          if (braceIdx < 0) continue;
+          const indent   = (m[1] ?? '') + '    ';
+          const wsEdit   = new vscode.WorkspaceEdit();
+          wsEdit.insert(uri, doc.positionAt(braceIdx + 1), `\n${indent}${memberText}`);
+          const ok = await vscode.workspace.applyEdit(wsEdit);
+          if (!ok) { vscode.window.showErrorMessage('SysML Visualizer: failed to add member'); return; }
+          console.log(`[sysml-visualizer] addMemberToDef — added to ${defName} in ${path.basename(uri.fsPath)}`);
+          done = true;
+          break;
+        }
+        if (!done) vscode.window.showErrorMessage(`SysML Visualizer: definition '${defName}' not found in the workspace`);
 
       } else if (msg.type === 'revealSource') {
         if (!currentSysmlUri || !msg.sourceLocation) return;
@@ -787,6 +827,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             text: currentSysmlText,
             fileName: path.basename(editor.document.fileName),
           });
+          // Re-scope the views to the newly focused file: parse it as the new primary
+          // (others as context) and post a fresh updateGraph. Without this, switching
+          // between two already-open files leaves the previous file's graph — and its
+          // per-file provenance — in the webview.
+          publishDiagnosticsForDocument(editor.document);
         } else {
           console.log(`[sysml-visualizer] same sysml file refocused — skipping loadModel`);
         }
@@ -830,6 +875,64 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // For regular symbols: text-based search across all workspace .sysml files.
   // Looks for `<kw> def Word` or `package Word` patterns; no parser needed.
   // Current file is searched first so same-file defs are instant.
+
+  // ── Official-parser symbol index (replaces the retired TypeScript analyzer) ────
+  // All IDE language features below resolve identifiers through the occurrence table
+  // (`symbols`) emitted by the official parser — a per-file list of declaration/reference
+  // positions keyed by resolved qualified name. No second parser is involved.
+
+  interface SymbolIndex {
+    occurrences: SourceOccurrence[];
+    /** Occurrence covering a 0-based (line, col), if any. */
+    atPosition(line: number, col: number): SourceOccurrence | undefined;
+    /** All occurrences (decl + refs) sharing a symbolKey. */
+    byKey(key: string): SourceOccurrence[];
+    /** Declaration occurrences only. */
+    decls(): SourceOccurrence[];
+  }
+
+  function buildSymbolIndex(symbols: SourceOccurrence[]): SymbolIndex {
+    const byKeyMap = new Map<string, SourceOccurrence[]>();
+    for (const o of symbols) {
+      const arr = byKeyMap.get(o.symbolKey);
+      if (arr) arr.push(o); else byKeyMap.set(o.symbolKey, [o]);
+    }
+    return {
+      occurrences: symbols,
+      atPosition: (line, col) => symbols.find(
+        o => o.line === line && col >= o.column && col <= o.column + o.length),
+      byKey: (key) => byKeyMap.get(key) ?? [],
+      decls: () => symbols.filter(o => o.role === 'decl'),
+    };
+  }
+
+  /** Content-fresh phase-1 official parse for a document (reuses the parse cache). */
+  async function officialParseFor(document: vscode.TextDocument): Promise<SysMLV2ParseResult> {
+    const text = document.getText();
+    const key  = parseCacheKey(text, []);
+    let r = parseCacheGet(key) ?? await diskCacheGet(key);
+    if (!r) {
+      r = await javaClient.parse(text, []);
+      parseCacheSet(key, r);
+      void diskCacheSet(key, r);
+    }
+    if (r.model && !r.graph) r.graph = buildGraphWithContext(r.model, r.contextModels ?? []);
+    return r;
+  }
+
+  async function symbolIndexFor(document: vscode.TextDocument): Promise<SymbolIndex> {
+    const r = await officialParseFor(document);
+    return buildSymbolIndex(r.symbols ?? []);
+  }
+
+  /** Last `::` segment of a symbolKey — the bare identifier name. */
+  const lastSeg = (key: string): string => { const i = key.lastIndexOf('::'); return i >= 0 ? key.slice(i + 2) : key; };
+
+  /** SysML semantic-token type name → legend index. */
+  const TOKEN_TYPE_INDEX: Record<string, number> = {
+    class: ST.class, interface: ST.interface, property: ST.property, variable: ST.variable,
+    function: ST.function, type: ST.type, keyword: ST.keyword, string: ST.string,
+  };
 
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider({ language: 'sysml' }, {
@@ -876,15 +979,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.languages.registerReferenceProvider({ language: 'sysml' }, {
-      provideReferences(document, position) {
+      async provideReferences(document, position) {
         if (!document.fileName.endsWith('.sysml')) return [];
-        const analysis = analyzeSysML(document.getText());
-        const element  = getSymbolAtPosition(analysis, position.line + 1, position.character + 1);
-        if (!element) return [];
-        const refs = getReferencesToSymbol(analysis, element);
-        return refs.map(r => new vscode.Location(
+        const index = await symbolIndexFor(document);
+        const occ   = index.atPosition(position.line, position.character);
+        if (!occ) return [];
+        return index.byKey(occ.symbolKey).map(o => new vscode.Location(
           document.uri,
-          new vscode.Position(r.line - 1, 0),
+          new vscode.Range(o.line, o.column, o.line, o.column + o.length),
         ));
       },
     }),
@@ -894,96 +996,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.languages.registerHoverProvider({ language: 'sysml' }, {
-      provideHover(document, position) {
+      async provideHover(document, position) {
         if (!document.fileName.endsWith('.sysml')) return;
-        const analysis = analyzeSysML(document.getText());
-        const element  = getSymbolAtPosition(analysis, position.line + 1, position.character + 1);
-        if (!element) return;
+        const parse = await officialParseFor(document);
+        const index = buildSymbolIndex(parse.symbols ?? []);
+        const occ   = index.atPosition(position.line, position.character);
+        if (!occ) return;
+
+        const name  = lastSeg(occ.symbolKey);
+        const graph = parse.graph;
+        // Resolve to the declared element in the graph (prefer a same-position declaration).
+        const node =
+          graph?.nodes.find(n => n.label === name && n.startLine === occ.line + 1) ??
+          graph?.nodes.find(n => n.label === name);
 
         const contents: vscode.MarkdownString[] = [];
+        const kindLabel = node?.type ?? (occ.tokenType === 'type' ? 'type' : 'symbol');
+        contents.push(hoverMd(`**${kindLabel}**: \`${name}\``));
+        if (occ.symbolKey.includes('::')) contents.push(hoverMd(`Qualified: \`${occ.symbolKey}\``));
 
-        if (element.kind === 'symbol') {
-          const { symbol } = element;
-
-          contents.push(hoverMd(`**${prettyKind(symbol.kind)}**: \`${symbol.name}\``));
-          if (symbol.namespacePath.length > 0) {
-            contents.push(hoverMd(`Qualified: \`${symbol.qualifiedName}\``));
-          }
-
-          const node = symbol.node;
-          if (node.kind === 'requirementDef') {
-            if (node.reqId)    contents.push(hoverMd(`ID: \`${node.reqId}\``));
-            if (node.text)     contents.push(hoverMd(`---\n${node.text}`));
-            if (node.priority) contents.push(hoverMd(`Priority: \`${node.priority}\``));
-          } else if (node.kind === 'partDef') {
-            const ports = node.body.filter(c => c.kind === 'port') as
-              Array<{ direction: string; name: string; portType: string }>;
-            if (ports.length > 0) {
-              const list = ports.map(p => `- \`${p.direction} ${p.name}: ${p.portType}\``).join('\n');
-              contents.push(hoverMd(`---\n**Ports**:\n${list}`));
-            }
-          } else if (node.kind === 'occurrenceDef') {
-            const parts = node.body.filter(c => c.kind === 'partAlias') as
-              Array<{ name: string; type: string }>;
-            const msgs  = node.body.filter(c => c.kind === 'message') as
-              Array<{ name: string; from: string; to: string }>;
-            if (parts.length > 0) {
-              const list = parts.map(p => `- \`${p.name}: ${p.type}\``).join('\n');
-              contents.push(hoverMd(`---\n**Participants**:\n${list}`));
-            }
-            if (msgs.length > 0) {
-              const list = msgs.map(m => `- \`${m.name}\`: \`${m.from}\` → \`${m.to}\``).join('\n');
-              contents.push(hoverMd(`---\n**Messages**:\n${list}`));
-            }
-          } else if (node.kind === 'behaviorDef') {
-            const actions = node.body.filter(c => c.kind === 'actionInst') as
-              Array<{ name: string; actionType: string }>;
-            if (actions.length > 0) {
-              const list = actions.map(a => `- \`${a.name}: ${a.actionType}\``).join('\n');
-              contents.push(hoverMd(`---\n**Actions**:\n${list}`));
-            }
-          } else if (node.kind === 'stateDef') {
-            const transitions = node.body.filter(c => c.kind === 'transition') as
-              Array<{ from: string; to: string; event: string }>;
-            if (transitions.length > 0) {
-              const list = transitions
-                .map(t => `- \`${t.from}\` → \`${t.to}\`${t.event ? ` on \`${t.event}\`` : ''}`)
-                .join('\n');
-              contents.push(hoverMd(`---\n**Transitions**:\n${list}`));
-            }
-          }
-        } else {
-          // element.kind === 'node' — body-level items
-          const { node } = element;
-
-          if (node.kind === 'port') {
-            contents.push(hoverMd(`**port** \`${node.direction} ${node.name}: ${node.portType}\``));
-            const def = getDefinitionForSymbol(analysis, element);
-            if (def) contents.push(hoverMd(`Type: \`${def.qualifiedName}\``));
-          } else if (node.kind === 'partAlias') {
-            contents.push(hoverMd(`**part** \`${node.name}: ${node.type}\``));
-            const def = getDefinitionForSymbol(analysis, element);
-            if (def) contents.push(hoverMd(`Type: \`${def.qualifiedName}\``));
-          } else if (node.kind === 'actionInst') {
-            contents.push(hoverMd(`**action** \`${node.name}: ${node.actionType}\``));
-          } else if (node.kind === 'message') {
-            contents.push(hoverMd(`**message** \`${node.name}\``));
-            contents.push(hoverMd(`From: \`${node.from}\`  →  To: \`${node.to}\``));
-          } else if (node.kind === 'transition') {
-            contents.push(hoverMd(`**transition** \`${node.from}\` → \`${node.to}\``));
-            if (node.event) contents.push(hoverMd(`Event: \`${node.event}\``));
-          } else if (node.kind === 'connection') {
-            contents.push(hoverMd(
-              `**connection** \`${node.fromPart}.${node.fromPort}\` → \`${node.toPart}.${node.toPort}\``,
-            ));
-          } else if (node.kind === 'flow') {
-            contents.push(hoverMd(`**flow** \`${node.from}\` → \`${node.to}\``));
-          } else if (node.kind === 'stateEntry') {
-            contents.push(hoverMd(`**state** \`${node.name}\``));
+        // For a definition/usage, list its direct ports resolved by the official parser.
+        if (node && graph) {
+          const prefix = node.id + '.';
+          const ports = graph.nodes.filter(n =>
+            n.id.startsWith(prefix) &&
+            (n.type === 'PortUsage' || n.type === 'PortDefinition') &&
+            n.label !== n.type);
+          if (ports.length > 0) {
+            const list = ports.map(p => `- \`${p.direction ? p.direction + ' ' : ''}${p.label}\``).join('\n');
+            contents.push(hoverMd(`---\n**Ports**:\n${list}`));
           }
         }
-
-        if (contents.length === 0) return;
         return new vscode.Hover(contents);
       },
     }),
@@ -995,18 +1038,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.languages.registerCompletionItemProvider(
       { language: 'sysml' },
       {
-        provideCompletionItems(document, position) {
+        async provideCompletionItems(document) {
           if (!document.fileName.endsWith('.sysml')) return [];
-          const analysis  = analyzeSysML(document.getText());
-          const lineText  = document.lineAt(position.line).text.substring(0, position.character);
-          const items     = getCompletions(analysis, position.line + 1, lineText);
-
-          return items.map(item => {
-            const ci      = new vscode.CompletionItem(item.label, completionKind(item.kind));
-            ci.insertText = item.insertText;
-            if (item.detail) ci.detail = item.detail;
-            return ci;
-          });
+          const index = await symbolIndexFor(document);
+          const seen  = new Set<string>();
+          const items: vscode.CompletionItem[] = [];
+          for (const d of index.decls()) {
+            const name = lastSeg(d.symbolKey);
+            if (!name || seen.has(name)) continue;
+            seen.add(name);
+            const kind = d.tokenType === 'class'    ? vscode.CompletionItemKind.Class
+                       : d.tokenType === 'interface' ? vscode.CompletionItemKind.Interface
+                       : d.tokenType === 'property'  ? vscode.CompletionItemKind.Property
+                       : d.tokenType === 'function'  ? vscode.CompletionItemKind.Function
+                       :                               vscode.CompletionItemKind.Variable;
+            const ci = new vscode.CompletionItem(name, kind);
+            if (d.symbolKey.includes('::')) ci.detail = d.symbolKey;
+            items.push(ci);
+          }
+          return items;
         },
       },
       ':', ' ',
@@ -1021,120 +1071,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.languages.registerDocumentSemanticTokensProvider(
       { language: 'sysml' },
       {
-        provideDocumentSemanticTokens(document) {
+        async provideDocumentSemanticTokens(document) {
           if (!document.fileName.endsWith('.sysml')) return;
           try {
-            const analysis  = analyzeSysML(document.getText());
-            // Collected tokens: [0-based line, 0-based char, length, token-type-index]
-            const collected: Array<[number, number, number, number]> = [];
-
-            function lineAt(line1: number): string {
-              const i = line1 - 1;
-              return i >= 0 && i < document.lineCount ? document.lineAt(i).text : '';
-            }
-
-            function add(line1: number, col: number, len: number, tt: number): void {
-              if (col < 0 || len <= 0) return;
-              const lineIdx = line1 - 1;
-              if (lineIdx < 0 || lineIdx >= document.lineCount) return;
-              const lineLen = lineAt(line1).length;
-              if (col >= lineLen) return;
-              collected.push([lineIdx, col, Math.min(len, lineLen - col), tt]);
-            }
-
-            function addName(line1: number, name: string, tt: number): void {
-              if (!name) return;
-              add(line1, semWordCol(lineAt(line1), name), name.length, tt);
-            }
-
-            function addTypeRef(line1: number, typeName: string): void {
-              if (!typeName) return;
-              add(line1, semTypeCol(lineAt(line1), typeName), typeName.length, ST.type);
-            }
-
-            for (const node of analysis.model.nodes) {
-              switch (node.kind) {
-                case 'partDef':
-                  addName(node.line, node.name, ST.class);
-                  for (const c of node.body) {
-                    if (c.kind === 'port') {
-                      addName(c.line, c.name, ST.property);
-                      addTypeRef(c.line, c.portType);
-                    } else if (c.kind === 'partAlias') {
-                      addName(c.line, c.name, ST.variable);
-                      addTypeRef(c.line, c.type);
-                    }
-                  }
-                  break;
-                case 'interfaceDef':
-                  addName(node.line, node.name, ST.interface);
-                  break;
-                case 'actionDef':
-                  addName(node.line, node.name, ST.function);
-                  break;
-                case 'behaviorDef':
-                  addName(node.line, node.name, ST.class);
-                  for (const c of node.body) {
-                    if (c.kind === 'actionInst') {
-                      addName(c.line, c.name, ST.function);
-                      addTypeRef(c.line, c.actionType);
-                    }
-                  }
-                  break;
-                case 'occurrenceDef':
-                  addName(node.line, node.name, ST.class);
-                  for (const c of node.body) {
-                    if (c.kind === 'partAlias') {
-                      addName(c.line, c.name, ST.variable);
-                      addTypeRef(c.line, c.type);
-                    } else if (c.kind === 'message') {
-                      addName(c.line, c.name, ST.function);
-                    }
-                  }
-                  break;
-                case 'stateDef':
-                  addName(node.line, node.name, ST.class);
-                  break;
-                case 'requirementDef': {
-                  addName(node.line, node.name, ST.class);
-                  // Highlight string literals inside requirement body
-                  if (node.endLine !== undefined) {
-                    for (let l = node.line + 1; l < node.endLine; l++) {
-                      const lt = lineAt(l);
-                      const eqIdx = lt.indexOf('=');
-                      if (eqIdx < 0) continue;
-                      const q1 = lt.indexOf('"', eqIdx);
-                      if (q1 < 0) continue;
-                      const q2  = lt.indexOf('"', q1 + 1);
-                      const len = q2 >= 0 ? q2 - q1 + 1 : lt.length - q1;
-                      add(l, q1, len, ST.string);
-                    }
-                  }
-                  break;
-                }
-              }
-            }
-
-            // Fallback: highlight every 'part def' occurrence to verify provider is active
-            for (let i = 0; i < document.lineCount; i++) {
-              const lt  = document.lineAt(i).text;
-              let   idx = lt.indexOf('part def');
-              while (idx >= 0) {
-                collected.push([i, idx, 8, ST.keyword]);
-                idx = lt.indexOf('part def', idx + 1);
-              }
-            }
-
-            // SemanticTokensBuilder requires tokens in ascending (line, char) order
-            collected.sort((a, b) => a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1]);
-
+            const index = await symbolIndexFor(document);
+            // Occurrences are already exact (line, col, length) from the parser; sort for the builder.
+            const sorted = [...index.occurrences].sort(
+              (a, b) => a.line !== b.line ? a.line - b.line : a.column - b.column);
             const builder = new vscode.SemanticTokensBuilder(SYSML_LEGEND);
-            for (const [line, char, len, tt] of collected) {
-              builder.push(line, char, len, tt, 0);
+            for (const o of sorted) {
+              const tt = TOKEN_TYPE_INDEX[o.tokenType] ?? ST.variable;
+              builder.push(o.line, o.column, o.length, tt, 0);
             }
-
             const result = builder.build();
-            console.log(`[sysml-visualizer] semantic tokens: ${collected.length} tokens emitted`);
+            console.log(`[sysml-visualizer] semantic tokens: ${sorted.length} tokens emitted`);
             return result;
           } catch (err) {
             console.error('[sysml-visualizer] semantic tokens error:', err);
@@ -1150,63 +1100,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.languages.registerRenameProvider({ language: 'sysml' }, {
-      prepareRename(document, position) {
+      async prepareRename(document, position) {
         if (!document.fileName.endsWith('.sysml')) return;
         const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
         if (!wordRange) throw new Error('No renameable symbol at this position.');
         const word = document.getText(wordRange);
         if (SYSML_KEYWORDS.has(word)) throw new Error(`"${word}" is a keyword and cannot be renamed.`);
-        const analysis = analyzeSysML(document.getText());
-        // Accept if the word is a known top-level symbol name
-        if (analysis.symbols.all().some(s => s.name === word)) {
-          return { range: wordRange, placeholder: word };
-        }
-        // Accept if the word is the name of the body item at this line
-        const element = getSymbolAtPosition(analysis, position.line + 1, position.character + 1);
-        if (element?.kind === 'node') {
-          const nodeName = (element.node as { name?: string }).name;
-          if (nodeName === word) return { range: wordRange, placeholder: word };
-        }
-        throw new Error('No renameable symbol at this position.');
+        const index = await symbolIndexFor(document);
+        const occ   = index.atPosition(position.line, position.character);
+        if (!occ) throw new Error('No renameable symbol at this position.');
+        return { range: new vscode.Range(occ.line, occ.column, occ.line, occ.column + occ.length), placeholder: lastSeg(occ.symbolKey) };
       },
 
-      provideRenameEdits(document, position, newName) {
+      async provideRenameEdits(document, position, newName) {
         if (!document.fileName.endsWith('.sysml')) return;
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(newName)) {
           throw new Error(`"${newName}" is not a valid SysML identifier.`);
         }
-        const wordRange = document.getWordRangeAtPosition(position, /[A-Za-z_][A-Za-z0-9_]*/);
-        if (!wordRange) return;
-        const word = document.getText(wordRange);
-        const analysis = analyzeSysML(document.getText());
+        const index = await symbolIndexFor(document);
+        const occ   = index.atPosition(position.line, position.character);
+        if (!occ) return;
+        // Rename every occurrence sharing this symbol's resolved key (scope-precise).
         const wsEdit = new vscode.WorkspaceEdit();
-        const linesToRename = new Set<number>();
-
-        const sym = analysis.symbols.all().find(s => s.name === word);
-        if (sym) {
-          // Collision check: reject if any other symbol already has the new name
-          if (analysis.symbols.all().some(s => s.name === newName)) {
-            throw new Error(`A symbol named "${newName}" already exists.`);
-          }
-          linesToRename.add(sym.sourceLocation.line);
-          for (const ref of getReferencesToSymbol(analysis, sym)) {
-            linesToRename.add(ref.line);
-          }
-        } else {
-          // Body-item rename (port, participant alias, action instance, …)
-          const element = getSymbolAtPosition(analysis, position.line + 1, position.character + 1);
-          if (!element || element.kind !== 'node') return;
-          const nodeName = (element.node as { name?: string }).name;
-          if (!nodeName || nodeName !== word) return;
-          const line1 = (element.node as { line: number }).line;
-          linesToRename.add(line1);
-          for (const ref of getIntraBlockReferences(analysis, line1)) {
-            linesToRename.add(ref.line);
-          }
-        }
-
-        for (const line1 of linesToRename) {
-          addRenameEdits(wsEdit, document, line1, word, newName);
+        for (const o of index.byKey(occ.symbolKey)) {
+          wsEdit.replace(document.uri, new vscode.Range(o.line, o.column, o.line, o.column + o.length), newName);
         }
         return wsEdit;
       },
@@ -1235,27 +1152,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.languages.registerDocumentSymbolProvider({ language: 'sysml' }, {
-      provideDocumentSymbols(document) {
+      async provideDocumentSymbols(document) {
         if (!document.fileName.endsWith('.sysml')) return [];
         try {
-          const analysis = analyzeSysML(document.getText());
-          const result: vscode.DocumentSymbol[] = [];
+          const parse = await officialParseFor(document);
+          const graph = parse.graph;
+          const decls = (parse.symbols ?? []).filter(o => o.role === 'decl');
 
-          // Top-level packages (preserves nesting via body)
-          for (const pkg of analysis.model.packages) {
-            const sym = sysmlNodeToDocSymbol(document, pkg);
-            if (sym) result.push(sym);
+          const symKind = (tt: string): vscode.SymbolKind =>
+              tt === 'class'     ? vscode.SymbolKind.Class
+            : tt === 'interface' ? vscode.SymbolKind.Interface
+            : tt === 'property'  ? vscode.SymbolKind.Property
+            : tt === 'function'  ? vscode.SymbolKind.Function
+            :                      vscode.SymbolKind.Variable;
+
+          const byKey  = new Map<string, vscode.DocumentSymbol>();
+          const roots: vscode.DocumentSymbol[] = [];
+          // Shallow keys first so a parent exists before its children are attached.
+          const sorted = [...decls].sort(
+            (a, b) => a.symbolKey.split('::').length - b.symbolKey.split('::').length);
+
+          for (const d of sorted) {
+            const name = lastSeg(d.symbolKey);
+            const node = graph?.nodes.find(n => n.label === name && n.startLine === d.line + 1);
+            const selRange = new vscode.Range(d.line, d.column, d.line, d.column + d.length);
+            let range = selRange;
+            if (node?.startLine) {
+              const full = new vscode.Range(node.startLine - 1, 0,
+                (node.endLine ?? node.startLine) - 1, Number.MAX_SAFE_INTEGER);
+              if (full.contains(selRange)) range = full;
+            }
+            const ds = new vscode.DocumentSymbol(name, node?.type ?? '', symKind(d.tokenType), range, selRange);
+            byKey.set(d.symbolKey, ds);
+            const sep    = d.symbolKey.lastIndexOf('::');
+            const parent = sep >= 0 ? byKey.get(d.symbolKey.slice(0, sep)) : undefined;
+            if (parent) parent.children.push(ds); else roots.push(ds);
           }
-
-          // Top-level non-package declarations (namespace === '')
-          for (const node of analysis.model.nodes) {
-            const ns = (node as { namespace?: string }).namespace;
-            if (ns !== '') continue;
-            const sym = sysmlNodeToDocSymbol(document, node);
-            if (sym) result.push(sym);
-          }
-
-          return result;
+          return roots;
         } catch {
           return [];
         }
@@ -1266,40 +1199,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // ── Debug semantic tokens command ─────────────────────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('sysmlVisualizer.debugSemanticTokens', () => {
+    vscode.commands.registerCommand('sysmlVisualizer.debugSemanticTokens', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || !editor.document.fileName.endsWith('.sysml')) {
         vscode.window.showWarningMessage('SysML: open a .sysml file first');
         return;
       }
       const document = editor.document;
-      const analysis = analyzeSysML(document.getText());
-
-      // Re-run the same collection logic to count tokens
-      let tokenCount = 0;
-      for (const node of analysis.model.nodes) {
-        tokenCount++; // declaration name
-        if ('body' in node) {
-          tokenCount += (node as { body: unknown[] }).body.length * 2; // name + type ref (upper bound)
-        }
-      }
-      // Count fallback 'part def' tokens
-      for (let i = 0; i < document.lineCount; i++) {
-        let idx = document.lineAt(i).text.indexOf('part def');
-        while (idx >= 0) {
-          tokenCount++;
-          idx = document.lineAt(i).text.indexOf('part def', idx + 1);
-        }
-      }
+      const parse    = await officialParseFor(document);
+      const symbols  = parse.symbols ?? [];
+      const decls    = symbols.filter(o => o.role === 'decl').length;
+      const refs     = symbols.filter(o => o.role === 'ref').length;
 
       const lines = [
         `Language ID : ${document.languageId}`,
         `File        : ${path.basename(document.fileName)}`,
         `Line count  : ${document.lineCount}`,
-        `Symbols     : ${analysis.symbols.all().length}`,
-        `Model nodes : ${analysis.model.nodes.length}`,
-        `Token est.  : ~${tokenCount}`,
-        `Diagnostics : ${analysis.diagnostics.length}`,
+        `Occurrences : ${symbols.length} (${decls} decl, ${refs} ref)`,
+        `Graph nodes : ${parse.graph?.nodes.length ?? 0}`,
+        `Diagnostics : ${parse.diagnostics.length}`,
       ];
       const info = lines.join('\n');
       vscode.window.showInformationMessage(info);
@@ -1386,152 +1304,6 @@ function findSysMLDefinition(
   return usageFallback;
 }
 
-// ── Rename helpers ────────────────────────────────────────────────────────────
-
-/** Return the 0-based column of every whole-word occurrence of `word` in `lineText`. */
-function findAllWordOccurrences(lineText: string, word: string): number[] {
-  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re  = new RegExp(`\\b${esc}\\b`, 'g');
-  const cols: number[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(lineText)) !== null) cols.push(m.index);
-  return cols;
-}
-
-/** Add a replace edit for every whole-word occurrence of `oldName` on `line1` (1-based). */
-function addRenameEdits(
-  wsEdit: vscode.WorkspaceEdit,
-  document: vscode.TextDocument,
-  line1: number,
-  oldName: string,
-  newName: string,
-): void {
-  const lineIdx  = line1 - 1;
-  if (lineIdx < 0 || lineIdx >= document.lineCount) return;
-  const lineText = document.lineAt(lineIdx).text;
-  for (const col of findAllWordOccurrences(lineText, oldName)) {
-    wsEdit.replace(document.uri, new vscode.Range(lineIdx, col, lineIdx, col + oldName.length), newName);
-  }
-}
-
-// ── Document symbol helper ────────────────────────────────────────────────────
-
-/**
- * Convert a SysMLNode to a VS Code DocumentSymbol (with children for block nodes).
- * Returns null for node kinds that should be omitted from the outline.
- */
-function sysmlNodeToDocSymbol(document: vscode.TextDocument, node: SysMLNode): vscode.DocumentSymbol | null {
-  try {
-    const lc = document.lineCount;
-
-    function blockRange(line1: number, endLine1?: number): vscode.Range {
-      const s = Math.max(0, Math.min(line1 - 1, lc - 1));
-      const e = Math.max(s, Math.min((endLine1 ?? line1) - 1, lc - 1));
-      return new vscode.Range(s, 0, e, document.lineAt(e).text.length);
-    }
-
-    function nameSelRange(line1: number, name: string): vscode.Range {
-      const l    = Math.max(0, Math.min(line1 - 1, lc - 1));
-      const text = document.lineAt(l).text;
-      const col  = semWordCol(text, name);
-      if (col < 0) return new vscode.Range(l, 0, l, text.length);
-      return new vscode.Range(l, col, l, Math.min(col + name.length, text.length));
-    }
-
-    function fullLineRange(line1: number): vscode.Range {
-      const l = Math.max(0, Math.min(line1 - 1, lc - 1));
-      return new vscode.Range(l, 0, l, document.lineAt(l).text.length);
-    }
-
-    function children(body: SysMLNode[]): vscode.DocumentSymbol[] {
-      return body.flatMap(c => { const s = sysmlNodeToDocSymbol(document, c); return s ? [s] : []; });
-    }
-
-    switch (node.kind) {
-      case 'packageDef': {
-        const sym = new vscode.DocumentSymbol(node.name, 'package', vscode.SymbolKind.Package,
-          blockRange(node.line, node.endLine), nameSelRange(node.line, node.name));
-        sym.children = children(node.body);
-        return sym;
-      }
-      case 'partDef': {
-        const sym = new vscode.DocumentSymbol(node.name, 'part def', vscode.SymbolKind.Class,
-          blockRange(node.line, node.endLine), nameSelRange(node.line, node.name));
-        sym.children = children(node.body);
-        return sym;
-      }
-      case 'interfaceDef':
-        return new vscode.DocumentSymbol(node.name, 'interface def', vscode.SymbolKind.Interface,
-          blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'actionDef':
-        return new vscode.DocumentSymbol(node.name, 'action def', vscode.SymbolKind.Function,
-          blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'behaviorDef': {
-        const sym = new vscode.DocumentSymbol(node.name, 'behavior def', vscode.SymbolKind.Function,
-          blockRange(node.line, node.endLine), nameSelRange(node.line, node.name));
-        sym.children = children(node.body);
-        return sym;
-      }
-      case 'occurrenceDef': {
-        const sym = new vscode.DocumentSymbol(node.name, 'occurrence def', vscode.SymbolKind.Event,
-          blockRange(node.line, node.endLine), nameSelRange(node.line, node.name));
-        sym.children = children(node.body);
-        return sym;
-      }
-      case 'stateDef': {
-        const sym = new vscode.DocumentSymbol(node.name, 'state def', vscode.SymbolKind.Enum,
-          blockRange(node.line, node.endLine), nameSelRange(node.line, node.name));
-        sym.children = children(node.body);
-        return sym;
-      }
-      case 'requirementDef': {
-        const detail = [node.reqId && `id: ${node.reqId}`, node.priority && `priority: ${node.priority}`]
-          .filter(Boolean).join(' · ') || 'requirement def';
-        return new vscode.DocumentSymbol(node.name, detail, vscode.SymbolKind.String,
-          blockRange(node.line, node.endLine), nameSelRange(node.line, node.name));
-      }
-      // Body-only items (ports, participants, messages, …)
-      case 'port':
-        return new vscode.DocumentSymbol(node.name, `${node.direction} : ${node.portType}`,
-          vscode.SymbolKind.Property, blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'partAlias':
-        return new vscode.DocumentSymbol(node.name, `: ${node.type}`,
-          vscode.SymbolKind.Field, blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'message':
-        return new vscode.DocumentSymbol(node.name, `${node.from} → ${node.to}`,
-          vscode.SymbolKind.Method, blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'actionInst':
-        return new vscode.DocumentSymbol(node.name, `: ${node.actionType}`,
-          vscode.SymbolKind.Method, blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'stateEntry':
-        return new vscode.DocumentSymbol(node.name, 'state',
-          vscode.SymbolKind.EnumMember, blockRange(node.line), nameSelRange(node.line, node.name));
-      case 'transition': {
-        const label = `${node.from} → ${node.to}${node.event ? ` on ${node.event}` : ''}`;
-        const r = fullLineRange(node.line);
-        return new vscode.DocumentSymbol(label || 'transition', 'transition',
-          vscode.SymbolKind.EnumMember, r, r);
-      }
-      case 'flow': {
-        const label = `${node.from} → ${node.to}`;
-        const r = fullLineRange(node.line);
-        return new vscode.DocumentSymbol(label || 'flow', 'flow',
-          vscode.SymbolKind.Constant, r, r);
-      }
-      case 'traceLink': {
-        const label = `${node.linkType}: ${node.source} → ${node.target}`;
-        const r = fullLineRange(node.line);
-        return new vscode.DocumentSymbol(label || node.linkType, node.linkType,
-          vscode.SymbolKind.TypeParameter, r, r);
-      }
-      default:
-        return null;
-    }
-  } catch {
-    return null;
-  }
-}
-
 // ── Semantic token constants ──────────────────────────────────────────────────
 
 const SYSML_TOKEN_TYPES = [
@@ -1552,43 +1324,8 @@ const ST = {
   function: 4, type: 5, keyword: 6, string: 7,
 } as const;
 
-// ── Semantic token helpers ────────────────────────────────────────────────────
-
-/** Find the column of the first whole-word occurrence of `word` in `lineText`. */
-function semWordCol(lineText: string, word: string): number {
-  const esc = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const m   = new RegExp(`\\b${esc}\\b`).exec(lineText);
-  return m ? m.index : -1;
-}
-
-/**
- * Find the column of `typeName` in `lineText` after the first `:`.
- * Handles qualified names (e.g. `Pkg::Signal`) via literal indexOf.
- */
-function semTypeCol(lineText: string, typeName: string): number {
-  const colon = lineText.indexOf(':');
-  const start = colon >= 0 ? colon + 1 : 0;
-  return lineText.indexOf(typeName, start);
-}
-
-function completionKind(kind: SysMLCompletion['kind']): vscode.CompletionItemKind {
-  switch (kind) {
-    case 'keyword':     return vscode.CompletionItemKind.Keyword;
-    case 'interface':   return vscode.CompletionItemKind.Interface;
-    case 'part':        return vscode.CompletionItemKind.Class;
-    case 'action':      return vscode.CompletionItemKind.Function;
-    case 'requirement': return vscode.CompletionItemKind.Module;
-    case 'participant': return vscode.CompletionItemKind.Variable;
-  }
-}
-
 function hoverMd(text: string): vscode.MarkdownString {
   return new vscode.MarkdownString(text);
-}
-
-// 'partDef' → 'part def', 'requirementDef' → 'requirement def', etc.
-function prettyKind(kind: string): string {
-  return kind.replace(/([A-Z])/g, ' $1').toLowerCase().trim();
 }
 
 function getActiveSysmlEditor(): vscode.TextEditor | undefined {
