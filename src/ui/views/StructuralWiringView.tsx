@@ -383,6 +383,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   // discards saved positions instead of re-applying them.
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
   const layoutVersionRef = useRef(layoutVersion);
+  // Tracks the last-applied expansion set so the merge can force a fresh layout when a
+  // part is expanded/collapsed (sizes change → all parts must re-flow around it) rather
+  // than preserving stale drag positions.
+  const expandedPartsRef = useRef(expandedParts);
 
   // ── Precompute stable lookups ────────────────────────────────────────────────
 
@@ -1689,23 +1693,25 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   // When rfNodes changes (model reload, scope switch, selection, layout reset)
   // merge into displayNodes: preserve existing drag positions unless this is a
   // Reset Layout (layoutVersion changed).
-  useEffect(() => {
+  // Sync React Flow's controlled node list with the freshly computed layout. On an
+  // explicit Reset or an expand/collapse the layout snaps to the new positions (the
+  // diagram re-flows around the resized part); otherwise user drag positions are kept.
+  // Uses React's "adjust state during render" pattern so the fresh positions are present
+  // on the same render that remounts React Flow (via its `key`), which is required because
+  // React Flow keeps an existing node's internal position and ignores changed prop values.
+  const rfNodesRef = useRef(rfNodes);
+  if (layoutVersionRef.current !== layoutVersion || expandedPartsRef.current !== expandedParts) {
+    layoutVersionRef.current = layoutVersion;
+    expandedPartsRef.current = expandedParts;
+    rfNodesRef.current       = rfNodes;
+    setDisplayNodes(rfNodes);
+  } else if (rfNodesRef.current !== rfNodes) {
+    rfNodesRef.current = rfNodes;
     setDisplayNodes(prev => {
-      const isReset = layoutVersionRef.current !== layoutVersion;
-      if (isReset) {
-        layoutVersionRef.current = layoutVersion;
-        return rfNodes;
-      }
-      const prevPosMap = new Map(prev.map(n => [n.id, n.position]));
-      return rfNodes.map(n => {
-        const saved = prevPosMap.get(n.id);
-        return saved ? { ...n, position: saved } : n;
-      });
+      const posMap = new Map(prev.map(n => [n.id, n.position]));
+      return rfNodes.map(n => { const s = posMap.get(n.id); return s ? { ...n, position: s } : n; });
     });
-  // rfNodes reference changes on every useMemo run; layoutVersion is needed to
-  // detect explicit resets without adding savedPositions to the dep array.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rfNodes, layoutVersion]);
+  }
 
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     setDisplayNodes(prev => applyNodeChanges(changes, prev));
@@ -2029,6 +2035,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             </div>
           )}
           <ReactFlow
+            // Remount when the set of expanded parts changes: ReactFlow keeps an existing
+            // node's internal position and ignores a changed prop position, so a fresh mount
+            // is what re-places every part around the resized (expanded) part and re-fits.
+            key={[...expandedParts].sort().join('|') || 'none'}
             nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
             edges={rfEdges}
             nodeTypes={WIRING_NODE_TYPES}
