@@ -30,6 +30,10 @@ export interface PortDisplay {
   /** Declared direction used to orient the in/out arrow inside the square.
    *  Falls back to `direction` when absent. Empty ⇒ no arrow drawn. */
   arrowDir?:  string;
+  /** ELK-assigned local Y (px) for the square; overrides the index-based position. */
+  elkY?:      number;
+  /** ELK-assigned face; overrides direction/showLeft-showRight side selection. */
+  elkSide?:   'left' | 'right' | 'top' | 'bottom';
 }
 
 // ── Shared boundary-port visual constants ─────────────────────────────────────
@@ -172,7 +176,10 @@ export function PortHandles(props: PortHandlesProps) {
       {ports.map((p, i) => {
         // Distribute handles within the port area (below the header).
         // Use pixel top so handle and label always align regardless of actual node height.
-        const topPx = portAreaTop + ((i + 1) / (ports.length + 1)) * (nodeH - portAreaTop);
+        // When ELK assigned an explicit Y (Interconnect view), use it verbatim.
+        const topPx = p.elkY != null
+          ? p.elkY
+          : portAreaTop + ((i + 1) / (ports.length + 1)) * (nodeH - portAreaTop);
 
         const d     = p.direction;
         const color = portHandleColor(d);
@@ -187,9 +194,11 @@ export function PortHandles(props: PortHandlesProps) {
         // Visibility: left handle = target (in/inout/''); right handle = source (out/inout).
         // Per-port showLeft/showRight take priority over showBothHandles and direction defaults,
         // allowing the caller to show exactly the sides where real edges connect.
-        const showL = p.showLeft  !== undefined ? p.showLeft
+        const showL = p.elkSide   !== undefined ? p.elkSide === 'left'
+                    : p.showLeft  !== undefined ? p.showLeft
                     : showBothHandles || d !== 'out';
-        const showR = p.showRight !== undefined ? p.showRight
+        const showR = p.elkSide   !== undefined ? p.elkSide === 'right'
+                    : p.showRight !== undefined ? p.showRight
                     : showBothHandles || (d !== 'in' && d !== '');
 
         // Strip left/right from squareStyle — those conflict with React Flow's class-based

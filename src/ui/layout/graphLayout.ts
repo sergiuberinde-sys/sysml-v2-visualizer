@@ -323,6 +323,199 @@ export async function applyElkLayout(
   }
 }
 
+// ── Wiring-view layout (ELK layered: placement + ports + routing) ──────────────
+// elkjs's `fixed` algorithm cannot route edges (it throws "0 edge sections"), so the
+// Interconnect view uses ELK `layered` RIGHT, which reliably (a) places the part boxes
+// into left→right layers, (b) assigns + orders ports on each face to minimise crossings
+// (→ parallel wires), and (c) routes edges ORTHOGONALLY around every box with
+// edge/edge + edge/node spacing (→ no overlap, never through a shape).
+
+/** A port to be placed by ELK. `side` hints the preferred face; ELK orders within it. */
+export interface WiringElkPort { id: string; side: 'left' | 'right' }
+export interface WiringElkNode {
+  id: string; width: number; height: number; ports: WiringElkPort[];
+  /** Nested internals for an expanded (white-box) part: laid out recursively. When set,
+   *  `ports` are the compound's boundary ports and `children`/`childEdges` its internals. */
+  children?: WiringElkNode[];
+  childEdges?: WiringElkEdge[];
+}
+export interface WiringElkEdge { id: string; sourcePort: string; targetPort: string }
+export type PortSide = 'left' | 'right' | 'top' | 'bottom';
+export interface WiringElkResult {
+  /** Node positions LOCAL to their container (React Flow parent-relative; top = scope-abs). */
+  nodePos: Map<string, { x: number; y: number }>;
+  /** ELK-computed node sizes (compound/expanded parts are resized to fit their internals). */
+  nodeSize: Map<string, { w: number; h: number }>;
+  /** Leaf-part port position LOCAL to its node, plus its face. */
+  portPos: Map<string, { x: number; y: number; side: PortSide }>;
+  /** Boundary/frame-port positions LOCAL to their container, with the container width. */
+  boundaryPos: Map<string, { x: number; y: number; side: PortSide; containerW: number }>;
+  /** Edge routes in ABSOLUTE (scope-frame-at-0,0) coordinates. */
+  routes:  ElkRouteMap;
+  width:   number;
+  height:  number;
+}
+
+// ELK layered RIGHT (a) places the part boxes into left→right layers with crossing
+// minimisation, (b) assigns + ORDERS each node's ports on the WEST/EAST faces to
+// minimise crossings (→ parallel wires), and (c) routes edges ORTHOGONALLY around
+// every box (edgeNode) with parallel-segment spacing (edgeEdge) — so wires never
+// overlap and never pass through a shape.
+const WIRING_LAYERED_OPTIONS: Record<string, string> = {
+  'elk.algorithm':                             'layered',
+  'elk.direction':                             'RIGHT',
+  'elk.edgeRouting':                           'ORTHOGONAL',
+  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+  'elk.layered.nodePlacement.strategy':        'BRANDES_KOEPF',
+  'elk.spacing.nodeNode':                      '56',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '170',
+  'elk.spacing.edgeEdge':                      '16',
+  'elk.spacing.edgeNode':                      '24',
+  'elk.spacing.portPort':                      '18',
+  'elk.padding':                               '[top=48,left=48,bottom=48,right=48]',
+};
+
+export async function layoutWiringElk(
+  parts: WiringElkNode[],
+  boundaryPorts: WiringElkPort[],
+  edges: WiringElkEdge[],
+): Promise<WiringElkResult> {
+  const nodePos     = new Map<string, { x: number; y: number }>();
+  const nodeSize    = new Map<string, { w: number; h: number }>();
+  const portPos     = new Map<string, { x: number; y: number; side: PortSide }>();
+  const boundaryPos = new Map<string, { x: number; y: number; side: PortSide; containerW: number }>();
+  const routes: ElkRouteMap = new Map();
+  const empty: WiringElkResult = { nodePos, nodeSize, portPos, boundaryPos, routes, width: 0, height: 0 };
+  if (!parts.length || !edges.length) return empty;
+
+  // WEST ports straddle the left edge (ELK returns x ≈ -portWidth); classify by the node's
+  // half so a slightly-negative WEST x is still 'left' (not mis-tagged → no rendered square).
+  const sideOf = (px: number, w: number): PortSide => px < w / 2 ? 'left' : 'right';
+
+  // One expanded part, once laid out: its size, its frame-port positions (node-local, so its
+  // parent can pin them with FIXED_POS), and an `emit` that writes all of its internals into
+  // the result maps once the parent has decided where the part sits (routes → absolute).
+  interface Sub {
+    width: number; height: number;
+    framePorts: { id: string; x: number; y: number; side: PortSide }[];
+    emit: (absX: number, absY: number) => void;
+  }
+
+  // Lay out ONE container level with ELK: its frame ports on WEST/EAST, its children as fixed-
+  // size leaves (compound children arrive pre-sized with FIXED_POS ports matching their own
+  // internal frame ports, so wires meet exactly), and its internal edges. Single-level ELK
+  // only — no INCLUDE_CHILDREN nesting, which elkjs mis-routes (0-section edges).
+  interface ChildSpec {
+    id: string; width: number; height: number;
+    fixedPorts?: { id: string; x: number; y: number }[];   // compound child → pin ports
+    sidePorts?: WiringElkPort[];                            // leaf child → side hint
+  }
+  const layoutOneLevel = async (
+    children: ChildSpec[], framePorts: WiringElkPort[], levelEdges: WiringElkEdge[],
+  ) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scope: any = {
+      id: 'scope',
+      layoutOptions: { ...WIRING_LAYERED_OPTIONS, 'elk.portConstraints': 'FIXED_SIDE' },
+      ports: framePorts.map(p => ({
+        id: p.id, width: 8, height: 8,
+        layoutOptions: { 'elk.port.side': p.side === 'left' ? 'WEST' : 'EAST' },
+      })),
+      children: children.map(c => c.fixedPorts
+        ? {
+            id: c.id, width: c.width, height: c.height,
+            layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
+            ports: c.fixedPorts.map(p => ({ id: p.id, width: 8, height: 8, x: p.x, y: p.y })),
+          }
+        : {
+            id: c.id, width: c.width, height: c.height,
+            layoutOptions: { 'elk.portConstraints': 'FIXED_SIDE' },
+            ports: (c.sidePorts ?? []).map(p => ({
+              id: p.id, width: 8, height: 8,
+              layoutOptions: { 'elk.port.side': p.side === 'left' ? 'WEST' : 'EAST' },
+            })),
+          }),
+      edges: levelEdges.map(e => ({ id: e.id, sources: [e.sourcePort], targets: [e.targetPort] })),
+    };
+    const graph: ElkNode = {
+      id: 'root',
+      layoutOptions: { ...WIRING_LAYERED_OPTIONS, 'elk.hierarchyHandling': 'INCLUDE_CHILDREN' },
+      children: [scope],
+    };
+    const laid = await elk.layout(graph);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (laid.children ?? [])[0] as any;
+  };
+
+  // Recursively lay out a compound node (its children first, bottom-up), returning a Sub.
+  const layoutSub = async (node: WiringElkNode): Promise<Sub> => {
+    const kids = node.children ?? [];
+    const subs = new Map<string, Sub>();
+    const specs: ChildSpec[] = [];
+    for (const c of kids) {
+      if (c.children?.length) {
+        const s = await layoutSub(c);
+        subs.set(c.id, s);
+        specs.push({ id: c.id, width: s.width, height: s.height, fixedPorts: s.framePorts.map(p => ({ id: p.id, x: p.x, y: p.y })) });
+      } else {
+        specs.push({ id: c.id, width: c.width, height: c.height, sidePorts: c.ports });
+      }
+    }
+    const sc = await layoutOneLevel(specs, node.ports, node.childEdges ?? []);
+    const cw = sc?.width ?? 0, ch = sc?.height ?? 0;
+    const frameOut = new Map<string, { x: number; y: number; side: PortSide }>();
+    for (const p of ((sc?.ports ?? []) as ElkNode[])) {
+      frameOut.set(p.id, { x: p.x ?? 0, y: p.y ?? 0, side: sideOf(p.x ?? 0, cw) });
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const childElk = new Map<string, any>();
+    for (const c of ((sc?.children ?? []) as ElkNode[])) childElk.set(c.id, c);
+
+    return {
+      width: cw, height: ch,
+      framePorts: [...frameOut].map(([id, p]) => ({ id, ...p })),
+      emit(absX, absY) {
+        // This container's own frame ports (node-local → React Flow parent-relative).
+        for (const [id, p] of frameOut) boundaryPos.set(id, { ...p, containerW: cw });
+        for (const c of kids) {
+          const ce = childElk.get(c.id);
+          const cx = ce?.x ?? 0, cy = ce?.y ?? 0;
+          nodePos.set(c.id, { x: cx, y: cy });          // parent-relative (React Flow nesting)
+          const cs = subs.get(c.id);
+          nodeSize.set(c.id, cs ? { w: cs.width, h: cs.height } : { w: c.width, h: c.height });
+          if (cs) {
+            cs.emit(absX + cx, absY + cy);              // compound child → recurse (routes need abs)
+          } else {
+            for (const p of ((ce?.ports ?? []) as ElkNode[])) {
+              portPos.set(p.id, { x: p.x ?? 0, y: p.y ?? 0, side: sideOf(p.x ?? 0, ce?.width ?? 0) });
+            }
+          }
+        }
+        // This container's internal edges — sections are container-local; shift to absolute.
+        for (const e of ((sc?.edges ?? []) as ElkExtendedEdge[])) {
+          const s = e.sections?.[0]; if (!s) continue;
+          routes.set(e.id, [
+            { x: s.startPoint.x + absX, y: s.startPoint.y + absY },
+            ...(s.bendPoints ?? []).map(p => ({ x: p.x + absX, y: p.y + absY })),
+            { x: s.endPoint.x + absX,   y: s.endPoint.y + absY   },
+          ]);
+        }
+      },
+    };
+  };
+
+  try {
+    // The top scope is itself a container: frame = boundary ports, children = top parts.
+    const root: WiringElkNode = { id: 'scope', width: 0, height: 0, ports: boundaryPorts, children: parts, childEdges: edges };
+    const sub = await layoutSub(root);
+    sub.emit(0, 0);
+    return { nodePos, nodeSize, portPos, boundaryPos, routes, width: sub.width, height: sub.height };
+  } catch (err) {
+    console.error('[sysml-viz] ELK wiring layout error:', err);
+    return empty;
+  }
+}
+
 // ── Hierarchical layout options ───────────────────────────────────────────────
 
 // Pass 1: ELK layered (DOWN) to compute node positions.

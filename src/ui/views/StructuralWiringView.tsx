@@ -16,8 +16,9 @@ import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
   applyNodeChanges, Handle, Position,
+  BaseEdge, EdgeLabelRenderer, getSmoothStepPath,
   type Node, type Edge, type NodeChange, type NodeProps, type EdgeMouseHandler,
-  type ReactFlowInstance,
+  type EdgeProps, type ReactFlowInstance,
 } from '@xyflow/react';
 import { PortHandles, makeBoundaryPortDisplay, resolvePortDirection, type PortDisplay } from '../layout/PortHandles';
 import { AsilBadge, RealizationBadge, asilLabel } from '../layout/AsilBadge';
@@ -26,6 +27,11 @@ import '@xyflow/react/dist/style.css';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
 import type { IncrementalEdit } from '../../core/editDescriptor';
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
+import { ElkEdge } from '../layout/ElkEdge';
+import {
+  layoutWiringElk,
+  type WiringElkNode, type WiringElkPort, type WiringElkEdge,
+} from '../layout/graphLayout';
 import { FitPanel } from '../layout/FitPanel';
 import type { SelectionState } from '../../app/selection';
 
@@ -130,7 +136,9 @@ function WiringPartNode({ data }: NodeProps) {
       <Handle type="source" id="__source" position={Position.Right} style={{ opacity: 0 }} />
 
       <PortHandles
-        ports={ports}
+        // When expanded, boundary ports are rendered by the embedded frame-port nodes
+        // inside the container, so the part box itself draws none (avoids duplication).
+        ports={expanded ? [] : ports}
         isLR={true}
         sourcePos={Position.Right}
         targetPos={Position.Left}
@@ -270,6 +278,47 @@ const WIRING_NODE_TYPES = {
   wiringScopePort:      WiringScopePortNode,
 } as const;
 
+/**
+ * Orthogonal wiring edge that routes each connection through its OWN vertical
+ * channel between the two nodes (via a per-edge `centerX`), so parallel wires
+ * never lie on top of one another. `data.laneFrac` (0..1) positions the vertical
+ * run within the inter-node gap; assigned per node-pair by the layout.
+ */
+function ChannelEdge({
+  id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
+  markerEnd, style, data, label, labelStyle, labelBgStyle,
+}: EdgeProps) {
+  const frac    = typeof data?.['laneFrac'] === 'number' ? (data['laneFrac'] as number) : 0.5;
+  const centerX = sourceX + (targetX - sourceX) * frac;
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition,
+    borderRadius: 10, centerX,
+  });
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />
+      {label != null && label !== '' && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              pointerEvents: 'none',
+              padding: '1px 3px', borderRadius: 3,
+              ...(labelBgStyle as React.CSSProperties),
+              ...(labelStyle as React.CSSProperties),
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+const WIRING_EDGE_TYPES = { channel: ChannelEdge, elkEdge: ElkEdge } as const;
+
 // ── Embedded sub-diagram id remapping ─────────────────────────────────────────
 // Prepend `prefix` to every node id (and edge source/target and parentId) of a
 // computed sub-diagram so an embedded copy never collides with the outer diagram.
@@ -383,6 +432,24 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   // discards saved positions instead of re-applying them.
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
   const layoutVersionRef = useRef(layoutVersion);
+
+  // ELK layered layout for the wiring diagram: part-box positions + obstacle-avoiding
+  // orthogonal edge routes + overall size. null until the async layout resolves.
+  type ElkPortPos = Map<string, { x: number; y: number; side: 'left' | 'right' | 'top' | 'bottom' }>;
+  type ElkBoundaryPos = Map<string, { x: number; y: number; side: 'left' | 'right' | 'top' | 'bottom'; containerW: number }>;
+  const [elkLayout, setElkLayout] = useState<
+    { nodePos: Map<string, { x: number; y: number }>;
+      nodeSize: Map<string, { w: number; h: number }>;
+      portPos: ElkPortPos; boundaryPos: ElkBoundaryPos;
+      routes: Map<string, { x: number; y: number }[]>; width: number; height: number } | null
+  >(null);
+  // Bumped when a fresh ELK layout is applied, so React Flow remounts and adopts the
+  // new node positions (it otherwise keeps a node's internal position across prop changes).
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
+  // Nodes the user has dragged since the last (re)layout. Their ELK-routed edges carry FIXED
+  // absolute waypoints that don't move with the node, so we drop those edges back to the
+  // dynamic `channel` routing (which follows the handles) until the next relayout re-routes.
+  const [draggedNodeIds, setDraggedNodeIds] = useState<Set<string>>(new Set());
   // Tracks the last-applied expansion set so the merge can force a fresh layout when a
   // part is expanded/collapsed (sizes change → all parts must re-flow around it) rather
   // than preserving stale drag positions.
@@ -448,7 +515,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     // top scope and, recursively, for the type def of every expanded part usage so an
     // expanded part shows the exact diagram the top-level view renders for that def.
     // Returns natural (unprefixed) ids; embedding remaps them via prefixDiagram().
-    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set()): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
+    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set(), externallyConnected: Set<string> = new Set()): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
       if (!graph) return { nodes: [], edges: [], width: 0, height: 0 };
 
     // Semantic children of the scope PartDef
@@ -475,23 +542,87 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     // (`port X : ~Y_Port`) was tagged `'out'` and ended up on the wrong side
     // of the IBD frame.
     const scopePortIdSet = new Set(scopePorts.map(p => p.id));
+
+    // ── Owner-relative port direction ─────────────────────────────────────────────
+    // A port's frame-relative direction is a property of its OWNING definition, not of
+    // whichever scope is being rendered. Classify each flow endpoint relative to the
+    // owning def of that endpoint's port:
+    //   • delegation  — the OTHER endpoint is a port of one of this owner's DIRECT
+    //     internal parts ⇒ boundary flip (this port as source → 'in', as target → 'out').
+    //   • sibling use — both owners are direct part types of a COMMON parent def
+    //     ⇒ no flip (source → 'out', target → 'in').
+    //   • otherwise    — a spurious cross-level / same-name-merged edge ⇒ ignored,
+    //     so a delegated output no longer gets mis-tagged 'inout' when it also appears
+    //     as an inner part's port in a parent scope.
+    const ownerDefOf = (nodeId: string): GraphNode | undefined => {
+      let cur = nodeId;
+      while (cur.includes('.')) {
+        cur = cur.slice(0, cur.lastIndexOf('.'));
+        const n = nodeById.get(cur);
+        if (n && n.type === 'PartDefinition') return n;
+      }
+      return undefined;
+    };
+    const internalPartDefCache = new Map<string, Set<string>>();
+    const internalPartDefIds = (defId: string): Set<string> => {
+      let s = internalPartDefCache.get(defId);
+      if (s) return s;
+      s = new Set<string>();
+      for (const kid of directSemanticChildren(defId, childrenOf, nodeById)) {
+        if (kid.type !== 'PartUsage') continue;
+        const te = typedByEdges.find(e => e.source === kid.id);
+        if (te) s.add(te.target);
+      }
+      internalPartDefCache.set(defId, s);
+      return s;
+    };
+    // Reverse index: type-def id → set of parent defs that own a direct part of that type.
+    const parentDefsIndex = new Map<string, Set<string>>();
+    for (const n of graph.nodes) {
+      if (n.type !== 'PartDefinition') continue;
+      for (const childDefId of internalPartDefIds(n.id)) {
+        let s = parentDefsIndex.get(childDefId);
+        if (!s) parentDefsIndex.set(childDefId, s = new Set());
+        s.add(n.id);
+      }
+    }
+    const shareCommonParent = (a: string, b: string): boolean => {
+      const pa = parentDefsIndex.get(a); if (!pa) return false;
+      const pb = parentDefsIndex.get(b); if (!pb) return false;
+      for (const p of pa) if (pb.has(p)) return true;
+      return false;
+    };
+
     const portConnDir = new Map<string, string>();
-    const tagPortConn = (id: string, want: 'in' | 'out') => {
+    // Ports that received a delegation-classified direction — for these the flow
+    // direction is authoritative (overrides a possibly-misleading declared type).
+    const delegatedPorts = new Set<string>();
+    const tagPortConn = (id: string, want: 'in' | 'out', delegated: boolean) => {
+      if (delegated) delegatedPorts.add(id);
       const existing = portConnDir.get(id);
       if (!existing) portConnDir.set(id, want);
       else if (existing !== want) portConnDir.set(id, 'inout');
+    };
+    const classifyEndpoint = (self: string, other: string, selfIsSource: boolean) => {
+      const dSelf = ownerDefOf(self), dOther = ownerDefOf(other);
+      if (!dSelf || !dOther) return;
+      if (internalPartDefIds(dSelf.id).has(dOther.id)) {
+        // `other` is an internal part of `self`'s owner → `self` is a delegated boundary port.
+        tagPortConn(self, selfIsSource ? 'in' : 'out', true);
+      } else if (dSelf.id !== dOther.id && shareCommonParent(dSelf.id, dOther.id)) {
+        // sibling parts of a common parent → plain internal wiring, no flip.
+        tagPortConn(self, selfIsSource ? 'out' : 'in', false);
+      }
+      // otherwise: cross-level / name-merged spurious edge → ignore for this endpoint.
     };
     for (const e of graph.edges) {
       if (e.type !== 'connection' && e.type !== 'message' && e.type !== 'interconnect') continue;
       // `bind` delegation edges (id prefix `bind:`) always list the boundary port
       // first regardless of in/out, so their source/target order does NOT encode
       // data-flow direction — feeding them here would mis-tag boundary ports.
-      // Their direction comes from the port's (conjugation-aware) type instead.
       if (e.id.startsWith('bind:')) continue;
-      const srcIsBoundary = scopePortIdSet.has(e.source);
-      const tgtIsBoundary = scopePortIdSet.has(e.target);
-      tagPortConn(e.source, srcIsBoundary ? 'in' : 'out');
-      tagPortConn(e.target, tgtIsBoundary ? 'out' : 'in');
+      classifyEndpoint(e.source, e.target, true);
+      classifyEndpoint(e.target, e.source, false);
     }
 
     // Conjugation flips port direction (SysML v2 §10.3.3.3): `~XPort` reverses
@@ -519,7 +650,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     // the boundary port has no connections.
     function resolvePortDir(port: GraphNode): string {
       if (port.direction) return port.direction;
-      if (scopePortIdSet.has(port.id)) {
+      // For a delegated boundary port (of any def, not just the current scope) the
+      // owner-relative flow direction is authoritative — it reflects real data flow
+      // through the frame and overrides a possibly-misleading or unresolved type.
+      if (scopePortIdSet.has(port.id) || delegatedPorts.has(port.id)) {
         const fromConn = portConnDir.get(port.id);
         if (fromConn) return fromConn;
       }
@@ -557,19 +691,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       return portConnDir.get(port.id) ?? '';
     }
 
-    // Label a port by its TYPE (its typing PortDefinition, prefixed with ~ when the
-    // usage is conjugated) instead of its declared name; falls back to the name when
-    // the port is untyped.
-    function portTypeLabel(port: GraphNode): string {
-      const typeEdge = typedByEdges.find(e => e.source === port.id);
-      const typeName = typeEdge ? nodeById.get(typeEdge.target)?.label : undefined;
-      if (!typeName) return port.label;
-      return port.isConjugated ? `~${typeName}` : typeName;
-    }
-
     function portDisplay(port: GraphNode): PortDisplay {
       const dir = resolvePortDir(port);
-      return makeBoundaryPortDisplay(port.id, portTypeLabel(port), dir, '', dir);
+      // Display the port's declared NAME (not its type).
+      return makeBoundaryPortDisplay(port.id, port.label, dir, '', dir);
     }
 
     // ── Leaf-part view: scope has no nested PartUsages ──────────────────────────
@@ -769,34 +894,6 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       return !!td && directSemanticChildren(td.id, childrenOf, nodeById).some(n => n.type === 'PartUsage');
     };
 
-    // Nested white-box internals for each expanded part (relative-positioned children).
-    // Expanded parts embed the FULL interconnect diagram of their type def, computed by
-    // the same routine used for the top scope (recursive) — so an expanded part shows
-    // exactly what selecting that def as the scope would render.
-    const expandedInternals = new Map<string, {
-      childNodes: Node[]; childEdges: Edge[]; width: number; height: number; boundaryPortIds: Set<string>;
-    }>();
-    for (const part of partUsages) {
-      if (!expandedParts.has(part.id)) continue;
-      const td = typeDefOf(part.id);
-      if (!td || seen.has(td.id)) continue; // guard against self-referential recursion
-      const tdChildren = directSemanticChildren(td.id, childrenOf, nodeById);
-      if (!tdChildren.some(n => n.type === 'PartUsage')) continue;
-      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]));
-      if (!sub.nodes.length) continue;
-      const prefix  = `wpart-${part.id}::`;
-      const frameId = `wpart-${part.id}`;
-      const pref = prefixDiagram(sub, prefix);
-      // Drop the sub's own scope-container frame (the expanded part box replaces it) and
-      // reparent the sub's top-level nodes into the part box, preserving nested parenting.
-      const childNodes = pref.nodes
-        .filter(n => n.id !== `${prefix}wscope-container`)
-        .map(n => (n.parentId ? n : { ...n, parentId: frameId, extent: 'parent' as const }));
-      const boundaryPortIds = new Set(
-        tdChildren.filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition').map(n => n.id));
-      expandedInternals.set(part.id, { childNodes, childEdges: pref.edges, width: sub.width, height: sub.height, boundaryPortIds });
-    }
-
     // ASIL / Realization for a part box: the PartUsage's own metadata, else its
     // typing PartDef's (so a usage shows the safety/realization of its definition).
     function getPartAsil(partId: string): string | undefined {
@@ -861,6 +958,38 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       for (const [partId, ports] of partPorts) {
         partPorts.set(partId, ports.filter(p => connectedPortIds.has(p.id)));
       }
+    }
+
+    // Nested white-box internals for each expanded part (relative-positioned children).
+    // Expanded parts embed the FULL interconnect diagram of their type def, computed by
+    // the same routine used for the top scope (recursive) — so an expanded part shows
+    // exactly what selecting that def as the scope would render. Built AFTER connectedPortIds
+    // so we can tell the child which of its boundary ports THIS scope connects to — those
+    // stay visible under "hide unconnected ports" (they carry the cross-boundary wires).
+    const expandedInternals = new Map<string, {
+      childNodes: Node[]; childEdges: Edge[]; width: number; height: number; boundaryPortIds: Set<string>;
+    }>();
+    for (const part of partUsages) {
+      if (!expandedParts.has(part.id)) continue;
+      const td = typeDefOf(part.id);
+      if (!td || seen.has(td.id)) continue; // guard against self-referential recursion
+      const tdChildren = directSemanticChildren(td.id, childrenOf, nodeById);
+      if (!tdChildren.some(n => n.type === 'PartUsage')) continue;
+      // This scope's connected-port set includes (canonicalised to def-port ids) every
+      // boundary port of `part` that we wire to — pass it so the child keeps them visible.
+      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]), connectedPortIds);
+      if (!sub.nodes.length) continue;
+      const prefix  = `wpart-${part.id}::`;
+      const frameId = `wpart-${part.id}`;
+      const pref = prefixDiagram(sub, prefix);
+      // Drop the sub's own scope-container frame (the expanded part box replaces it) and
+      // reparent the sub's top-level nodes into the part box, preserving nested parenting.
+      const childNodes = pref.nodes
+        .filter(n => n.id !== `${prefix}wscope-container`)
+        .map(n => (n.parentId ? n : { ...n, parentId: frameId, extent: 'parent' as const }));
+      const boundaryPortIds = new Set(
+        tdChildren.filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition').map(n => n.id));
+      expandedInternals.set(part.id, { childNodes, childEdges: pref.edges, width: sub.width, height: sub.height, boundaryPortIds });
     }
 
     // Returns V_GAP_SPLIT when the two adjacent parts in a column share no direct connection,
@@ -1236,8 +1365,11 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       scopePortRight.set(sp.id, right);
       return right;
     }
+    // A boundary port stays visible when connected internally OR when the PARENT scope
+    // wires to it (externallyConnected) — an expanded part's frame ports carry the
+    // cross-boundary connections, so hiding them would orphan those wires.
     const visibleScopePorts = hideUnconnectedPorts
-      ? scopePorts.filter(p => connectedPortIds.has(p.id))
+      ? scopePorts.filter(p => connectedPortIds.has(p.id) || externallyConnected.has(p.id))
       : scopePorts;
     const leftScopePorts  = visibleScopePorts.filter(p => !boundaryOnRight(p));
     const rightScopePorts = visibleScopePorts.filter(p =>  boundaryOnRight(p));
@@ -1420,7 +1552,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       // One visible square per boundary port: left-side ports show sqL (on left boundary),
       // right-side ports show sqR (on right boundary). The hidden handle stays in the DOM
       // so React Flow can still route edges to/from it.
-      const basePd = makeBoundaryPortDisplay(port.id, portTypeLabel(port), dir, '', dir);
+      const basePd = makeBoundaryPortDisplay(port.id, port.label, dir, '', dir);
       const pd: PortDisplay = {
         ...basePd,
         showLeft: !isRight,
@@ -1628,7 +1760,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           target:          edgeTgtRf,
           sourceHandle:    srcHandle,
           targetHandle:    tgtHandle,
-          type:            'smoothstep',
+          type:            'channel',
           animated:        !isMsg && !isStructural && !isDimmed,
           label:           displayLabel,
           // Label background prevents text landing directly on port glyphs or node text.
@@ -1647,10 +1779,33 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           markerEnd: { type: MarkerType.ArrowClosed, color: edgeC, width: 12, height: 12 },
           // Smooth rounded corners on the orthogonal bends
           pathOptions:     { borderRadius: 12 },
-          data:            { _sel: edgeSel },
+          data:            {
+            _sel: edgeSel,
+            // Port-square ids for ELK obstacle-avoiding routing (see the routing effect).
+            ...(edgeIsSrcPort ? { srcPortId: edgeSrcCanon } : {}),
+            ...(edgeIsTgtPort ? { tgtPortId: edgeTgtCanon } : {}),
+          },
         };
         return edge;
       });
+
+    // Assign each edge its own vertical channel between its two nodes, so parallel
+    // wires never coincide. Group by unordered node pair, then spread the group's
+    // edges evenly across the inter-node gap (laneFrac ∈ (0,1)). Ordering the group
+    // by target Y keeps the channels monotonic, which also reduces crossings.
+    {
+      const groups = new Map<string, Edge[]>();
+      for (const e of rfConnEdges) {
+        const key = e.source < e.target ? `${e.source}|${e.target}` : `${e.target}|${e.source}`;
+        (groups.get(key) ?? groups.set(key, []).get(key)!).push(e);
+      }
+      const yOf = (rf: string) => layoutPos.get(rf.replace(/^wpart-/, ''))?.y ?? 0;
+      for (const list of groups.values()) {
+        if (list.length === 1) { (list[0].data as Record<string, unknown>)['laneFrac'] = 0.5; continue; }
+        list.sort((a, b) => (yOf(a.target) - yOf(b.target)) || (yOf(a.source) - yOf(b.source)));
+        list.forEach((e, i) => { (e.data as Record<string, unknown>)['laneFrac'] = (i + 1) / (list.length + 1); });
+      }
+    }
 
     // IBD outer frame — rendered first (lowest z-order, behind parts and ports)
     const scopeContainerNode: Node = {
@@ -1690,6 +1845,58 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, activeScopeName, nodeById, childrenOf, selection, layoutVersion, hideUnconnectedPorts, onPortSelect, expandedParts, onToggleExpand]);
 
+  // Apply ELK-computed part positions to the built nodes; resize the scope frame to fit.
+  // Falls back to the built (custom) positions until the async ELK layout resolves.
+  const positionedNodes = useMemo(() => {
+    if (!elkLayout) return rfNodes;
+    return rfNodes.map(n => {
+      const p = elkLayout.nodePos.get(n.id);
+      if (p) {
+        // Re-place the part box (position is container-relative, matching React Flow's
+        // parentId nesting). Move each port square to the side + offset ELK assigned it.
+        // Expanded (compound) parts are resized to the ELK-computed frame that fits their
+        // internals; their own ports are drawn by the embedded frame-port nodes, not here.
+        const dd = n.data as Record<string, unknown>;
+        const sz = elkLayout.nodeSize.get(n.id);
+        const isCompound = rfNodes.some(c => c.parentId === n.id);
+        const style = sz && isCompound
+          ? { ...(n.style as object), width: sz.w, minHeight: sz.h, height: sz.h }
+          : n.style;
+        const ports = dd?.['ports'] as PortDisplay[] | undefined;
+        if (ports?.length && !isCompound) {
+          const newPorts = ports.map(pd => {
+            const pp = elkLayout.portPos.get(`${n.id}::${pd.id}`);
+            if (!pp) return pd;
+            return { ...pd, elkX: pp.x, elkY: pp.y, elkSide: pp.side };
+          });
+          return { ...n, position: p, data: { ...dd, ports: newPorts } };
+        }
+        return { ...n, position: p, style, data: sz && isCompound ? { ...dd, nodeH: sz.h } : dd };
+      }
+      if (n.type === 'wiringScopePort') {
+        // Re-place a frame boundary port (top scope or an expanded part's embedded frame)
+        // at ELK's assigned face position, relative to its own container's width. The
+        // square is centred vertically in the SCOPE_PORT_NODE_H-tall node, so offset by half.
+        const bp = elkLayout.boundaryPos.get(n.id);
+        if (bp) {
+          const dd = n.data as Record<string, unknown>;
+          const pd = dd?.['port'] as PortDisplay | undefined;
+          const x  = bp.side === 'right' ? bp.containerW - SCOPE_PORT_NODE_W : 0;
+          return {
+            ...n,
+            position: { x, y: bp.y - SCOPE_PORT_NODE_H / 2 },
+            data: pd ? { ...dd, port: { ...pd, elkSide: bp.side } } : dd,
+          };
+        }
+        return n;
+      }
+      if (n.id === 'wscope-container') {
+        return { ...n, style: { ...(n.style as object), width: elkLayout.width, height: elkLayout.height } };
+      }
+      return n;
+    });
+  }, [rfNodes, elkLayout]);
+
   // When rfNodes changes (model reload, scope switch, selection, layout reset)
   // merge into displayNodes: preserve existing drag positions unless this is a
   // Reset Layout (layoutVersion changed).
@@ -1699,23 +1906,168 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   // Uses React's "adjust state during render" pattern so the fresh positions are present
   // on the same render that remounts React Flow (via its `key`), which is required because
   // React Flow keeps an existing node's internal position and ignores changed prop values.
-  const rfNodesRef = useRef(rfNodes);
+  const rfNodesRef = useRef(positionedNodes);
   if (layoutVersionRef.current !== layoutVersion || expandedPartsRef.current !== expandedParts) {
     layoutVersionRef.current = layoutVersion;
     expandedPartsRef.current = expandedParts;
-    rfNodesRef.current       = rfNodes;
-    setDisplayNodes(rfNodes);
-  } else if (rfNodesRef.current !== rfNodes) {
-    rfNodesRef.current = rfNodes;
-    setDisplayNodes(prev => {
-      const posMap = new Map(prev.map(n => [n.id, n.position]));
-      return rfNodes.map(n => { const s = posMap.get(n.id); return s ? { ...n, position: s } : n; });
-    });
+    rfNodesRef.current       = positionedNodes;
+    setDisplayNodes(positionedNodes);
+  } else if (rfNodesRef.current !== positionedNodes) {
+    // ELK layout arrived (or the built nodes changed): snap to the fresh positions.
+    // ELK owns placement, so a prior manual drag is intentionally superseded here.
+    rfNodesRef.current = positionedNodes;
+    setDisplayNodes(positionedNodes);
   }
 
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
     setDisplayNodes(prev => applyNodeChanges(changes, prev));
+    // Track dragged nodes so their edges follow the node (see draggedNodeIds).
+    const moved = changes
+      .filter((c): c is NodeChange & { id: string } => c.type === 'position' && (c as { dragging?: boolean }).dragging === true)
+      .map(c => c.id);
+    if (moved.length) {
+      setDraggedNodeIds(prev => {
+        let next = prev;
+        for (const id of moved) if (!next.has(id)) { if (next === prev) next = new Set(prev); next.add(id); }
+        return next;
+      });
+    }
   }, []);
+
+  // ── ELK layered layout (part placement + obstacle-avoiding orthogonal routing) ─
+  // Feeds ELK the part boxes with their real port squares (FIXED_POS), then applies
+  // ELK's node positions + edge routes. ELK places boxes into left→right layers with
+  // crossing minimisation, and routes wires around every box with segment spacing —
+  // so wires never overlap and never pass through a shape. Runs when the built diagram
+  // changes (scope switch, expand/collapse, port set).
+  //
+  // The built rfNodes/rfEdges also change reference when only the SELECTION changes (edge/
+  // node highlight), but that never alters the ELK inputs. `elkSigRef` fingerprints those
+  // structural inputs so a selection-only change skips the whole pass — no new layout, no
+  // layoutEpoch bump, so the view is NOT remounted or re-fit just because a wire was clicked.
+  const elkSigRef = useRef('');
+  useEffect(() => {
+    let cancelled = false;
+    const partNodes     = rfNodes.filter(n => n.type === 'wiringPart');
+    const boundaryNodes = rfNodes.filter(n => n.type === 'wiringScopePort');
+    const boundaryIds   = new Set(boundaryNodes.map(n => n.id));
+
+    const sizeOf = (n: Node) => {
+      const st = n.style as Record<string, unknown> | undefined;
+      const dd = n.data as Record<string, unknown>;
+      return {
+        width:  Number(st?.['width'] ?? 172),
+        height: Number(dd?.['nodeH'] ?? st?.['minHeight'] ?? 96),
+      };
+    };
+    const partPortSide = (p: PortDisplay) => (p.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
+    const boundarySide = (n: Node) => {
+      const pd = (n.data as Record<string, unknown>)?.['port'] as PortDisplay | undefined;
+      return (pd?.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
+    };
+
+    // ELK port id for an endpoint: a boundary/frame port is the node itself; a part port is
+    // `${partNode}::${portGraphId}`. Works at any nesting depth (node ids are already prefixed).
+    const elkPortFor = (nodeId: string, portId: unknown): string | null =>
+      boundaryIds.has(nodeId) ? nodeId : (portId ? `${nodeId}::${portId}` : null);
+    const edgeToElk = (e: Edge): WiringElkEdge | null => {
+      const d  = e.data as Record<string, unknown> | undefined;
+      const sp = elkPortFor(e.source, d?.['srcPortId']);
+      const tp = elkPortFor(e.target, d?.['tgtPortId']);
+      return sp && tp ? { id: e.id, sourcePort: sp, targetPort: tp } : null;
+    };
+
+    // The frame chain of a node id: cumulative `wpart-…` prefixes (each ending before a `::`).
+    // e.g. `wpart-a::wpart-b::wsport-c` → ['wpart-a', 'wpart-a::wpart-b'].
+    const frameChain = (id: string): string[] => {
+      const segs = id.split('::');
+      const chain: string[] = [];
+      for (let i = 1; i < segs.length; i++) chain.push(segs.slice(0, i).join('::'));
+      return chain;
+    };
+    // The deepest expanded frame that CONTAINS both endpoints (null = the top scope). An edge
+    // belongs to that container's compound so ELK routes it inside the right frame.
+    const commonFrame = (a: string, b: string): string | null => {
+      const ca = frameChain(a), cb = frameChain(b);
+      let common: string | null = null;
+      for (let i = 0; i < Math.min(ca.length, cb.length); i++) {
+        if (ca[i] === cb[i]) common = ca[i]; else break;
+      }
+      return common;
+    };
+    const edgesForFrame = (frameId: string | null): WiringElkEdge[] =>
+      rfEdges
+        .filter(e => commonFrame(e.source, e.target) === frameId)
+        .map(edgeToElk)
+        .filter((e): e is WiringElkEdge => e != null);
+
+    // Build an ELK node for a part: a leaf (its own ports) or, when expanded (it has child
+    // part nodes), a compound whose ports are its embedded frame ports, children are its
+    // internal parts (recursively), and childEdges are the wires internal to it.
+    const buildNode = (n: Node): WiringElkNode => {
+      const { width, height } = sizeOf(n);
+      const kids = partNodes.filter(c => c.parentId === n.id);
+      if (kids.length) {
+        const embedded = boundaryNodes.filter(b => b.parentId === n.id);
+        return {
+          id: n.id, width, height,
+          ports:      embedded.map(b => ({ id: b.id, side: boundarySide(b) })),
+          children:   kids.map(buildNode),
+          childEdges: edgesForFrame(n.id),
+        };
+      }
+      const ports = ((n.data as Record<string, unknown>)?.['ports'] as PortDisplay[]) ?? [];
+      return { id: n.id, width, height, ports: ports.map(p => ({ id: `${n.id}::${p.id}`, side: partPortSide(p) })) };
+    };
+
+    const topParts = partNodes.filter(n => !n.id.includes('::'));
+    const elkNodes: WiringElkNode[] = topParts.map(buildNode);
+    // Top scope boundary ports (frame ports); embedded ones belong to their compound part.
+    const boundaryPorts: WiringElkPort[] = boundaryNodes
+      .filter(n => !n.id.includes('::'))
+      .map(n => ({ id: n.id, side: boundarySide(n) }));
+    const elkEdges = edgesForFrame(null);
+
+    // Skip when only selection/styling changed — same structural inputs → same layout.
+    const elkSig = JSON.stringify({ elkNodes, boundaryPorts, elkEdges });
+    if (elkSig === elkSigRef.current) return;
+    elkSigRef.current = elkSig;
+
+    if (elkNodes.length < 2 || !elkEdges.length) { setElkLayout(null); return; }
+    layoutWiringElk(elkNodes, boundaryPorts, elkEdges).then(res => {
+      if (cancelled) return;
+      setElkLayout(res.nodePos.size ? res : null);
+      setLayoutEpoch(e => e + 1);
+    });
+    return () => { cancelled = true; };
+  }, [rfNodes, rfEdges]);
+
+  // A fresh ELK layout (expand/collapse, scope switch, hide-ports, Reset) re-routes every
+  // edge and supersedes manual drags, so clear the dragged set — edges resume ELK routing.
+  useEffect(() => {
+    setDraggedNodeIds(prev => (prev.size ? new Set() : prev));
+  }, [layoutEpoch, activeScopeName]);
+
+  // Upgrade ELK-routed connection edges to ElkEdge (orthogonal, obstacle-avoiding);
+  // un-routed edges (boundary ports, message links) keep their channel routing. An edge that
+  // touches a dragged node keeps its dynamic `channel` type so it follows the moved node's
+  // handles instead of drawing the stale fixed ELK polyline (which would hang in mid-air).
+  const routedEdges = useMemo(() => {
+    if (!elkLayout || elkLayout.routes.size === 0) return rfEdges;
+    // Dragging a node moves its WHOLE subtree (React Flow parent → children), so an edge must
+    // follow when either endpoint IS a dragged node OR is nested inside one (id prefix). This
+    // covers dragging an expanded part: its embedded boundary ports (`wpart-X::wsport-…`, the
+    // targets of cross-boundary wires) and its internal parts all move with the frame.
+    const draggedPrefixes = [...draggedNodeIds].map(id => `${id}::`);
+    const onDragged = (nodeId: string) =>
+      draggedNodeIds.has(nodeId) || draggedPrefixes.some(p => nodeId.startsWith(p));
+    return rfEdges.map(e => {
+      if (onDragged(e.source) || onDragged(e.target)) return e;
+      const wp = elkLayout.routes.get(e.id);
+      if (!wp || wp.length < 2) return e;
+      return { ...e, type: 'elkEdge', data: { ...(e.data ?? {}), waypoints: wp } };
+    });
+  }, [rfEdges, elkLayout, draggedNodeIds]);
 
   const handleNodeClick = useCallback((_e: React.MouseEvent, node: Node) => {
     const s = node.data?._sel as SelectionState;
@@ -2038,10 +2390,11 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             // Remount when the set of expanded parts changes: ReactFlow keeps an existing
             // node's internal position and ignores a changed prop position, so a fresh mount
             // is what re-places every part around the resized (expanded) part and re-fits.
-            key={[...expandedParts].sort().join('|') || 'none'}
-            nodes={displayNodes.length > 0 ? displayNodes : rfNodes}
-            edges={rfEdges}
+            key={([...expandedParts].sort().join('|') || 'none') + `#${layoutEpoch}`}
+            nodes={displayNodes.length > 0 ? displayNodes : positionedNodes}
+            edges={routedEdges}
             nodeTypes={WIRING_NODE_TYPES}
+            edgeTypes={WIRING_EDGE_TYPES}
             onNodeClick={handleNodeClick}
             onEdgeClick={handleEdgeClick}
             onPaneClick={handlePaneClick}
@@ -2053,7 +2406,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           >
             <Background color="#1a2a3a" gap={24} />
             <Controls showFitView={false} />
-            <FitPanel padding={0.3} onReset={() => setLayoutVersion(v => v + 1)} />
+            <FitPanel padding={0.3} autoFitVersion={layoutEpoch} onReset={() => setLayoutVersion(v => v + 1)} />
           </ReactFlow>
         </div>
       ) : (
