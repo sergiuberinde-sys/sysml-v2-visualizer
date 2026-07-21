@@ -575,8 +575,12 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     if (chains.length < 2) continue;
 
     const [chainA, chainB] = chains;
-    const srcId = resolveFlowChain(chainA);
-    const tgtId = resolveFlowChain(chainB);
+    // scopeDefId disambiguates an unqualified boundary-port name (a 1-element chain,
+    // e.g. `flow from pmicFault to …`) to the port declared on THIS flow's own PartDef,
+    // not a same-named port on an enclosing def earlier in document order.
+    const scopeDefId = findEnclosingPartDef(n.id);
+    const srcId = resolveFlowChain(chainA, scopeDefId);
+    const tgtId = resolveFlowChain(chainB, scopeDefId);
 
     if (!srcId || !tgtId || srcId === tgtId) continue;
 
@@ -605,8 +609,10 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     if (chains.length < 2) continue;
 
     const [chainA, chainB] = chains;
-    const srcId = resolveFlowChain(chainA);
-    const tgtId = resolveFlowChain(chainB);
+    // See Pass 4: resolve unqualified boundary-port names against THIS flow's own PartDef.
+    const scopeDefId = findEnclosingPartDef(n.id);
+    const srcId = resolveFlowChain(chainA, scopeDefId);
+    const tgtId = resolveFlowChain(chainB, scopeDefId);
 
     if (!srcId || !tgtId || srcId === tgtId) continue;
 
@@ -701,7 +707,9 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
 
   const seenSpec = new Set<string>();
   for (const n of nodes) {
-    if (n.type !== 'Superclassing') continue;
+    // The pilot API emits `Subclassification` for `part def A :> B`; older builds saw
+    // `Superclassing`. Accept both — the Java parser sets the label to the supertype name.
+    if (n.type !== 'Superclassing' && n.type !== 'Subclassification') continue;
     if (n.label === n.type) continue;
 
     const specificId = findDefAncestor(n.id);

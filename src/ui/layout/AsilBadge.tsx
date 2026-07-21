@@ -64,3 +64,34 @@ export function RealizationBadge({ kind, style }: { kind: string; style?: CSSPro
     </span>
   );
 }
+
+// ── HW/SW allocation (attribute hwSwAllocation : HwSwAllocationKind) ───────────
+// A SysML v2 enum-valued attribute rendered as a small stereotype-style tag:
+// hardware / software / hardwareSoftware → «HW» / «SW» / «HW/SW», with distinct hues
+// (HW reuses the hardware-realization teal, SW the software-realization violet).
+const HWSW_ALLOC: Record<string, { label: string; bg: string; fg: string }> = {
+  hardware:         { label: 'HW',    bg: '#0e4a5e', fg: '#a5e8ff' },
+  software:         { label: 'SW',    bg: '#3b2a6b', fg: '#d6c8ff' },
+  hardwareSoftware: { label: 'HW/SW', bg: '#134e4a', fg: '#99f6e4' },
+};
+
+export function hwSwAllocLabel(kind: string): string | null {
+  return HWSW_ALLOC[kind]?.label ?? null;
+}
+
+export function HwSwAllocBadge({ kind, style }: { kind: string; style?: CSSProperties }) {
+  const c = HWSW_ALLOC[kind];
+  if (!c) return null;
+  return (
+    <span
+      title={`HW/SW allocation: ${kind}`}
+      style={{
+        display: 'inline-block', fontFamily: 'monospace', fontSize: 8.5, fontWeight: 700,
+        lineHeight: 1, padding: '2px 4px', borderRadius: 3, letterSpacing: '0.3px',
+        background: c.bg, color: c.fg, whiteSpace: 'nowrap', ...style,
+      }}
+    >
+      «{c.label}»
+    </span>
+  );
+}

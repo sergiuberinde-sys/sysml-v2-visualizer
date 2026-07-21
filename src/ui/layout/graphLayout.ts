@@ -37,17 +37,103 @@ const elk = new ELK();
 // 'fixed' algorithm keeps every node at the position we supply and only
 // computes obstacle-avoiding ORTHOGONAL routes for the edges.
 // edgeNode=40 keeps routes 40 px clear of every node face.
-const FIXED_ROUTING_OPTIONS: Record<string, string> = {
-  'elk.algorithm':        'fixed',
-  'elk.edgeRouting':      'ORTHOGONAL',
-  'elk.spacing.edgeNode': '28',   // clearance from node face
-  'elk.spacing.edgeEdge': '20',   // gap between parallel edge segments
-};
-
 // ── Port assignment ───────────────────────────────────────────────────────────
 
 type NodeInfo = { id: string; x: number; y: number; width: number; height: number };
 type EdgeInfo = { id: string; source: string; target: string };
+
+/**
+ * Route every edge as an orthogonal Z between the faces its endpoints present to each other
+ * (exit source face → cross the channel between the boxes → enter target face), fan out edges
+ * sharing a face, then bend any segment that still crosses a box around it. A self-contained
+ * router used where elkjs's `fixed` router fails; keeps the given node positions.
+ */
+export function routeEdgesOrthogonal(nodesList: NodeInfo[], edgesList: EdgeInfo[]): ElkRouteMap {
+  const routes: ElkRouteMap = new Map();
+  const nodeById = new Map(nodesList.map(n => [n.id, n]));
+  const faceCenter = (n: NodeInfo, face: 'left' | 'right' | 'top' | 'bottom') =>
+    face === 'left'  ? { x: n.x,               y: n.y + n.height / 2 } :
+    face === 'right' ? { x: n.x + n.width,     y: n.y + n.height / 2 } :
+    face === 'top'   ? { x: n.x + n.width / 2, y: n.y } :
+                       { x: n.x + n.width / 2, y: n.y + n.height };
+  for (const ed of edgesList) {
+    const s = nodeById.get(ed.source), t = nodeById.get(ed.target);
+    if (!s || !t) continue;
+    const sf = faceOf(s, t), tf = faceOf(t, s);
+    const sp = faceCenter(s, sf), tp = faceCenter(t, tf);
+    const horiz = sf === 'left' || sf === 'right';
+    routes.set(ed.id, horiz
+      ? [sp, { x: (sp.x + tp.x) / 2, y: sp.y }, { x: (sp.x + tp.x) / 2, y: tp.y }, tp]
+      : [sp, { x: sp.x, y: (sp.y + tp.y) / 2 }, { x: tp.x, y: (sp.y + tp.y) / 2 }, tp]);
+  }
+  spreadFaceEndpoints(routes, nodesList);
+  const epMap = new Map(edgesList.map(e => [e.id, { source: e.source, target: e.target }]));
+  detourEdgesAroundNodes(
+    routes,
+    nodesList.map(n => ({ id: n.id, x: n.x, y: n.y, w: n.width, h: n.height })),
+    id => epMap.get(id) ?? {},
+    28,
+  );
+  return routes;
+}
+
+/**
+ * Obstacle-avoidance: reroute any edge whose path crosses a box that is not one of its own
+ * endpoints, detouring it as an orthogonal path over/under the crossed box(es). Operates in
+ * absolute coords, in place on `routes`. Shared by the wiring and structure layouts so a wire
+ * never cuts through a shape. `endpointsOf(edgeId)` names the edge's source/target node ids so
+ * they're excluded as obstacles.
+ */
+export function detourEdgesAroundNodes(
+  routes: ElkRouteMap,
+  rects: Array<{ id: string; x: number; y: number; w: number; h: number }>,
+  endpointsOf: (edgeId: string) => { source?: string; target?: string },
+  clearance = 20,
+): void {
+  const onRect = (p: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }, m = 6) =>
+    p.x >= r.x - m && p.x <= r.x + r.w + m && p.y >= r.y - m && p.y <= r.y + r.h + m;
+  const segHits = (a: { x: number; y: number }, b: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }) => {
+    for (let t = 0; t <= 1; t += 0.02) {
+      const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+      if (x > r.x + 6 && x < r.x + r.w - 6 && y > r.y + 6 && y < r.y + r.h - 6) return true;
+    }
+    return false;
+  };
+  const inside = (pts: { x: number; y: number }[], r: { x: number; y: number; w: number; h: number }) =>
+    pts.every(p => p.x >= r.x - 8 && p.x <= r.x + r.w + 8 && p.y >= r.y - 8 && p.y <= r.y + r.h + 8);
+  // Boxes the route crosses that aren't its own endpoints or a frame it runs inside.
+  const obstaclesFor = (pts: { x: number; y: number }[], source?: string, target?: string) =>
+    rects.filter(r =>
+      r.id !== source && r.id !== target &&
+      !onRect(pts[0], r) && !onRect(pts[pts.length - 1], r) && !inside(pts, r) &&
+      pts.some((p, i) => i > 0 && segHits(pts[i - 1], p, r)));
+
+  for (const [eid, pts] of routes) {
+    if (pts.length < 2) continue;
+    const { source, target } = endpointsOf(eid);
+    const s = pts[0], e = pts[pts.length - 1];
+    const obst = obstaclesFor(pts, source, target);
+    if (!obst.length) continue;
+    const bx0 = Math.min(...obst.map(r => r.x)),        by0 = Math.min(...obst.map(r => r.y));
+    const bx1 = Math.max(...obst.map(r => r.x + r.w)),  by1 = Math.max(...obst.map(r => r.y + r.h));
+    // Try routing around each side of the crossed boxes' bounding box (over/under for a mostly
+    // horizontal edge, left/right for a mostly vertical one). Order by nearest side first, and
+    // pick the first candidate that no longer crosses ANY box.
+    const overY = (y: number) => [s, { x: s.x, y }, { x: e.x, y }, e];
+    const overX = (x: number) => [s, { x, y: s.y }, { x, y: e.y }, e];
+    const cy = (s.y + e.y) / 2, cx = (s.x + e.x) / 2;
+    const candidates = (Math.abs(e.y - s.y) >= Math.abs(e.x - s.x)
+      ? [overX(bx0 - clearance), overX(bx1 + clearance), overY(by0 - clearance), overY(by1 + clearance)]
+      : [overY(by0 - clearance), overY(by1 + clearance), overX(bx0 - clearance), overX(bx1 + clearance)]
+    ).sort((a, b) => {
+      // prefer the detour whose turning point is closest to the edge's midpoint
+      const da = Math.hypot(a[1].x - cx, a[1].y - cy), db = Math.hypot(b[1].x - cx, b[1].y - cy);
+      return da - db;
+    });
+    const clear = candidates.find(c => obstaclesFor(c, source, target).length === 0);
+    routes.set(eid, clear ?? candidates[0]);
+  }
+}
 
 /** Returns the face of `src` that an edge toward `tgt` would exit from. */
 function faceOf(src: NodeInfo, tgt: NodeInfo): 'left' | 'right' | 'top' | 'bottom' {
@@ -55,104 +141,6 @@ function faceOf(src: NodeInfo, tgt: NodeInfo): 'left' | 'right' | 'top' | 'botto
   const dy = (tgt.y + tgt.height / 2) - (src.y + src.height / 2);
   if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 'right' : 'left';
   return dy >= 0 ? 'bottom' : 'top';
-}
-
-/**
- * Assign explicit ELK FIXED_POS ports to nodes that have ≥2 edges on the same face.
- *
- * Without explicit ports ELK routes all edges to the face centre, producing a
- * single-line appearance.  With ports distributed evenly along the face, ELK
- * routes each edge from its unique attachment point, giving naturally diverging
- * full paths throughout the entire route (not just at the endpoint).
- */
-function assignPorts(
-  nodesList: NodeInfo[],
-  edgesList: EdgeInfo[],
-): { children: ElkNode[]; edges: ElkExtendedEdge[] } {
-  const nodeMap = new Map(nodesList.map(n => [n.id, n]));
-
-  type FaceEdge = { eid: string; role: 'src' | 'tgt' };
-  const faceEdges = new Map<string, FaceEdge[]>();
-
-  for (const e of edgesList) {
-    const src = nodeMap.get(e.source);
-    const tgt = nodeMap.get(e.target);
-    if (!src || !tgt) continue;
-    const srcFace = faceOf(src, tgt);
-    const tgtFace = faceOf(tgt, src);
-    for (const [key, role] of [
-      [`${e.source}:${srcFace}`, 'src' as const],
-      [`${e.target}:${tgtFace}`, 'tgt' as const],
-    ] as const) {
-      if (!faceEdges.has(key)) faceEdges.set(key, []);
-      faceEdges.get(key)!.push({ eid: e.id, role });
-    }
-  }
-
-  // portMap: nodeId → [{id, x, y}]    edgePortMap: "eid:role" → portId
-  const portMap     = new Map<string, { id: string; x: number; y: number }[]>();
-  const edgePortMap = new Map<string, string>();
-
-  for (const [faceKey, fedges] of faceEdges) {
-    if (fedges.length < 2) continue;
-    const colonIdx = faceKey.lastIndexOf(':');
-    const nodeId   = faceKey.slice(0, colonIdx);
-    const face     = faceKey.slice(colonIdx + 1) as 'left' | 'right' | 'top' | 'bottom';
-    const nd       = nodeMap.get(nodeId);
-    if (!nd) continue;
-
-    const isLR = face === 'left' || face === 'right';
-
-    // Sort by the OTHER endpoint's position along the face axis → fewer crossings.
-    const sorted = [...fedges].sort((a, b) => {
-      const eA = edgesList.find(e => e.id === a.eid)!;
-      const eB = edgesList.find(e => e.id === b.eid)!;
-      const oA = nodeMap.get(a.role === 'src' ? eA.target : eA.source);
-      const oB = nodeMap.get(b.role === 'src' ? eB.target : eB.source);
-      if (!oA || !oB) return 0;
-      const pA = isLR ? (oA.y + oA.height / 2) : (oA.x + oA.width / 2);
-      const pB = isLR ? (oB.y + oB.height / 2) : (oB.x + oB.width / 2);
-      return pA - pB;
-    });
-
-    const faceLen = isLR ? nd.height : nd.width;
-    const step    = faceLen / (sorted.length + 1);
-    if (!portMap.has(nodeId)) portMap.set(nodeId, []);
-
-    sorted.forEach((fe, i) => {
-      const portId = `port-${nodeId}-${face}-${i}`;
-      const offset = step * (i + 1);
-      let px: number, py: number;
-      switch (face) {
-        case 'left':   px = 0;         py = offset; break;
-        case 'right':  px = nd.width;  py = offset; break;
-        case 'top':    px = offset;    py = 0;       break;
-        default:       px = offset;    py = nd.height; break;
-      }
-      portMap.get(nodeId)!.push({ id: portId, x: px, y: py });
-      edgePortMap.set(`${fe.eid}:${fe.role}`, portId);
-    });
-  }
-
-  const children: ElkNode[] = nodesList.map(n => {
-    const ports = portMap.get(n.id);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const node: ElkNode = { id: n.id, x: n.x, y: n.y, width: n.width, height: n.height } as any;
-    if (ports?.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (node as any).ports = ports.map(p => ({ id: p.id, x: p.x, y: p.y, width: 0, height: 0 }));
-      node.layoutOptions  = { 'elk.portConstraints': 'FIXED_POS' };
-    }
-    return node;
-  });
-
-  const edges: ElkExtendedEdge[] = edgesList.map(e => ({
-    id:      e.id,
-    sources: [edgePortMap.get(`${e.id}:src`) ?? e.source],
-    targets: [edgePortMap.get(`${e.id}:tgt`) ?? e.target],
-  }));
-
-  return { children, edges };
 }
 
 // ── Endpoint spreading ────────────────────────────────────────────────────────
@@ -260,69 +248,6 @@ function spreadFaceEndpoints(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/**
- * Route edges around nodes using ELK's `fixed` algorithm.
- *
- * Node positions are taken from the input unchanged — only edge routes are
- * computed.  Falls back to the original nodes (smoothstep edges) on error.
- */
-export async function applyElkLayout(
-  nodes: Node[],
-  edges: Edge[],
-  mode: LayoutMode,
-): Promise<{ nodes: Node[]; edgeRoutes: ElkRouteMap }> {
-  const empty: ElkRouteMap = new Map();
-  if (mode === 'manual') return { nodes, edgeRoutes: empty };
-
-  const topNodes = nodes.filter(n => !n.parentId);
-  const topIds   = new Set(topNodes.map(n => n.id));
-  const style    = (n: Node) => n.style as Record<string, unknown> | undefined;
-
-  const nodesList: NodeInfo[] = topNodes.map(n => ({
-    id:     n.id,
-    width:  Number(style(n)?.['width']  ?? 172),
-    height: Number(style(n)?.['height'] ?? 48),
-    x:      n.position.x,
-    y:      n.position.y,
-  }));
-
-  const edgesList: EdgeInfo[] = edges
-    .filter(e => topIds.has(e.source) && topIds.has(e.target))
-    .map(e => ({ id: e.id, source: e.source, target: e.target }));
-
-  // assignPorts distributes edges with shared face into explicit FIXED_POS
-  // ports so ELK routes full diverging paths — not just the endpoint pixel.
-  const { children: elkChildren, edges: elkEdges } = assignPorts(nodesList, edgesList);
-
-  const graph: ElkNode = {
-    id:            'root',
-    layoutOptions: FIXED_ROUTING_OPTIONS,
-    children:      elkChildren,
-    edges:         elkEdges,
-  };
-
-  try {
-    const laid = await elk.layout(graph);
-
-    const edgeRoutes: ElkRouteMap = new Map();
-    for (const e of (laid.edges ?? [])) {
-      const section = e.sections?.[0];
-      if (!section) continue;
-      edgeRoutes.set(e.id, [
-        { x: section.startPoint.x, y: section.startPoint.y },
-        ...(section.bendPoints ?? []).map(p => ({ x: p.x, y: p.y })),
-        { x: section.endPoint.x,   y: section.endPoint.y   },
-      ]);
-    }
-
-    spreadFaceEndpoints(edgeRoutes, nodesList);
-    return { nodes, edgeRoutes };
-  } catch (err) {
-    console.error('[sysml-viz] ELK routing error:', err);
-    return { nodes, edgeRoutes: empty };
-  }
-}
-
 // ── Wiring-view layout (ELK layered: placement + ports + routing) ──────────────
 // elkjs's `fixed` algorithm cannot route edges (it throws "0 edge sections"), so the
 // Interconnect view uses ELK `layered` RIGHT, which reliably (a) places the part boxes
@@ -386,7 +311,9 @@ export async function layoutWiringElk(
   const boundaryPos = new Map<string, { x: number; y: number; side: PortSide; containerW: number }>();
   const routes: ElkRouteMap = new Map();
   const empty: WiringElkResult = { nodePos, nodeSize, portPos, boundaryPos, routes, width: 0, height: 0 };
-  if (!parts.length || !edges.length) return empty;
+  // Only `parts` is required: a scope may have no top-level edges yet still need layout for its
+  // parts' positions and for edges nested inside expanded (compound) parts.
+  if (!parts.length) return empty;
 
   // WEST ports straddle the left edge (ELK returns x ≈ -portWidth); classify by the node's
   // half so a slightly-negative WEST x is still 'left' (not mis-tagged → no rendered square).
@@ -413,6 +340,47 @@ export async function layoutWiringElk(
   const layoutOneLevel = async (
     children: ChildSpec[], framePorts: WiringElkPort[], levelEdges: WiringElkEdge[],
   ) => {
+    const elkChildren = children.map(c => c.fixedPorts
+      ? {
+          id: c.id, width: c.width, height: c.height,
+          layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
+          // Clamp onto the node boundary: ELK returns WEST ports at x≈-portW (straddling the
+          // edge); feeding a negative x back as FIXED_POS can make elkjs drop routes to nearby
+          // edges (0-section). Pinning ports exactly on [0,width]×[0,height] avoids that.
+          ports: c.fixedPorts.map(p => ({
+            id: p.id, width: 8, height: 8,
+            x: Math.max(0, Math.min(c.width, p.x)),
+            y: Math.max(0, Math.min(c.height, p.y)),
+          })),
+        }
+      : {
+          id: c.id, width: c.width, height: c.height,
+          layoutOptions: { 'elk.portConstraints': 'FIXED_SIDE' },
+          ports: (c.sidePorts ?? []).map(p => ({
+            id: p.id, width: 8, height: 8,
+            layoutOptions: { 'elk.port.side': p.side === 'left' ? 'WEST' : 'EAST' },
+          })),
+        });
+    const elkEdges = levelEdges.map(e => ({ id: e.id, sources: [e.sourcePort], targets: [e.targetPort] }));
+
+    // When the container has NO frame ports (the top scope), lay the parts out FLAT at the
+    // root. Wrapping them in a compound `scope` node with `hierarchyHandling: INCLUDE_CHILDREN`
+    // is only needed to place frame ports on the container edge; without ports it adds a
+    // needless hierarchy level that makes elkjs silently drop long edges routing around a big
+    // (expanded) child — producing 0-section edges that then fall back to straight lines
+    // through the shape. A flat layout routes every edge around every box reliably.
+    if (framePorts.length === 0) {
+      const flat: ElkNode = {
+        id: 'root',
+        layoutOptions: { ...WIRING_LAYERED_OPTIONS },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        children: elkChildren as any,
+        edges: elkEdges,
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (await elk.layout(flat)) as any;
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const scope: any = {
       id: 'scope',
@@ -421,21 +389,8 @@ export async function layoutWiringElk(
         id: p.id, width: 8, height: 8,
         layoutOptions: { 'elk.port.side': p.side === 'left' ? 'WEST' : 'EAST' },
       })),
-      children: children.map(c => c.fixedPorts
-        ? {
-            id: c.id, width: c.width, height: c.height,
-            layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
-            ports: c.fixedPorts.map(p => ({ id: p.id, width: 8, height: 8, x: p.x, y: p.y })),
-          }
-        : {
-            id: c.id, width: c.width, height: c.height,
-            layoutOptions: { 'elk.portConstraints': 'FIXED_SIDE' },
-            ports: (c.sidePorts ?? []).map(p => ({
-              id: p.id, width: 8, height: 8,
-              layoutOptions: { 'elk.port.side': p.side === 'left' ? 'WEST' : 'EAST' },
-            })),
-          }),
-      edges: levelEdges.map(e => ({ id: e.id, sources: [e.sourcePort], targets: [e.targetPort] })),
+      children: elkChildren,
+      edges: elkEdges,
     };
     const graph: ElkNode = {
       id: 'root',
@@ -509,6 +464,121 @@ export async function layoutWiringElk(
     const root: WiringElkNode = { id: 'scope', width: 0, height: 0, ports: boundaryPorts, children: parts, childEdges: edges };
     const sub = await layoutSub(root);
     sub.emit(0, 0);
+
+    // Obstacle-avoidance, at EVERY nesting level. ELK's layered router can route a wire straight
+    // THROUGH a box that fills its layer height (e.g. an expanded frame, or a sibling inside one),
+    // and can drop long routes entirely (→ straight channel fallback). Detect any edge whose path
+    // crosses a box that is neither its endpoint nor a container it runs inside, and re-route it
+    // as an orthogonal detour over/under that box. All maths in absolute coords.
+    const CLEAR = 22;
+    // Absolute position of a node (accumulate parent offsets via the id's `::` chain) and of a
+    // port (leaf part port → node edge + local Y; frame/boundary port → container edge + Y).
+    const absCache = new Map<string, { x: number; y: number }>();
+    const absNodePos = (id: string): { x: number; y: number } => {
+      const cached = absCache.get(id); if (cached) return cached;
+      const p = nodePos.get(id) ?? { x: 0, y: 0 };
+      const i = id.lastIndexOf('::');
+      const par = i < 0 ? null : id.slice(0, i);
+      const base = par && nodePos.has(par) ? absNodePos(par) : { x: 0, y: 0 };
+      const r = { x: base.x + p.x, y: base.y + p.y };
+      absCache.set(id, r); return r;
+    };
+    const absPortPos = (pid: string): { x: number; y: number } | null => {
+      const i = pid.lastIndexOf('::');
+      const owner = i < 0 ? null : pid.slice(0, i);
+      const np = owner ? absNodePos(owner) : { x: 0, y: 0 };
+      const lp = portPos.get(pid);
+      if (lp) return { x: lp.side === 'right' ? np.x + (nodeSize.get(owner!)?.w ?? 0) : np.x, y: np.y + lp.y };
+      const bp = boundaryPos.get(pid);
+      if (bp) return { x: bp.side === 'right' ? np.x + bp.containerW : np.x, y: np.y + bp.y };
+      return null;
+    };
+    const allRects = [...nodePos.keys()].map(id => {
+      const p = absNodePos(id); const s = nodeSize.get(id) ?? { w: 0, h: 0 };
+      return { x: p.x, y: p.y, w: s.w, h: s.h };
+    });
+    const onRect = (pt: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }, m = 6) =>
+      pt.x >= r.x - m && pt.x <= r.x + r.w + m && pt.y >= r.y - m && pt.y <= r.y + r.h + m;
+    const segHitsRect = (a: { x: number; y: number }, b: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }) => {
+      for (let t = 0; t <= 1; t += 0.02) {
+        const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
+        if (x > r.x + 6 && x < r.x + r.w - 6 && y > r.y + 6 && y < r.y + r.h - 6) return true;
+      }
+      return false;
+    };
+    // R is a CONTAINER of the route (an ancestor frame it runs inside), not an obstacle, when
+    // every route point sits within R (small tolerance).
+    const routeInside = (pts: { x: number; y: number }[], r: { x: number; y: number; w: number; h: number }) =>
+      pts.every(p => p.x >= r.x - 8 && p.x <= r.x + r.w + 8 && p.y >= r.y - 8 && p.y <= r.y + r.h + 8);
+    const obstaclesFor = (pts: { x: number; y: number }[]) => {
+      const s = pts[0], e = pts[pts.length - 1];
+      return allRects.filter(r =>
+        !onRect(s, r) && !onRect(e, r) && !routeInside(pts, r) &&
+        pts.some((p, i) => i > 0 && segHitsRect(pts[i - 1], p, r)));
+    };
+
+    // Every edge in the tree (top + nested), for the un-routed fallback.
+    const allEdges: WiringElkEdge[] = [...edges];
+    const collectEdges = (ns: WiringElkNode[]) => {
+      for (const n of ns) { for (const ce of (n.childEdges ?? [])) allEdges.push(ce); collectEdges(n.children ?? []); }
+    };
+    collectEdges(parts);
+
+    // Un-routed edges (elkjs dropped the route → straight channel line) that would cut through a
+    // box: give them an explicit straight route so the detour pass below bends them around.
+    // Non-crossing un-routed edges keep their handle-based channel routing.
+    for (const edge of allEdges) {
+      if (routes.has(edge.id)) continue;
+      const s = absPortPos(edge.sourcePort), e = absPortPos(edge.targetPort);
+      if (!s || !e) continue;
+      if (obstaclesFor([s, e]).length) routes.set(edge.id, [s, e]);
+    }
+
+    // Detour any route (any level) that crosses a non-endpoint, non-container box. Try each
+    // side of the crossed boxes' bounding box — over/under for a mostly-horizontal edge,
+    // left/right for a mostly-vertical one (e.g. a deeply-nested wire running down a column) —
+    // and take the first that clears every box. Container exclusion keeps a nested detour inside
+    // its own frame.
+    for (const [eid, pts] of routes) {
+      if (pts.length < 2) continue;
+      const s = pts[0], e = pts[pts.length - 1];
+      const obst = obstaclesFor(pts);
+      if (!obst.length) continue;
+      const bx0 = Math.min(...obst.map(r => r.x)),       by0 = Math.min(...obst.map(r => r.y));
+      const bx1 = Math.max(...obst.map(r => r.x + r.w)), by1 = Math.max(...obst.map(r => r.y + r.h));
+      const overY = (y: number) => [s, { x: s.x, y }, { x: e.x, y }, e];
+      const overX = (x: number) => [s, { x, y: s.y }, { x, y: e.y }, e];
+      const cx = (s.x + e.x) / 2, cy = (s.y + e.y) / 2;
+      const candidates = (Math.abs(e.y - s.y) >= Math.abs(e.x - s.x)
+        ? [overX(bx0 - CLEAR), overX(bx1 + CLEAR), overY(by0 - CLEAR), overY(by1 + CLEAR)]
+        : [overY(by0 - CLEAR), overY(by1 + CLEAR), overX(bx0 - CLEAR), overX(bx1 + CLEAR)]
+      ).sort((a, b) => Math.hypot(a[1].x - cx, a[1].y - cy) - Math.hypot(b[1].x - cx, b[1].y - cy));
+      const clear = candidates.find(c => obstaclesFor(c).length === 0);
+      routes.set(eid, clear ?? candidates[0]);
+    }
+
+    // Preserve the INPUT (source/collapsed) vertical order of top parts when there are no edges
+    // between them (e.g. EcuPlatform's two domains): ELK's order is then arbitrary and flips as a
+    // part expands. Re-stack them in input order at ELK's X — a part's descendants move with it
+    // (parent-relative positions) and its internal edge routes are shifted by the same Y delta.
+    if (!edges.length && parts.length > 1) {
+      const cur = parts.map(p => ({ id: p.id, pos: nodePos.get(p.id), h: nodeSize.get(p.id)?.h ?? 0 }));
+      if (cur.every(c => c.pos)) {
+        let y = Math.min(...cur.map(c => c.pos!.y));
+        for (const c of cur) {   // `parts` is in input (source) order
+          const dy = y - c.pos!.y;
+          if (dy) {
+            nodePos.set(c.id, { x: c.pos!.x, y });
+            const pfx = `${c.id}::`;
+            for (const [eid, pts] of routes) {
+              if (eid.startsWith(pfx)) routes.set(eid, pts.map(p => ({ x: p.x, y: p.y + dy })));
+            }
+          }
+          y += c.h + 56;   // ELK nodeNode spacing
+        }
+      }
+    }
+
     return { nodePos, nodeSize, portPos, boundaryPos, routes, width: sub.width, height: sub.height };
   } catch (err) {
     console.error('[sysml-viz] ELK wiring layout error:', err);
@@ -551,6 +621,12 @@ export interface HierarchicalLayoutOpts {
    * 'stress'            — force-directed free-form placement, smooth bezier edges.
    */
   algorithm?: 'layered' | 'stress';
+  /**
+   * Layer flow for the 'layered' algorithm. 'DOWN' (default) stacks defs on top of usages
+   * (a wide horizontal band); 'RIGHT' places defs in a LEFT column and usages in a RIGHT
+   * column (a tall vertical two-column diagram).
+   */
+  direction?: 'DOWN' | 'RIGHT';
   /** Gap between ELK layers (layered mode only, default 90). */
   layerGap?: number;
   /** Minimum gap between nodes (default 40 layered, 80 stress). */
@@ -579,7 +655,7 @@ export async function applyHierarchicalLayout(
   edges: Edge[],
   opts: HierarchicalLayoutOpts = {},
 ): Promise<{ nodes: Node[]; edgeRoutes: ElkRouteMap }> {
-  const { algorithm = 'layered', layerGap = 90, nodeGap = algorithm === 'stress' ? 80 : 40, routeEdges = algorithm !== 'stress' } = opts;
+  const { algorithm = 'layered', direction = 'DOWN', layerGap = 90, nodeGap = algorithm === 'stress' ? 80 : 40, routeEdges = algorithm !== 'stress' } = opts;
   const empty: ElkRouteMap = new Map();
 
   // ── Focused layout path (two-pass, horizontal) ───────────────────────────
@@ -715,6 +791,7 @@ export async function applyHierarchicalLayout(
       id: 'root',
       layoutOptions: {
         ...LAYERED_OPTIONS,
+        'elk.direction':                             direction,
         'elk.layered.spacing.nodeNodeBetweenLayers': String(layerGap),
         'elk.spacing.nodeNode':                      String(nodeGap),
       },
@@ -751,33 +828,9 @@ export async function applyHierarchicalLayout(
     .filter(e => topIds.has(e.source) && topIds.has(e.target) && e.source !== e.target)
     .map(e => ({ id: e.id, source: e.source, target: e.target }));
 
-  const { children: routeChildren, edges: elkRouteEdges } = assignPorts(routeNodesList, routeEdgesList);
-
-  const edgeRoutes: ElkRouteMap = new Map();
-
-  try {
-    const pass2 = await elk.layout({
-      id:            'root',
-      layoutOptions: FIXED_ROUTING_OPTIONS,
-      children:      routeChildren,
-      edges:         elkRouteEdges,
-    });
-
-    for (const e of pass2.edges ?? []) {
-      const section = e.sections?.[0];
-      if (!section) continue;
-      edgeRoutes.set(e.id, [
-        { x: section.startPoint.x, y: section.startPoint.y },
-        ...(section.bendPoints ?? []).map(p => ({ x: p.x, y: p.y })),
-        { x: section.endPoint.x,   y: section.endPoint.y   },
-      ]);
-    }
-  } catch (err) {
-    console.error('[sysml-viz] ELK hierarchical layout (pass 2) error:', err);
-    // Fall through — return positioned nodes with no waypoints.
-  }
-
-  spreadFaceEndpoints(edgeRoutes, routeNodesList);
+  // Route on the layered positions ourselves (elkjs `fixed` router is unusable here):
+  // orthogonal Z + fan-out + obstacle detour, so no line cuts through a shape.
+  const edgeRoutes = routeEdgesOrthogonal(routeNodesList, routeEdgesList);
   return { nodes: positioned, edgeRoutes };
 }
 

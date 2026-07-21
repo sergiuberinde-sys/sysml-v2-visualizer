@@ -732,6 +732,15 @@ public class SysmlParseCli {
         if ("Superclassing".equals(emfType) && name == null) {
             name = crossRefName(obj, "general");
         }
+        // Subclassification is the KerML metaclass actually used for classifier
+        // specialization (`part def A :> B`); the pilot API emits Subclassification, not
+        // Superclassing.  Its superclassifier (a.k.a. inherited Specialization.general) names
+        // the supertype B — resolving it lets graphBuilder link A→B (Pass 6) so a part typed
+        // by A inherits B's parts (expand/collapse, interconnect).
+        if ("Subclassification".equals(emfType) && name == null) {
+            name = crossRefName(obj, "superclassifier");
+            if (name == null) name = crossRefName(obj, "general");
+        }
         // Subsetting.subsettedFeature names the subsetted feature in `part a :>> b`.
         // Extracting it lets graphBuilder emit subsetting edges between PartUsages.
         if ("Subsetting".equals(emfType) && name == null) {

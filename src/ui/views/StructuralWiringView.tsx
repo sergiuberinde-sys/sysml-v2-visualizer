@@ -21,7 +21,7 @@ import {
   type EdgeProps, type ReactFlowInstance,
 } from '@xyflow/react';
 import { PortHandles, makeBoundaryPortDisplay, resolvePortDirection, type PortDisplay } from '../layout/PortHandles';
-import { AsilBadge, RealizationBadge, asilLabel } from '../layout/AsilBadge';
+import { AsilBadge, RealizationBadge, HwSwAllocBadge, asilLabel } from '../layout/AsilBadge';
 import { fitNodeWidth, type TextRow } from '../layout/nodeSize';
 import '@xyflow/react/dist/style.css';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
@@ -67,7 +67,8 @@ const PORT_OUT_C  = '#fbbf24';
 const PORT_BIO_C  = '#c084fc';
 const SCOPE_BG    = '#0a1628';
 const SCOPE_BDR   = '#38bdf8';
-const CONN_C      = '#22c55e';
+const CONN_C      = '#3f6b55'; // default wiring — muted so the diagram reads calmer; a clicked
+                               // edge still brightens to EDGE_SEL_C with the spotlight glow.
 const MSG_C       = '#7dd3fc';
 const EDGE_SEL_C  = '#89b4fa'; // selected edge / port highlight colour
 const DIM         = '#334155';
@@ -101,23 +102,26 @@ function portArrow(direction: string | undefined): string {
 
 // ── Custom node for PartUsage boxes with port-handle squares ──────────────────
 
-function WiringPartNode({ data }: NodeProps) {
+function WiringPartNode({ id, data }: NodeProps) {
   const ports         = (data['ports']        as PortDisplay[]) ?? [];
   const partLbl       =  data['partLbl']       as string;
   const typeName      = (data['typeName']      as string | null) ?? null;
   const nodeH         = (data['nodeH']         as number) ?? PART_BASE_H;
   const asil          = (data['asil']          as string | undefined);
   const realization   = (data['realization']   as string | undefined);
+  const hwSwAlloc     = (data['hwSwAlloc']      as string | undefined);
   const onPortSelect  = data['onPortSelect']   as ((p: PortDisplay, e: React.MouseEvent) => void) | undefined;
   const expandable    = (data['expandable']    as boolean | undefined) ?? false;
   const expanded      = (data['expanded']      as boolean | undefined) ?? false;
-  const graphPartId   =  data['graphPartId']   as string | undefined;
   const onToggleExpand = data['onToggleExpand'] as ((id: string) => void) | undefined;
 
-  const toggle = expandable && onToggleExpand && graphPartId ? (
+  // Expansion is keyed on the full (path-prefixed) React Flow node id, NOT the semantic part
+  // id: an inherited/reused part (e.g. `controller` inside two different domains) shares one
+  // semantic id but has a distinct node id per instance, so each expands independently.
+  const toggle = expandable && onToggleExpand ? (
     <button
       title={expanded ? 'Collapse internals' : 'Expand internals'}
-      onClick={(e) => { e.stopPropagation(); onToggleExpand(graphPartId); }}
+      onClick={(e) => { e.stopPropagation(); onToggleExpand(id); }}
       style={{
         position: 'absolute', top: 4, right: 4, zIndex: 30,
         width: 16, height: 16, lineHeight: '14px', textAlign: 'center',
@@ -163,10 +167,11 @@ function WiringPartNode({ data }: NodeProps) {
             <div style={{ fontSize: 9, color: '#4ade8088', letterSpacing: '0.3px' }}>«part»</div>
             <div style={{ fontSize: 12.5, fontWeight: 600, color: PART_NAME }}>{partLbl}</div>
             {typeName && <div style={{ fontSize: 10, color: PART_TYPE, marginTop: 1 }}>: {typeName}</div>}
-            {(asil || realization) && (
+            {(asil || realization || hwSwAlloc) && (
               <div style={{ marginTop: 3, display: 'flex', gap: 4, justifyContent: 'center', flexWrap: 'wrap' }}>
                 {asil && <AsilBadge level={asil} />}
                 {realization && <RealizationBadge kind={realization} />}
+                {hwSwAlloc && <HwSwAllocBadge kind={hwSwAlloc} />}
               </div>
             )}
           </div>
@@ -511,15 +516,46 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     );
     if (!scopeDefTop) return { rfNodes: [], rfEdges: [] };
 
+    // Specialization (`part def A :> B`): A inherits B's members. Map each def to its
+    // direct supertypes so member lookups can include inherited parts/ports/connections —
+    // e.g. a part typed by an "empty" subclass still expands into the base def's internals.
+    const superOf = new Map<string, string[]>();
+    for (const e of graph.edges) {
+      if (e.type !== 'specialization') continue;
+      const list = superOf.get(e.source);
+      if (list) list.push(e.target); else superOf.set(e.source, [e.target]);
+    }
+    // Semantic children of a definition INCLUDING those inherited from its supertypes
+    // (transitively). Own members shadow inherited ones of the same name (redefinition).
+    // Cycle-guarded. For defs with no supertype this is exactly directSemanticChildren.
+    const inheritedChildren = (defId: string, seen = new Set<string>()): GraphNode[] => {
+      const own = directSemanticChildren(defId, childrenOf, nodeById);
+      const supers = superOf.get(defId);
+      if (!supers || seen.has(defId)) return own;
+      seen.add(defId);
+      const byLabel = new Set(own.map(n => n.label));
+      const merged = [...own];
+      for (const sup of supers) {
+        for (const inh of inheritedChildren(sup, seen)) {
+          if (!byLabel.has(inh.label)) { merged.push(inh); byLabel.add(inh.label); }
+        }
+      }
+      return merged;
+    };
+
     // Reusable interconnect computation for one PartDefinition scope. Called for the
     // top scope and, recursively, for the type def of every expanded part usage so an
     // expanded part shows the exact diagram the top-level view renders for that def.
     // Returns natural (unprefixed) ids; embedding remaps them via prefixDiagram().
-    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set(), externallyConnected: Set<string> = new Set()): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
+    // `pathPrefix` is the id prefix this diagram will be embedded under (e.g.
+    // `wpart-drivingDomain::`), so expansion state — keyed on the full node-id path — is
+    // resolved per INSTANCE, not per shared semantic id (two domains' inherited `controller`
+    // expand independently).
+    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set(), externallyConnected: Set<string> = new Set(), pathPrefix = ''): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
       if (!graph) return { nodes: [], edges: [], width: 0, height: 0 };
 
-    // Semantic children of the scope PartDef
-    const scopeChildren = directSemanticChildren(scopeDef.id, childrenOf, nodeById);
+    // Semantic children of the scope PartDef (including members inherited via `:>`).
+    const scopeChildren = inheritedChildren(scopeDef.id);
     const partUsages    = scopeChildren.filter(n => n.type === 'PartUsage');
     const scopePorts    = scopeChildren.filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition');
     const scopeItems    = scopeChildren.filter(n => n.type === 'ItemUsage');
@@ -527,6 +563,17 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
 
     // typedBy edges: usage → definition (needed for port direction inference)
     const typedByEdges = graph.edges.filter(e => e.type === 'typedBy');
+
+    // Feature type name by owner id. The official parser attaches a port's type either
+    // as a `typedBy` edge OR — for types declared in a context file — as a `FeatureTyping`
+    // child node (contains edge) whose label is the type name. The latter is the only place
+    // the type shows up for such ports, and its …In/…Out suffix encodes the direction.
+    const featureTypeById = new Map<string, string>();
+    for (const e of graph.edges) {
+      if (e.type !== 'contains') continue;
+      const child = nodeById.get(e.target);
+      if (child?.type === 'FeatureTyping' && child.label) featureTypeById.set(e.source, child.label);
+    }
 
     // Connection-based direction inference — fallback for ports that have no
     // explicit direction, no typedBy edge (e.g. SysML v2 ConjugatedPortTyping
@@ -684,11 +731,21 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           if (resolved) return port.isConjugated ? flipDir(resolved) : resolved;
         }
       }
-      // Name heuristic (*In → in, *Out → out, from_* → in, to_* → out).
+      // Name heuristic on the port's own name (*In → in, *Out → out, from_*, to_*).
       const fromName = resolvePortDirection(port.label, '');
       if (fromName) return fromName;
-      // Final fallback: inferred from this port's role in connection edges.
-      return portConnDir.get(port.id) ?? '';
+      // Inferred from this port's role in connection edges (connected ports).
+      const fromConn = portConnDir.get(port.id);
+      if (fromConn) return fromConn;
+      // Direction is commonly encoded in the port's TYPE name (…In / …Out), e.g.
+      // `signal : HardwareSafetySignalOut`. The type def often lives in a context file
+      // (so its directed features aren't loaded), and an UNCONNECTED port has no flow to
+      // infer from — fall back to the type-name suffix so it keeps its arrow, not a dot.
+      // Placed after connection inference, so connected ports are unaffected (no regression).
+      const typeName = getTypeName(port.id) ?? featureTypeById.get(port.id) ?? '';
+      const fromType = typeName ? resolvePortDirection(typeName, '') : '';
+      if (fromType) return port.isConjugated ? flipDir(fromType) : fromType;
+      return '';
     }
 
     function portDisplay(port: GraphNode): PortDisplay {
@@ -839,7 +896,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       if (typedByEdge) {
         const typeDef = nodeById.get(typedByEdge.target);
         if (typeDef) {
-          const defKids = directSemanticChildren(typeDef.id, childrenOf, nodeById);
+          const defKids = inheritedChildren(typeDef.id);
           allPorts = defKids.filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition');
         }
       }
@@ -891,7 +948,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     };
     const isExpandable = (partId: string): boolean => {
       const td = typeDefOf(partId);
-      return !!td && directSemanticChildren(td.id, childrenOf, nodeById).some(n => n.type === 'PartUsage');
+      return !!td && inheritedChildren(td.id).some(n => n.type === 'PartUsage');
     };
 
     // ASIL / Realization for a part box: the PartUsage's own metadata, else its
@@ -907,6 +964,28 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       if (own) return own;
       const edge = typedByEdges.find(e => e.source === partId);
       return edge ? nodeById.get(edge.target)?.realization : undefined;
+    }
+    // hwSwAllocation attribute value (SysML v2 `attribute hwSwAllocation : HwSwAllocationKind
+    // = HwSwAllocationKind::<kind>`). The enum value lives in a nested Membership node whose
+    // label is `<EnumType>::<kind>` (FeatureValue → FeatureReferenceExpression → Membership).
+    function hwSwAllocOf(ownerId: string): string | undefined {
+      const attr = directSemanticChildren(ownerId, childrenOf, nodeById)
+        .find(n => n.type === 'AttributeUsage' && n.label === 'hwSwAllocation');
+      if (!attr) return undefined;
+      const stack = [attr.id]; const seen = new Set<string>();
+      while (stack.length) {
+        const id = stack.pop()!; if (seen.has(id)) continue; seen.add(id);
+        const lbl = nodeById.get(id)?.label;
+        if (lbl && lbl.includes('::')) return lbl.slice(lbl.lastIndexOf('::') + 2);
+        for (const cid of childrenOf.get(id) ?? []) stack.push(cid);
+      }
+      return undefined;
+    }
+    function getPartHwSwAlloc(partId: string): string | undefined {
+      const own = hwSwAllocOf(partId);
+      if (own) return own;
+      const edge = typedByEdges.find(e => e.source === partId);
+      return edge ? hwSwAllocOf(edge.target) : undefined;
     }
 
     // Map portId / partId → owning PartUsage id (or scope id for boundary ports).
@@ -970,14 +1049,16 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       childNodes: Node[]; childEdges: Edge[]; width: number; height: number; boundaryPortIds: Set<string>;
     }>();
     for (const part of partUsages) {
-      if (!expandedParts.has(part.id)) continue;
+      // Keyed on the full node-id path (`${pathPrefix}wpart-<id>`) so instances of the same
+      // (inherited/reused) part expand independently across sibling containers.
+      if (!expandedParts.has(`${pathPrefix}wpart-${part.id}`)) continue;
       const td = typeDefOf(part.id);
       if (!td || seen.has(td.id)) continue; // guard against self-referential recursion
-      const tdChildren = directSemanticChildren(td.id, childrenOf, nodeById);
+      const tdChildren = inheritedChildren(td.id);
       if (!tdChildren.some(n => n.type === 'PartUsage')) continue;
       // This scope's connected-port set includes (canonicalised to def-port ids) every
       // boundary port of `part` that we wire to — pass it so the child keeps them visible.
-      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]), connectedPortIds);
+      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]), connectedPortIds, `${pathPrefix}wpart-${part.id}::`);
       if (!sub.nodes.length) continue;
       const prefix  = `wpart-${part.id}::`;
       const frameId = `wpart-${part.id}`;
@@ -1484,6 +1565,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           typeName: typeName ?? null,
           asil:        getPartAsil(part.id),
           realization: getPartRealization(part.id),
+          hwSwAlloc:   getPartHwSwAlloc(part.id),
           expandable:    isExpandable(part.id),
           expanded:      !!internals,
           graphPartId:   part.id,
@@ -1960,7 +2042,18 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         height: Number(dd?.['nodeH'] ?? st?.['minHeight'] ?? 96),
       };
     };
-    const partPortSide = (p: PortDisplay) => (p.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
+    // Port side for the ELK routing graph. Prefer the topology-based, peer-facing side
+    // (portsShowLeft/Right, carried on the PortDisplay as showLeft/showRight) so an output
+    // whose consumer sits to its LEFT gets its port on the left instead of wrapping a wire
+    // all the way around the box (the "messed up tlfManager" case: normalizedFault → a
+    // faultManager that ranks to its left). This also keeps the rendered square on the same
+    // side as the handle the edge actually attaches to. Fall back to data-flow direction only
+    // when there's no unambiguous peer side (unconnected/delegation/mixed-side ports).
+    const partPortSide = (p: PortDisplay) => {
+      if (p.showLeft && !p.showRight) return 'left' as const;
+      if (p.showRight && !p.showLeft) return 'right' as const;
+      return (p.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
+    };
     const boundarySide = (n: Node) => {
       const pd = (n.data as Record<string, unknown>)?.['port'] as PortDisplay | undefined;
       return (pd?.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
@@ -2029,13 +2122,25 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     const elkEdges = edgesForFrame(null);
 
     // Skip when only selection/styling changed — same structural inputs → same layout.
+    // Record the signature only AFTER a layout actually completes (below), NOT here: if this
+    // effect is cancelled/re-run while the async layout is in flight, recording eagerly would
+    // let the next run's guard skip it — leaving elkLayout permanently null (no ELK applied).
     const elkSig = JSON.stringify({ elkNodes, boundaryPorts, elkEdges });
     if (elkSig === elkSigRef.current) return;
-    elkSigRef.current = elkSig;
 
-    if (elkNodes.length < 2 || !elkEdges.length) { setElkLayout(null); return; }
+    // Run ELK when there's something to lay out — ≥2 top boxes OR an expanded (compound) box —
+    // and any edge anywhere in the tree. A scope whose top parts aren't wired to each other but
+    // whose EXPANDED internals are (e.g. EcuPlatform's two domains) still needs ELK for those
+    // internals; gating on top-level edges alone would drop them to the tangled built layout.
+    const treeHasEdges = (ns: WiringElkNode[]): boolean =>
+      ns.some(n => (n.childEdges?.length ?? 0) > 0 || treeHasEdges(n.children ?? []));
+    const worthLayingOut = elkNodes.length >= 2 || elkNodes.some(n => (n.children?.length ?? 0) > 0);
+    if (!worthLayingOut || (elkEdges.length === 0 && !treeHasEdges(elkNodes))) {
+      setElkLayout(null); elkSigRef.current = elkSig; return;
+    }
     layoutWiringElk(elkNodes, boundaryPorts, elkEdges).then(res => {
       if (cancelled) return;
+      elkSigRef.current = elkSig;
       setElkLayout(res.nodePos.size ? res : null);
       setLayoutEpoch(e => e + 1);
     });
@@ -2401,7 +2506,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             onNodesChange={handleNodesChange}
             onInit={inst => { rfInstanceRef.current = inst; }}
             fitView
-            fitViewOptions={{ padding: 0.3 }}
+            // Allow zooming far out so a deeply-expanded diagram fits and stays pannable —
+            // the default minZoom (0.5) clamps both manual zoom-out and the fit.
+            minZoom={0.05}
+            fitViewOptions={{ padding: 0.3, minZoom: 0.05 }}
             nodesConnectable={false}
           >
             <Background color="#1a2a3a" gap={24} />

@@ -15,7 +15,7 @@ import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGra
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
 import { ElkEdge, roundedPolyline } from '../layout/ElkEdge';
-import { applyHierarchicalLayout, applyElkLayout } from '../layout/graphLayout';
+import { applyHierarchicalLayout } from '../layout/graphLayout';
 
 // ── Layout direction context (consumed by custom node type) ───────────────────
 
@@ -1290,7 +1290,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
     // Focused mode: ELK layered RIGHT with crossing minimisation (algorithm='stress').
     const layoutPromise = focusedNodeId
       ? applyHierarchicalLayout(filteredNodes, edgesForLayout, { algorithm: 'stress' })
-      : applyElkLayout(filteredNodes, edgesForLayout, 'lr');
+      : applyHierarchicalLayout(filteredNodes, edgesForLayout, { direction: 'RIGHT' });
 
     layoutPromise.then(({ nodes: positioned, edgeRoutes }) => {
       if (cancelled) return;

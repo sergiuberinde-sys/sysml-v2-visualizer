@@ -227,11 +227,14 @@ export function PortHandles(props: PortHandlesProps) {
 
         // Labels are positioned OUTSIDE the node boundary so they never overlap
         // items/actions content. The node must have overflow: visible.
-        // Place the label on whichever side the port square actually appears.
-        // If the square is forced exclusively to the right (showR && !showL), the
-        // label must go right even when `direction` has no explicit 'out' value
-        // (e.g. synthetic ports with unknown direction from cross-file models).
-        const labelGoesRight = d === 'out' || (showR && !showL);
+        // Place the label on whichever side the port square actually appears — the label
+        // must sit next to its own square, never across the shape. When ELK assigned the
+        // face (Interconnect view) follow it verbatim; an OUT port ELK put on the LEFT keeps
+        // its label on the left. Otherwise fall back to the square's visible side, then the
+        // declared direction (synthetic ports with unknown direction from cross-file models).
+        const labelGoesRight = p.elkSide !== undefined
+          ? p.elkSide === 'right'
+          : d === 'out' || (showR && !showL);
         const labelStyle: CSSProperties = {
           position:  'absolute',
           fontSize:   9,
