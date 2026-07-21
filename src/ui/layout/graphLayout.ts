@@ -559,27 +559,39 @@ export async function layoutWiringElk(
 
     // Preserve the INPUT (source/collapsed) vertical order of top parts when there are no edges
     // between them (e.g. EcuPlatform's two domains): ELK's order is then arbitrary and flips as a
-    // part expands. Re-stack them in input order at ELK's X — a part's descendants move with it
-    // (parent-relative positions) and its internal edge routes are shifted by the same Y delta.
+    // part expands. Re-stack them in input order in a single left-aligned column — a part's
+    // descendants move with it (parent-relative positions) and its internal edge routes are
+    // shifted by the same delta.
+    let outW = sub.width, outH = sub.height;
     if (!edges.length && parts.length > 1) {
-      const cur = parts.map(p => ({ id: p.id, pos: nodePos.get(p.id), h: nodeSize.get(p.id)?.h ?? 0 }));
-      if (cur.every(c => c.pos)) {
+      const cur = parts.map(p => ({ id: p.id, pos: nodePos.get(p.id), s: nodeSize.get(p.id) }));
+      if (cur.every(c => c.pos && c.s)) {
+        const x0 = Math.min(...cur.map(c => c.pos!.x));
         let y = Math.min(...cur.map(c => c.pos!.y));
+        let maxRight = 0, bottom = y;
         for (const c of cur) {   // `parts` is in input (source) order
-          const dy = y - c.pos!.y;
-          if (dy) {
-            nodePos.set(c.id, { x: c.pos!.x, y });
+          const dx = x0 - c.pos!.x, dy = y - c.pos!.y;
+          if (dx || dy) {
+            nodePos.set(c.id, { x: x0, y });
             const pfx = `${c.id}::`;
             for (const [eid, pts] of routes) {
-              if (eid.startsWith(pfx)) routes.set(eid, pts.map(p => ({ x: p.x, y: p.y + dy })));
+              if (eid.startsWith(pfx)) routes.set(eid, pts.map(p => ({ x: p.x + dx, y: p.y + dy })));
             }
           }
-          y += c.h + 56;   // ELK nodeNode spacing
+          maxRight = Math.max(maxRight, x0 + c.s!.w);
+          bottom   = y + c.s!.h;
+          y += c.s!.h + 56;   // ELK nodeNode spacing
         }
+        // ELK's component packing may have placed these disconnected parts side by side, so
+        // sub.{width,height} bound that arrangement — not this vertical stack. Grow the frame to
+        // the stack's extent (matching ELK's 48px padding) so no part sits outside the boundary.
+        const PAD = 48;
+        outW = Math.max(outW, maxRight + PAD);
+        outH = Math.max(outH, bottom + PAD);
       }
     }
 
-    return { nodePos, nodeSize, portPos, boundaryPos, routes, width: sub.width, height: sub.height };
+    return { nodePos, nodeSize, portPos, boundaryPos, routes, width: outW, height: outH };
   } catch (err) {
     console.error('[sysml-viz] ELK wiring layout error:', err);
     return empty;
