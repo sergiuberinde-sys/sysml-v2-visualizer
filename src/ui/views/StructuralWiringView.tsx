@@ -430,6 +430,31 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     });
   }, []);
 
+  // The synthetic id of the top-level scope frame (used as the focus target for moving the
+  // top-level parts, which are React-Flow-top-level nodes with no parentId).
+  const TOP_FRAME = 'wscope-container';
+
+  // Double-click a part to "enter" it: the parts inside the chosen frame become draggable.
+  // Delivered by a NATIVE onDoubleClick on the node body (see WiringPartNode) rather than
+  // React Flow's onNodeDoubleClick — with nodesDraggable={false} the pane's pan handler makes
+  // nodes pan-transparent and swallows RF's synthetic node events, but native dblclick still
+  // fires. An expanded frame enters itself (move its children); any other part enters the
+  // container it lives in (id path `a::b::c` → frame `a::b`; a top-level part → the scope
+  // frame 'wscope-container') so the part and its siblings can be moved.
+  const onEnterFrame = useCallback((nodeId: string, expanded: boolean) => {
+    if (expanded) { setFocusedFrameId(nodeId); return; }
+    const cut = nodeId.lastIndexOf('::');
+    setFocusedFrameId(cut > 0 ? nodeId.slice(0, cut) : TOP_FRAME);
+  }, []);
+
+  // ── Move mode ────────────────────────────────────────────────────────────────
+  // By default left-drag pans the whole canvas and NOTHING is draggable (so a zoomed-in
+  // dense diagram is easy to move around). Double-clicking a part "enters" it: only the
+  // parts inside the focused frame become draggable, so you can rearrange them without
+  // fighting the pan. `focusedFrameId` is the node id of that frame (an expanded part's
+  // node, or TOP_FRAME for the top-level parts). Click empty space to exit.
+  const [focusedFrameId, setFocusedFrameId] = useState<string | null>(null);
+
   // ── Drag-position persistence ────────────────────────────────────────────────
   // displayNodes is the source-of-truth for React Flow; it is initialised from
   // the useMemo output and updated in-place by onNodesChange during drag.
@@ -492,6 +517,9 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
 
   // Reset expansion when the scope changes — expanded ids belong to the old scope.
   useEffect(() => { setExpandedParts(new Set()); }, [activeScopeName]);
+  // Exit move mode when the scope or expansion set changes — the focused frame may no
+  // longer exist and the layout reflows, so we always fall back to pan-the-canvas.
+  useEffect(() => { setFocusedFrameId(null); }, [activeScopeName, expandedParts]);
 
   // Must be defined before the main useMemo that references it in the dep array.
   const onPortSelect = useCallback((port: PortDisplay, e: React.MouseEvent) => {
@@ -508,13 +536,13 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
 
   // ── Build ReactFlow nodes and edges ──────────────────────────────────────────
 
-  const { rfNodes, rfEdges } = useMemo(() => {
-    if (!graph || !activeScopeName) return { rfNodes: [], rfEdges: [] };
+  const { rfNodes, rfEdges, allExpandableIds } = useMemo(() => {
+    if (!graph || !activeScopeName) return { rfNodes: [], rfEdges: [], allExpandableIds: [] as string[] };
 
     const scopeDefTop = graph.nodes.find(
       n => n.type === 'PartDefinition' && n.label === activeScopeName,
     );
-    if (!scopeDefTop) return { rfNodes: [], rfEdges: [] };
+    if (!scopeDefTop) return { rfNodes: [], rfEdges: [], allExpandableIds: [] as string[] };
 
     // Specialization (`part def A :> B`): A inherits B's members. Map each def to its
     // direct supertypes so member lookups can include inherited parts/ports/connections —
@@ -542,6 +570,26 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       }
       return merged;
     };
+
+    // Every part that can be expanded, at every nesting depth, keyed by the SAME
+    // path-prefixed node id the expand toggle uses (`wpart-a::wpart-b`). Walks the type
+    // tree independently of the current expansion state so "Expand all" knows the full set.
+    // Cycle-guarded on the ancestor def chain, mirroring computeInterconnect's `seen`.
+    const allExpandableIds: string[] = [];
+    const collectExpandable = (defId: string, prefix: string, seen: Set<string>): void => {
+      const nextSeen = new Set([...seen, defId]);
+      for (const child of inheritedChildren(defId)) {
+        if (child.type !== 'PartUsage') continue;
+        const te = graph.edges.find(e => e.type === 'typedBy' && e.source === child.id);
+        const td = te ? nodeById.get(te.target) : undefined;
+        if (!td || nextSeen.has(td.id)) continue;
+        if (!inheritedChildren(td.id).some(n => n.type === 'PartUsage')) continue;
+        const id = `${prefix}wpart-${child.id}`;
+        allExpandableIds.push(id);
+        collectExpandable(td.id, `${id}::`, nextSeen);
+      }
+    };
+    collectExpandable(scopeDefTop.id, '', new Set());
 
     // Reusable interconnect computation for one PartDefinition scope. Called for the
     // top scope and, recursively, for the type def of every expanded part usage so an
@@ -1922,7 +1970,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     } // ── end computeInterconnect ──────────────────────────────────────────────
 
     const top = computeInterconnect(scopeDefTop);
-    return { rfNodes: top.nodes, rfEdges: top.edges };
+    return { rfNodes: top.nodes, rfEdges: top.edges, allExpandableIds };
   // layoutVersion in deps forces position recomputation when user clicks Reset
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, activeScopeName, nodeById, childrenOf, selection, layoutVersion, hideUnconnectedPorts, onPortSelect, expandedParts, onToggleExpand]);
@@ -2054,8 +2102,17 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       if (p.showRight && !p.showLeft) return 'right' as const;
       return (p.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
     };
+    // Same rule as partPortSide, for scope/frame boundary ports: honour the topology side
+    // (showLeft/showRight, set from boundaryOnRight so the boundary port sits on the frame
+    // edge its internal delegation port leaves from). Using direction here instead put an
+    // input boundary port on the LEFT while its consumer's delegation port sat on the RIGHT,
+    // so the wire crossed the whole frame and hooked into the port from above (the "unnatural"
+    // tlfManager.pmicFault / configurationStatus connections). Fall back to direction only when
+    // no unambiguous topology side is set.
     const boundarySide = (n: Node) => {
       const pd = (n.data as Record<string, unknown>)?.['port'] as PortDisplay | undefined;
+      if (pd?.showLeft && !pd.showRight) return 'left' as const;
+      if (pd?.showRight && !pd.showLeft) return 'right' as const;
       return (pd?.direction === 'out' ? 'right' : 'left') as 'left' | 'right';
     };
 
@@ -2184,8 +2241,16 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     if (s) onSelect(s);
   }, [onSelect]);
 
-  // Pane click clears selection — also clears the edge spotlight.
-  const handlePaneClick = useCallback(() => onSelect(null), [onSelect]);
+  // Pane click clears selection — also clears the edge spotlight — and exits move mode
+  // ("click outside the part to de-select it and return to default pan").
+  const handlePaneClick = useCallback(() => { onSelect(null); setFocusedFrameId(null); }, [onSelect]);
+
+  // Enter move mode via a double-*mousedown* on a part — see the native capture-phase listener
+  // installed on wiringPaneRef below. React Flow's pan (d3-zoom) swallows node click/dblclick
+  // while nodesDraggable is off, but mousedown still reaches a capture-phase listener, so we
+  // hit-test the node from the DOM. `lastPointerDown` remembers the previous mousedown so two
+  // in quick succession at the same spot register as a double-click.
+  const lastPointerDown = useRef({ t: 0, x: 0, y: 0 });
 
   // ── Add-element (palette drag-drop → source edit) ─────────────────────────────
   const editable = !!onIncrementalEdit || !!onAddMemberToDef;
@@ -2213,6 +2278,30 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
 
   const wiringPaneRef = useRef<HTMLDivElement>(null);
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+
+  // Double-click-a-part-to-enter-it, delivered by a NATIVE capture-phase mousedown listener on
+  // the canvas wrapper. React's synthetic onMouseDownCapture is delegated through React's tree
+  // and its ordering against React Flow's own d3-zoom pane listener is unreliable; a real
+  // addEventListener(..., true) is guaranteed by the DOM to fire in the capture phase, before
+  // d3-zoom's target-phase handler consumes the event. We detect two mousedowns close in time
+  // and position (a double-click) over a part node, then enter that frame.
+  useEffect(() => {
+    const pane = wiringPaneRef.current;
+    if (!pane) return;
+    const onDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const now = Date.now();
+      const prev = lastPointerDown.current;
+      const isDouble = now - prev.t < 350 && Math.abs(e.clientX - prev.x) < 8 && Math.abs(e.clientY - prev.y) < 8;
+      lastPointerDown.current = { t: now, x: e.clientX, y: e.clientY };
+      if (!isDouble) return;
+      const el = (e.target as HTMLElement).closest?.('.react-flow__node-wiringPart') as HTMLElement | null;
+      const nodeId = el?.getAttribute('data-id');
+      if (nodeId) onEnterFrame(nodeId, expandedParts.has(nodeId));
+    };
+    pane.addEventListener('mousedown', onDown, true);
+    return () => pane.removeEventListener('mousedown', onDown, true);
+  }, [onEnterFrame, expandedParts]);
   // When set, the add-element form is shown at {x,y} within the canvas.
   // target: 'scope' → insert into the scope def (active file); { defName } → add to
   // the usage's type definition (possibly in another file).
@@ -2318,6 +2407,31 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   const partCount = rfNodes.filter(n => n.id.startsWith('wpart-') || n.id.startsWith('wself-')).length;
   const connCount = rfEdges.length;
 
+  // "Expand/collapse all": when every expandable part (at any depth) is already open the
+  // button collapses everything; otherwise it opens the whole tree at once.
+  const allExpanded = allExpandableIds.length > 0 && allExpandableIds.every(id => expandedParts.has(id));
+
+  // Move mode: only the parts inside the focused frame are draggable; everything else stays
+  // non-draggable so left-drag pans. In pan mode (no focus) the base list is returned as-is,
+  // so React Flow's global nodesDraggable={false} keeps every node fixed.
+  const interactiveNodes = useMemo(() => {
+    const base = displayNodes.length > 0 ? displayNodes : positionedNodes;
+    if (focusedFrameId == null) return base;
+    return base.map(n => {
+      if (n.type !== 'wiringPart') return n;
+      const inFocus = n.parentId === focusedFrameId || (focusedFrameId === TOP_FRAME && n.parentId == null);
+      const isFrame = n.id === focusedFrameId;
+      if (!inFocus && !isFrame) return n;
+      const style = isFrame
+        ? { ...(n.style as object), outline: `2px dashed ${PART_BORDER}`, outlineOffset: 3 }
+        : { ...(n.style as object), cursor: 'move' as const };
+      return { ...n, draggable: inFocus, style, data: { ...(n.data as Record<string, unknown>), _moveActive: inFocus, _focusedFrame: isFrame } };
+    });
+  }, [displayNodes, positionedNodes, focusedFrameId]);
+  const focusedLabel = focusedFrameId === TOP_FRAME ? activeScopeName
+    : focusedFrameId ? (interactiveNodes.find(n => n.id === focusedFrameId)?.data as Record<string, unknown> | undefined)?.['partLbl'] as string | undefined
+    : undefined;
+
   const actionBtn: React.CSSProperties = {
     background: '#111827', border: '1px solid #2a2a3a',
     color: '#9ca3af', borderRadius: 4, padding: '2px 9px',
@@ -2380,6 +2494,15 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         >
           ↺ Reset Layout
         </button>
+        {allExpandableIds.length > 0 && (
+          <button
+            style={actionBtn}
+            title={allExpanded ? 'Collapse every expanded part' : 'Expand every part that has internals'}
+            onClick={() => setExpandedParts(allExpanded ? new Set() : new Set(allExpandableIds))}
+          >
+            {allExpanded ? '⤡ Collapse all' : '⤢ Expand all'}
+          </button>
+        )}
         <button
           style={hideUnconnectedPorts
             ? { ...actionBtn, background: '#1e3a5f', borderColor: '#38bdf8', color: '#7dd3fc' }
@@ -2431,7 +2554,20 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           style={{ flex: 1, minHeight: 0, position: 'relative' }}
           onDragOver={onCanvasDragOver}
           onDrop={onCanvasDrop}
+          data-move-mode={focusedFrameId ? 'edit' : 'pan'}
         >
+          {focusedFrameId && (
+            <div style={{
+              position: 'absolute', left: 8, top: 8, zIndex: 100,
+              background: '#0b2a1c', border: `1px solid ${PART_BORDER}`, color: '#bbf7d0',
+              padding: '4px 10px', borderRadius: 6, fontFamily: 'monospace', fontSize: 11,
+              boxShadow: '0 6px 18px rgba(0,0,0,0.45)', pointerEvents: 'none',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span>✎ Moving parts in <b style={{ color: '#dcfce7' }}>{focusedLabel ?? 'scope'}</b></span>
+              <span style={{ color: '#4d7c63' }}>· click empty space to exit</span>
+            </div>
+          )}
           {dropReject && (
             <div style={{
               position: 'absolute', left: Math.max(8, dropReject.x), top: Math.max(8, dropReject.y), zIndex: 100,
@@ -2496,7 +2632,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             // node's internal position and ignores a changed prop position, so a fresh mount
             // is what re-places every part around the resized (expanded) part and re-fits.
             key={([...expandedParts].sort().join('|') || 'none') + `#${layoutEpoch}`}
-            nodes={displayNodes.length > 0 ? displayNodes : positionedNodes}
+            nodes={interactiveNodes}
             edges={routedEdges}
             nodeTypes={WIRING_NODE_TYPES}
             edgeTypes={WIRING_EDGE_TYPES}
@@ -2505,6 +2641,9 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             onPaneClick={handlePaneClick}
             onNodesChange={handleNodesChange}
             onInit={inst => { rfInstanceRef.current = inst; }}
+            // Left-drag pans the canvas by default (dense zoomed-in diagrams are hard to pan
+            // otherwise); nodes only become draggable inside a double-clicked frame.
+            nodesDraggable={false}
             fitView
             // Allow zooming far out so a deeply-expanded diagram fits and stays pannable —
             // the default minZoom (0.5) clamps both manual zoom-out and the fit.

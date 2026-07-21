@@ -2,10 +2,11 @@
 
 ## Purpose & status
 
-Three capabilities were **prototyped** in the SysML v2 Visualizer's **Interconnect view**
+Five capabilities were **prototyped** in the SysML v2 Visualizer's **Interconnect view**
 (the structural-wiring / Internal Block Diagram view; prototype code in
 `src/ui/views/StructuralWiringView.tsx`): (1) show / hide unconnected ports, (2) expand / collapse
-part internals, and (3) automatic non-overlapping layout with viewport auto-fit. This document
+part internals, (3) automatic non-overlapping layout with viewport auto-fit, (4) one-click expand-all /
+collapse-all, and (5) pan-by-default navigation with a double-click-to-enter move mode. This document
 specifies them so the development team can implement them as **official, supported features** in the
 parser/visualization pipeline. The prototype is a reference for behavior only — it is not the target
 implementation.
@@ -193,6 +194,124 @@ than one nested hierarchical pass, because elkjs `INCLUDE_CHILDREN` mis-routes c
 `src/ui/layout/FitPanel.tsx` — `autoFitVersion` drives `fitView` via the `useReactFlow` hook (live
 instance) so auto-fit fires reliably on every settled layout; `StructuralWiringView.tsx` passes
 `autoFitVersion={layoutEpoch}` (bumped when each async ELK layout resolves).
+
+---
+
+## Feature 4 — Expand All / Collapse All
+
+### 4.1 Rationale
+Feature 2 expands one part usage at a time. In a scope with many expandable parts, drilling into
+each one individually is tedious when the user wants a full white-box overview (or wants to return
+everything to black boxes at once). A single control that expands every expandable part — or
+collapses every expanded one — lets the user flip the whole scope between black-box and white-box
+in one action.
+
+### 4.2 Definitions
+- **Expandable set** — the set of all expandable parts (per Feature 2 §2.2) in the current scope,
+  computed from the containment tree independently of the current expansion state.
+- **Fully expanded** — the state in which every part in the expandable set is expanded.
+
+### 4.3 Functional requirements
+- **FR-XA-1** The view SHALL provide a single toolbar control that expands **every** expandable part
+  in the current scope in one action, and collapses **every** expanded part in one action.
+- **FR-XA-2** The control SHALL be a toggle: when the scope is **fully expanded** it SHALL offer
+  *Collapse all*; otherwise it SHALL offer *Expand all*.
+- **FR-XA-3** The control SHALL appear only when the current scope has at least one expandable part;
+  when nothing is expandable it SHALL be hidden.
+- **FR-XA-4** Expand-all SHALL be equivalent to individually expanding each part in the expandable
+  set: it MUST honour all Feature 2 guarantees (correct routing to boundary ports, self-recursion
+  guard FR-EX-7, one-level-per-nesting semantics — nested expandable parts revealed by expand-all
+  render as collapsed boxes with their own controls).
+- **FR-XA-5** Expand-all and collapse-all SHALL each trigger exactly one settled layout pass and one
+  viewport auto-fit (per Feature 3 FR-AL-6 / FR-EX-11): expand-all zooms out to frame the enlarged
+  diagram, collapse-all zooms back in.
+- **FR-XA-6** The action SHALL be purely visual — no change to the model or diagnostics — and SHALL
+  compose with the per-part controls (a subsequent single-part collapse leaves the rest expanded).
+- **FR-XA-7** Expansion state (including a fully-expanded scope) SHALL reset when the active scope
+  changes (per FR-EX-8).
+
+### 4.4 Acceptance criteria
+- In a scope with several expandable parts, one click expands them all; the control then reads
+  *Collapse all* and one further click returns every part to a black box.
+- The control is absent in a scope whose parts are all non-expandable.
+- After expand-all the diagram is identical to having expanded each part by hand, and the viewport
+  is re-fit to frame the whole white-box diagram.
+- Expand-all in a scope containing a self-referential type terminates without hanging.
+
+### 4.5 Prototype reference
+`StructuralWiringView.tsx` — `allExpandableIds` (collected while walking the containment tree in the
+main memo, independent of current expansion); `allExpanded` (`allExpandableIds.every(id =>
+expandedParts.has(id))`); the toolbar button rendered only when `allExpandableIds.length > 0`,
+titled "Collapse every expanded part" / "Expand every part that has internals", whose `onClick` sets
+`expandedParts` to `new Set(allExpandableIds)` or `new Set()`. Reuses the same `expandedParts` state,
+layout, and auto-fit path as Feature 2.
+
+---
+
+## Feature 5 — Pan-by-default navigation & double-click move mode
+
+### 5.1 Rationale
+Dense, zoomed-in Interconnect diagrams are hard to navigate when every left-drag grabs a node
+instead of moving the canvas. The default interaction SHALL therefore **pan the whole view**, and
+node rearrangement SHALL be an explicit, scoped mode the user opts into on a specific part — so
+panning never fights dragging, and a drag inside one part cannot accidentally move unrelated parts.
+
+### 5.2 Definitions
+- **Pan mode** (default) — left-drag anywhere on the canvas (including over a part box) moves the
+  viewport; no node is draggable.
+- **Move mode** — a state entered by double-clicking a part, in which only the parts inside one
+  **focused frame** are draggable so they can be rearranged.
+- **Focused frame** — the container whose direct children are made draggable in move mode: an
+  expanded part's white-box container (its internal parts become draggable), or the top-level scope
+  frame (its top-level parts become draggable) when a collapsed/top-level part is double-clicked.
+
+### 5.3 Functional requirements
+- **FR-PM-1** The default interaction SHALL be **pan**: a left-drag that starts anywhere on the
+  canvas, including over a part box, SHALL move the viewport and SHALL NOT move any node.
+- **FR-PM-2** **Double-clicking a part** SHALL enter move mode focused on that part's frame:
+  double-clicking an expanded part focuses its own container (its internals become draggable);
+  double-clicking a collapsed or top-level part focuses the container it lives in (its siblings
+  become draggable), and a top-level part focuses the scope frame.
+- **FR-PM-3** In move mode, **only** the direct parts of the focused frame SHALL be draggable; all
+  other parts, ports, and wiring SHALL remain fixed. Dragging a part SHALL re-route its incident
+  wires to follow it (per Feature 3 FR-AL-5).
+- **FR-PM-4** Move mode SHALL be visually indicated — the focused frame SHALL be highlighted and a
+  banner SHALL state which frame is being edited and how to exit.
+- **FR-PM-5** **Clicking empty canvas space** SHALL exit move mode and return to pan (deselecting
+  the frame). Changing scope or expand/collapse state SHALL also exit move mode.
+- **FR-PM-6** Entering/using move mode SHALL be purely visual navigation — dragging repositions
+  nodes in the view only; it MUST NOT edit the model or diagnostics. (Drag positions MAY persist as
+  view state until the next relayout, per the existing drag-persistence behavior.)
+- **FR-PM-7** Double-click delivery MUST be reliable even though the canvas pan handler consumes
+  node click/double-click events; the implementation MUST guarantee the double-click reaches the
+  part regardless of the pan library's event handling.
+
+### 5.4 Acceptance criteria
+- With nothing focused, a left-drag starting over a part pans the canvas; the part does not move.
+- Double-clicking a part shows the "Moving parts in …" banner and highlights that frame; its parts
+  can then be dragged while everything else stays put; wires follow dragged parts.
+- Double-clicking an expanded part makes its **internal** parts draggable; double-clicking a
+  top-level part makes the **top-level** parts draggable.
+- Clicking empty space removes the banner and restores pan; a left-drag pans again.
+- Switching scope or toggling expand/collapse exits move mode.
+
+### 5.5 Prototype reference
+`StructuralWiringView.tsx` — pan-by-default via `nodesDraggable={false}` on `<ReactFlow>`;
+`focusedFrameId` state with `TOP_FRAME = 'wscope-container'`; `onEnterFrame(nodeId, expanded)` maps
+a double-clicked part to its frame (an expanded part → itself; else its container via the `a::b::c`
+→ `a::b` id path, or `TOP_FRAME` for a top-level part). Double-click delivery uses a **native
+capture-phase** `mousedown` listener installed on the canvas wrapper via
+`addEventListener('mousedown', fn, true)` — React Flow's d3-zoom pane handler swallows synthetic
+node click/dblclick while `nodesDraggable` is off, and React's *delegated* `onMouseDownCapture`
+orders unreliably against it, whereas a native capture listener is guaranteed to fire first; it
+detects two mousedowns <350 ms and <8 px apart and hit-tests
+`e.target.closest('.react-flow__node-wiringPart')` → `data-id`. The `interactiveNodes` memo sets
+`draggable: true` only on nodes whose `parentId === focusedFrameId` (or top-level parts when focus
+is `TOP_FRAME`), dashes the focused frame, and sets `cursor: move` on its children; a banner ("✎
+Moving parts in <label> · click empty space to exit") shows the focused label. `handlePaneClick`
+clears `focusedFrameId` (exit on empty-space click); an effect clears it on scope / `expandedParts`
+change. Drag itself reuses the existing `handleNodesChange` / `draggedNodeIds` / `routedEdges`
+follow-the-node routing.
 
 ---
 
