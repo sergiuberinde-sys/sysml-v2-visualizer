@@ -15,7 +15,7 @@ import type { ContainmentGraph } from '../../core/sysmlv2Official/ContainmentGra
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { FitPanel } from '../layout/FitPanel';
 import { ElkEdge, roundedPolyline } from '../layout/ElkEdge';
-import { applyHierarchicalLayout } from '../layout/graphLayout';
+import { applyHierarchicalLayout, routeEdgesOrthogonal } from '../layout/graphLayout';
 
 // ── Layout direction context (consumed by custom node type) ───────────────────
 
@@ -429,7 +429,7 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   }), []);
 
   // ── Pass 1: manual layout (recomputes when model changes) ─────────────────
-  const { baseNodes, baseEdges, graphIdToRfId } = useMemo(() => {
+  const { baseNodes, baseEdges, graphIdToRfId, nestedNodes, nestedEdges } = useMemo(() => {
     const baseNodes: Node[] = [];
     const baseEdges: Edge[] = [];
 
@@ -1201,7 +1201,140 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       }
     }
 
-    return { baseNodes, baseEdges, graphIdToRfId };
+    // ═══ Nested "Show all" build — recursive spec-style compartments ═══════════
+    // Roots = part defs + action/behavior defs. A composite usage (partAlias /
+    // itemAlias / actionInst) becomes a CHILD box nested inside its owner, and
+    // recursion descends into the usage's TYPE def (cycle-guarded) so the whole
+    // decomposition is shown as nested compartments. Attributes + ports render as
+    // rows. Specialization / subsetting stay as cross-box lines (added after);
+    // connections between sibling parts are drawn inside their common owner.
+    const NPAD = 14, NHEAD_GAP = 10, NCHILD_GAP = 14, NBOTTOM = 14, ROOT_GAP = 70, ROOT_MAX_W = 2800;
+    const nestedNodes: Node[] = [];
+    const nestedEdges: Edge[] = [];
+    const nestedGidToRf = new Map<string, string>();
+    const partDefGidN = gid('PartDefinition');
+    const behDefGidN  = gid('ActionDefinition', 'BehaviorDefinition');
+    const nestDefMap  = new Map<string, PD | BD>();
+    for (const d of allPartDefs)  nestDefMap.set(d.name, d);
+    for (const d of behaviorDefs) if (!nestDefMap.has(d.name)) nestDefMap.set(d.name, d);
+
+    // Build one box for `def` (attrs/ports/children come from it) shown under `ownerRfId`
+    // (null = a root). Returns the box node plus its whole subtree in parent-first order
+    // (React Flow requires a parent to precede its children in the node array).
+    function buildNestBox(
+      rfId: string, ownerRfId: string | null,
+      stereo: string, name: string, palette: Palette, sel: SelectionState,
+      def: PD | BD | undefined, graphId: string | undefined, seen: Set<string>,
+    ): { node: Node; subtree: Node[] } {
+      const attrs = def ? def.body.filter((b): b is AU => b.kind === 'attributeUsage') : [];
+      const ports = def ? def.body.filter((b): b is PortLike => b.kind === 'port') : [];
+      const rows  = attrs.length + ports.length;
+      const contentH = PART_BASE_H + (rows > 0 ? PORT_TOP + rows * PORT_ROW_H : 0);
+
+      const childMembers = def
+        ? def.body.filter((b): b is PA | IA | AI =>
+            b.kind === 'partAlias' || b.kind === 'itemAlias' || b.kind === 'actionInst')
+        : [];
+
+      const childBoxes: Node[]   = [];
+      const childSubtrees: Node[][] = [];
+      let cy = contentH + (childMembers.length ? NHEAD_GAP : 0);
+      let maxChildW = 0;
+      for (const m of childMembers) {
+        const cRfId    = `${rfId}::${m.name}`;
+        const cType    = m.kind === 'actionInst' ? m.actionType : m.type;
+        const cKindLbl = m.kind === 'actionInst' ? '«action»' : m.kind === 'itemAlias' ? '«item»' : '«part»';
+        const cStereo  = cType ? `${cKindLbl} : ${cType}` : cKindLbl;
+        const cPalette = m.kind === 'actionInst' ? PAL.actDef : m.kind === 'itemAlias' ? PAL.item : PAL.inst;
+        const cDef     = cType && !seen.has(cType) ? nestDefMap.get(cType) : undefined;
+        const cGid     = m.kind === 'actionInst' ? actInstGid(m.name)
+                       : m.kind === 'itemAlias'  ? itemUsageGid(m.name)
+                       : partUsageGid(m.name);
+        const cSel: SelectionState = {
+          id: cRfId, type: m.kind === 'actionInst' ? 'behavior' : 'part', name: m.name, line: m.line,
+          extra: { ...(cType ? { type: cType } : {}), parent: name },
+        };
+        const { node: cbox, subtree: csub } = buildNestBox(
+          cRfId, rfId, cStereo, m.name, cPalette, cSel,
+          cDef, cGid, cType ? new Set(seen).add(cType) : seen,
+        );
+        cbox.position = { x: NPAD, y: cy };
+        cy += (cbox.style as { height: number }).height + NCHILD_GAP;
+        maxChildW = Math.max(maxChildW, (cbox.style as { width: number }).width);
+        childBoxes.push(cbox);
+        childSubtrees.push(csub);
+      }
+
+      const boxW = Math.max(MIN_NODE_W, nodeWidth(stereo, name, attrs),
+        childBoxes.length ? maxChildW + 2 * NPAD : 0);
+      const boxH = childBoxes.length ? (cy - NCHILD_GAP + NBOTTOM) : contentH;
+
+      const node = makePartNode(
+        rfId, { x: 0, y: 0 }, stereo, name, ports, palette,
+        ownerRfId ? { parentId: ownerRfId, extent: 'parent' as const } : undefined,
+        sel, attrs, boxW, ownerRfId ? 'usage' : 'definition',
+      );
+      (node.style as Record<string, unknown>).height = boxH;
+      (node.data  as Record<string, unknown>).nodeH  = contentH;  // ports/attrs sit in the header rows
+      if (graphId) nestedGidToRf.set(graphId, rfId);
+
+      // Sibling connections drawn inside this owner.
+      if (def) {
+        for (const conn of def.body.filter((b): b is CN => b.kind === 'connection')) {
+          const s = `${rfId}::${conn.fromPart}`, t = `${rfId}::${conn.toPart}`;
+          if (!childBoxes.some(c => c.id === s) || !childBoxes.some(c => c.id === t)) continue;
+          nestedEdges.push({
+            id: `nconn-${rfId}-${conn.fromPart}.${conn.fromPort}-${conn.toPart}.${conn.toPort}`,
+            source: s, target: t,
+            sourceHandle: conn.fromPort ? `port-${conn.fromPort}-out` : '__source',
+            targetHandle: conn.toPort   ? `port-${conn.toPort}`       : '__target',
+            type: 'smoothstep',
+            style: { stroke: '#4ade80', strokeWidth: 1.5 },
+            ...(conn.directed ? { markerEnd: { type: MarkerType.ArrowClosed, color: '#4ade80', width: 10, height: 10 } } : {}),
+            zIndex: 20,
+          });
+        }
+      }
+
+      return { node, subtree: [node, ...childSubtrees.flat()] };
+    }
+
+    // Roots: every part def, then every action/behavior def. Shelf-pack, wrapping rows.
+    const rootSpecs: Array<{ def: PD | BD; stereo: string; palette: Palette; type: 'part' | 'behavior'; gidVal?: string }> = [
+      ...allPartDefs.map(d  => ({ def: d, stereo: '«part def»',   palette: PAL.type,   type: 'part'     as const, gidVal: partDefGidN(d.name) })),
+      ...behaviorDefs.map(d => ({ def: d, stereo: '«action def»', palette: PAL.actDef, type: 'behavior' as const, gidVal: behDefGidN(d.name) })),
+    ];
+    let shelfX = 0, shelfY = 0, shelfRowH = 0;
+    for (const r of rootSpecs) {
+      const rootRfId = `n:${r.type === 'part' ? 'def' : 'actdef'}-${r.def.name}`;
+      const sel: SelectionState = { id: rootRfId, type: r.type, name: r.def.name, line: r.def.line,
+        extra: r.gidVal ? { graphId: r.gidVal } : {} };
+      const { node: box, subtree } = buildNestBox(rootRfId, null, r.stereo, r.def.name, r.palette, sel, r.def, r.gidVal, new Set([r.def.name]));
+      const w = (box.style as { width: number }).width, h = (box.style as { height: number }).height;
+      if (shelfX > 0 && shelfX + w > ROOT_MAX_W) { shelfX = 0; shelfY += shelfRowH + ROOT_GAP; shelfRowH = 0; }
+      box.position = { x: shelfX, y: shelfY };
+      shelfX += w + ROOT_GAP;
+      shelfRowH = Math.max(shelfRowH, h);
+      nestedNodes.push(...subtree);
+    }
+
+    // Cross-box specialization / subsetting lines (def :> def, usage :>> usage).
+    if (graph) {
+      for (const edge of graph.edges) {
+        if (edge.type !== 'specialization' && edge.type !== 'subsetting') continue;
+        const s = nestedGidToRf.get(edge.source), t = nestedGidToRf.get(edge.target);
+        if (!s || !t || s === t) continue;
+        nestedEdges.push({
+          id: `nspec-${edge.id}`, source: s, target: t,
+          sourceHandle: '__source_left', targetHandle: '__target',
+          type: 'featureTypingEdge',
+          data: { stroke: edge.type === 'subsetting' ? '#a78bfa' : '#818cf8' },
+          zIndex: 5,
+        });
+      }
+    }
+
+    return { baseNodes, baseEdges, graphIdToRfId, nestedNodes, nestedEdges };
   }, [result, graph]);
 
   // ── Reset focus when the model changes ────────────────────────────────────────
@@ -1233,7 +1366,10 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
   // forward through ALL of the owner's instances — exploding the subgraph for
   // models like AcpdCdd_DataflowInterconnection.
   const { filteredNodes, filteredEdges } = useMemo(() => {
-    if (!focusedNodeId) return { filteredNodes: baseNodes, filteredEdges: baseEdges };
+    // "Show all elements": the recursive nested compartment layout (roots = part/action
+    // defs, composite usages nested inside, cycle-guarded). Focused mode keeps the flat
+    // graph so its drill-in BFS over baseEdges still works.
+    if (!focusedNodeId) return { filteredNodes: nestedNodes, filteredEdges: nestedEdges };
 
     const visible = new Set<string>([focusedNodeId]);
     const queue   = [focusedNodeId];
@@ -1262,11 +1398,39 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
       filteredNodes: baseNodes.filter(n => visible.has(n.id)),
       filteredEdges: baseEdges.filter(e => visible.has(e.source) && visible.has(e.target)),
     };
-  }, [baseNodes, baseEdges, focusedNodeId]);
+  }, [baseNodes, baseEdges, nestedNodes, nestedEdges, focusedNodeId]);
 
   // ── Layout effect ─────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
+
+    // "Show all": the nested compartment nodes carry their own (recursively packed)
+    // positions and sizes — no overlaps by construction — so skip ELK entirely and
+    // render them as-is. Only cross-box lines (specialization / connection) use native
+    // React Flow routing. Nested children must NOT be draggable out of their parent.
+    if (!focusedNodeId) {
+      setDisplayNodes(filteredNodes.map(n => ({ ...n, draggable: n.parentId ? false : (n.draggable !== false) })));
+      // Route cross-box lines (specialization / subsetting between root boxes) orthogonally
+      // AROUND the top-level boxes so no line cuts through an intervening box. Connection
+      // lines between nested siblings stay on React Flow's native routing (short + local).
+      const topNodes = filteredNodes.filter(n => !n.parentId);
+      const topIds   = new Set(topNodes.map(n => n.id));
+      const nodeInfo = topNodes.map(n => ({
+        id: n.id, x: n.position.x, y: n.position.y,
+        width:  Number((n.style as Record<string, unknown>)?.['width']  ?? 172),
+        height: Number((n.style as Record<string, unknown>)?.['height'] ?? 48),
+      }));
+      const routeIn = filteredEdges
+        .filter(e => topIds.has(e.source) && topIds.has(e.target) && e.source !== e.target)
+        .map(e => ({ id: e.id, source: e.source, target: e.target }));
+      const routes = routeEdgesOrthogonal(nodeInfo, routeIn);
+      setDisplayEdges(filteredEdges.map(e => {
+        const wp = routes.get(e.id);
+        return wp ? { ...e, data: { ...(e.data ?? {}), waypoints: wp } } : e;
+      }));
+      setAutoFitVersion(v => v + 1);
+      return () => { cancelled = true; };
+    }
 
     // In focused mode, redirect output-port featureTyping edges to the right-side
     // handle so they exit the correct side of the partDef node.  Output ports are
