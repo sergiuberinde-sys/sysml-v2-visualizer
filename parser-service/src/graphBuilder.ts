@@ -452,6 +452,47 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     if (e.type === 'typedBy') typedByBySource.set(e.source, e.target);
   }
 
+  // Direct supertypes per definition (`part def A :> B` → A has a Superclassing/Subclassification
+  // child labeled B). Needed so resolveFlowChain can match a port INHERITED from a supertype —
+  // e.g. `safetyBoundary : DomainSafetyBoundaryHw` whose ports are declared on the supertype
+  // DomainContainmentHw. Built here (Pass 6 emits the edges later, but flow resolution runs first).
+  const directSupersOf = new Map<string, string[]>();
+  const nearestTypedDef = (startId: string): string | null => {
+    let id: string | undefined = parentOf.get(startId);
+    while (id !== undefined) {
+      const p = nodeById.get(id);
+      if (!p) return null;
+      if (TYPED_DEF_TYPES.has(p.type)) return id;
+      if (!MEMBERSHIP_WRAPPERS.has(p.type)) return null;
+      id = parentOf.get(id);
+    }
+    return null;
+  };
+  for (const n of nodes) {
+    if (n.type !== 'Superclassing' && n.type !== 'Subclassification') continue;
+    if (n.label === n.type) continue;
+    const specificId = nearestTypedDef(n.id);
+    const generalId  = defByName.get(n.label);
+    if (!specificId || !generalId || generalId === specificId) continue;
+    const l = directSupersOf.get(specificId) ?? [];
+    l.push(generalId);
+    directSupersOf.set(specificId, l);
+  }
+  // Transitive supertype closure (includes the def itself), memoised.
+  const superClosureCache = new Map<string, Set<string>>();
+  const superClosure = (defId: string): Set<string> => {
+    const cached = superClosureCache.get(defId);
+    if (cached) return cached;
+    const out = new Set<string>([defId]);
+    const stack = [defId];
+    while (stack.length) {
+      const d = stack.pop()!;
+      for (const s of directSupersOf.get(d) ?? []) if (!out.has(s)) { out.add(s); stack.push(s); }
+    }
+    superClosureCache.set(defId, out);
+    return out;
+  };
+
   // Find the first named FeatureTyping label in a subtree (the payload type).
   function findFlowTypeName(id: string): string | undefined {
     for (const kid of childrenOf.get(id) ?? []) {
@@ -475,43 +516,63 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     const portName = chain[chain.length - 1];
     const candidates = portUsagesByName.get(portName);
     if (!candidates?.length) return null;
-    if (candidates.length === 1) return candidates[0];
 
-    if (chain.length >= 2) {
-      const partName = chain[0];
-      const partIds  = partUsagesByName.get(partName) ?? [];
-      for (const partId of partIds) {
-        const defId = typedByBySource.get(partId);
-        if (!defId) continue;
-        for (const portId of candidates) {
-          let id: string | undefined = parentOf.get(portId);
+    // Resolve the port NODE id. It may be a port declared on a PartDefinition that
+    // several usages inherit (so a single candidate is shared) — that's fine here; the
+    // `part.` qualification below keeps the two usages distinct.
+    let portId = candidates[0];
+    if (candidates.length > 1) {
+      let matched: string | undefined;
+      if (chain.length >= 2) {
+        const partIds = partUsagesByName.get(chain[0]) ?? [];
+        for (const partId of partIds) {
+          const defId = typedByBySource.get(partId);
+          if (!defId) continue;
+          // The port may be declared on defId OR any of its supertypes (inherited), so match
+          // the candidate whose owning def is anywhere in defId's supertype closure.
+          const defAndSupers = superClosure(defId);
+          for (const pid of candidates) {
+            let id: string | undefined = parentOf.get(pid);
+            while (id !== undefined) {
+              if (defAndSupers.has(id)) { matched = pid; break; }
+              const n = nodeById.get(id);
+              if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
+              id = parentOf.get(id);
+            }
+            if (matched) break;
+          }
+          if (matched) break;
+        }
+      }
+      // 1-element chain with ambiguous name: prefer the candidate that lives directly
+      // inside the enclosing scope PartDef (boundary ports that share a name with a
+      // same-named port on a sub-part, e.g. BatterySupply_In on scope + sub-PartDef).
+      if (!matched && scopeDefId) {
+        for (const pid of candidates) {
+          let id: string | undefined = parentOf.get(pid);
           while (id !== undefined) {
-            if (id === defId) return portId;
+            if (id === scopeDefId) { matched = pid; break; }
             const n = nodeById.get(id);
             if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
             id = parentOf.get(id);
           }
+          if (matched) break;
         }
       }
+      portId = matched ?? candidates[0];
     }
 
-    // 1-element chain with ambiguous name: prefer the candidate that lives directly
-    // inside the enclosing scope PartDef. This handles boundary ports that share a
-    // name with same-named ports on sub-parts (e.g. BatterySupply_In on both the
-    // scope PartDef and the SignalConversion sub-PartDef).
-    if (scopeDefId) {
-      for (const portId of candidates) {
-        let id: string | undefined = parentOf.get(portId);
-        while (id !== undefined) {
-          if (id === scopeDefId) return portId;
-          const n = nodeById.get(id);
-          if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
-          id = parentOf.get(id);
-        }
-      }
+    // Qualify a `part.port` endpoint with its specific PART USAGE (`${partUsageId}::${portId}`)
+    // so two usages that inherit the SAME PartDefinition port stay distinct — e.g. both
+    // drivingDomain and hvmDomain inherit SafetyDomain.domainSupplyInput, and without this
+    // both `drivingDomain.domainSupplyInput` and `hvmDomain.domainSupplyInput` would collapse
+    // onto the one shared def port. A 1-element (boundary) chain has no part and stays bare.
+    if (chain.length >= 2) {
+      const partIds = partUsagesByName.get(chain[0]) ?? [];
+      const partId  = partIds.find(pid => findEnclosingPartDef(pid) === scopeDefId) ?? partIds[0];
+      if (partId) return `${partId}::${portId}`;
     }
-
-    return candidates[0]; // fallback
+    return portId;
   }
 
   // Walk up through membership wrappers to find the nearest enclosing PartDefinition.
@@ -553,8 +614,20 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
           } else if (n3.type === 'FeatureMembership') {
             for (const kid4 of childrenOf.get(kid3) ?? []) {
               const n4 = nodeById.get(kid4);
-              if (n4 && n4.type === 'ReferenceUsage' && n4.label !== n4.type) {
+              if (n4?.type !== 'ReferenceUsage') continue;
+              if (n4.label !== n4.type) {
                 portName = n4.label;
+              } else {
+                // Unresolved port (e.g. inherited from a cross-file supertype): the parser
+                // leaves the ReferenceUsage generic and carries the actual name on a
+                // Redefinition/Subsetting child. Recover it so the endpoint isn't dropped.
+                for (const kid5 of childrenOf.get(kid4) ?? []) {
+                  const n5 = nodeById.get(kid5);
+                  if (n5 && (n5.type === 'Redefinition' || n5.type === 'Subsetting') && n5.label !== n5.type) {
+                    portName = n5.label;
+                    break;
+                  }
+                }
               }
             }
           }

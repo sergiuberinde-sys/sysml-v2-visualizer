@@ -39,6 +39,12 @@ import type { SelectionState } from '../../app/selection';
 
 const PART_MIN_W    = 200;
 const WIRING_H_PAD  = 24;  // 2 × 12 px from padding: '8px 12px'
+
+// A connection endpoint from the graph may be part-qualified as `${partUsageGraphId}::${portGraphId}`
+// (graphBuilder keeps two usages that inherit the same PartDefinition port distinct, e.g. drivingDomain
+// vs hvmDomain both inheriting SafetyDomain.domainSupplyInput). Graph node ids are dot-separated and
+// never contain `::`, so splitting on `::` is unambiguous. `epPortOf` returns the bare port graph id.
+const epPortOf = (ep: string): string => { const i = ep.indexOf('::'); return i < 0 ? ep : ep.slice(i + 2); };
 const PART_BASE_H   = 72;
 const PORT_ROW_H    = 19;
 const H_GAP         = 320; // horizontal gap between rank columns (wide enough for edge-label room and obstacle-free smoothstep curves)
@@ -1041,7 +1047,12 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     // edges that reference a non-canonical port ID still pass the inScopeConns filter.
     const portOwner = new Map<string, string>();
     for (const [partId, ports] of partAllPorts.entries()) {
-      for (const p of ports) portOwner.set(p.id, partId);
+      for (const p of ports) {
+        portOwner.set(p.id, partId);
+        // Part-qualified endpoint (`${partId}::${portId}`) → this specific usage, so a def
+        // port shared by two usages resolves to the right one instead of last-writer-wins.
+        portOwner.set(`${partId}::${p.id}`, partId);
+      }
       portOwner.set(partId, partId);
     }
     for (const sp of scopePorts) portOwner.set(sp.id, scopeDef.id);
@@ -1074,8 +1085,9 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     const connectedPortIds = new Set<string>();
     for (const conn of inScopeConns) {
       for (const ep of [conn.source, conn.target]) {
-        connectedPortIds.add(ep);
-        const canon = canonicalPortId.get(ep);
+        const port = epPortOf(ep);
+        connectedPortIds.add(port);
+        const canon = canonicalPortId.get(port);
         if (canon) connectedPortIds.add(canon);
       }
     }
@@ -1265,8 +1277,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       // rank.get returns undefined for scopeDef.id → treated as -1 (boundary)
       const srcRankVal = srcPartId ? (rank.get(srcPartId) ?? -1) : -1;
       const tgtRankVal = tgtPartId ? (rank.get(tgtPartId) ?? -1) : -1;
-      const srcCanon   = canonicalPortId.get(conn.source) ?? conn.source;
-      const tgtCanon   = canonicalPortId.get(conn.target) ?? conn.target;
+      const srcCanon   = canonicalPortId.get(epPortOf(conn.source)) ?? epPortOf(conn.source);
+      const tgtCanon   = canonicalPortId.get(epPortOf(conn.target)) ?? epPortOf(conn.target);
 
       const srcIsBoundary = scopePortIdSet.has(srcCanon);
       const tgtIsBoundary = scopePortIdSet.has(tgtCanon);
@@ -1395,7 +1407,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     const scopeDefIdStr = scopeDef.id; // captured for use inside nested closures
 
     function internalPortAbsY(portId: string): number | null {
-      const canonId = canonicalPortId.get(portId) ?? portId;
+      const bare    = epPortOf(portId);
+      const canonId = canonicalPortId.get(bare) ?? bare;
       const partId  = portOwner.get(portId);
       if (!partId || partId === scopeDefIdStr) return null;
       const pos     = layoutPos.get(partId);
@@ -1482,7 +1495,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         if (!internalId) continue;
         const partId = portOwner.get(internalId);
         if (!partId || partId === scopeDefIdStr) continue;
-        const canon = canonicalPortId.get(internalId) ?? internalId;
+        const canon = canonicalPortId.get(epPortOf(internalId)) ?? epPortOf(internalId);
         const internalOnRight = boundaryIsSource
           ? portsShowRight.has(canon)
           : !portsShowLeft.has(canon);
@@ -1515,8 +1528,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         const l = portAdj.get(x); if (l) l.push(y); else portAdj.set(x, [y]);
       };
       for (const conn of inScopeConns) {
-        const a = canonicalPortId.get(conn.source) ?? conn.source;
-        const b = canonicalPortId.get(conn.target) ?? conn.target;
+        const a = canonicalPortId.get(epPortOf(conn.source)) ?? epPortOf(conn.source);
+        const b = canonicalPortId.get(epPortOf(conn.target)) ?? epPortOf(conn.target);
         addAdj(a, b); addAdj(b, a);
       }
       const HALF = SCOPE_PORT_NODE_H / 2;
@@ -1581,10 +1594,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           ? selection?.extra?.graphId === flowNode.id || selection?.id === `wflow-${flowNode.id}`
           : selection?.id === `wconn-${conn.id}`;
         if (!isThisSel) continue;
-        selectedConnPortIds.add(conn.source);
-        selectedConnPortIds.add(conn.target);
-        const srcCanon = canonicalPortId.get(conn.source);
-        const tgtCanon = canonicalPortId.get(conn.target);
+        selectedConnPortIds.add(epPortOf(conn.source));
+        selectedConnPortIds.add(epPortOf(conn.target));
+        const srcCanon = canonicalPortId.get(epPortOf(conn.source));
+        const tgtCanon = canonicalPortId.get(epPortOf(conn.target));
         if (srcCanon) selectedConnPortIds.add(srcCanon);
         if (tgtCanon) selectedConnPortIds.add(tgtCanon);
       }
@@ -1731,7 +1744,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     // Uses partAllPorts so non-canonical duplicate IDs also map to the correct RF node.
     const portToRfId = new Map<string, string>();
     for (const [partId, ports] of partAllPorts.entries()) {
-      for (const p of ports) portToRfId.set(p.id, partRfId(partId));
+      for (const p of ports) {
+        portToRfId.set(p.id, partRfId(partId));
+        portToRfId.set(`${partId}::${p.id}`, partRfId(partId)); // part-qualified endpoint
+      }
       portToRfId.set(partId, partRfId(partId)); // allow part-to-part FlowUsage connections
     }
     for (const sp of scopePorts) portToRfId.set(sp.id, `wsport-${sp.id}`);
@@ -1750,7 +1766,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       const prefix = `wpart-${partId}::`;
       for (const [pid, rf] of [...portToRfId]) {
         if (rf !== partRfId(partId)) continue;
-        const canon = canonicalPortId.get(pid) ?? pid;
+        const canon = canonicalPortId.get(epPortOf(pid)) ?? epPortOf(pid);
         if (emb.boundaryPortIds.has(canon)) portToRfId.set(pid, `${prefix}wsport-${canon}`);
       }
     }
@@ -1769,8 +1785,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       .map(conn => {
         const srcRf   = portToRfId.get(conn.source)!;
         const tgtRf   = portToRfId.get(conn.target)!;
-        const srcNode = nodeById.get(conn.source);
-        const tgtNode = nodeById.get(conn.target);
+        const srcNode = nodeById.get(epPortOf(conn.source));
+        const tgtNode = nodeById.get(epPortOf(conn.target));
         // Structural connections (ConnectionUsage, no label) are undirected plain lines.
         // Flow connections (FlowUsage etc.) carry a named label and get animated arrows.
         const isStructural = !conn.label;
@@ -1820,8 +1836,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         const isTgtPort = !isMsg && tgtNode?.type === 'PortUsage';
         // Remap through canonicalPortId: a non-canonical duplicate ID must attach
         // to the handle of the single canonical (visible) square for that port.
-        const srcCanon   = canonicalPortId.get(conn.source) ?? conn.source;
-        const tgtCanon   = canonicalPortId.get(conn.target) ?? conn.target;
+        const srcCanon   = canonicalPortId.get(epPortOf(conn.source)) ?? epPortOf(conn.source);
+        const tgtCanon   = canonicalPortId.get(epPortOf(conn.target)) ?? epPortOf(conn.target);
 
         // Arrow orientation: the head must sit at the CONSUMER end so it points INTO
         // an input and never into an output.  For an internal port the consumer is its
