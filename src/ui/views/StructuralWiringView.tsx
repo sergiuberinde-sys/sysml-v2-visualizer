@@ -17,9 +17,11 @@ import {
   ReactFlow, Background, Controls, MarkerType,
   applyNodeChanges, Handle, Position,
   BaseEdge, EdgeLabelRenderer, getSmoothStepPath,
+  getNodesBounds, getViewportForBounds,
   type Node, type Edge, type NodeChange, type NodeProps, type EdgeMouseHandler,
   type EdgeProps, type ReactFlowInstance,
 } from '@xyflow/react';
+import { toPng } from 'html-to-image';
 import { PortHandles, makeBoundaryPortDisplay, resolvePortDirection, type PortDisplay } from '../layout/PortHandles';
 import { AsilBadge, RealizationBadge, HwSwAllocBadge, asilLabel } from '../layout/AsilBadge';
 import { fitNodeWidth, type TextRow } from '../layout/nodeSize';
@@ -2318,6 +2320,51 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     pane.addEventListener('mousedown', onDown, true);
     return () => pane.removeEventListener('mousedown', onDown, true);
   }, [onEnterFrame, expandedParts]);
+
+  // ── Export the current interconnect diagram to a PNG ──────────────────────────
+  // Render the WHOLE diagram (every node in the current scope + expansion state), not just
+  // the slice that happens to be scrolled into view: compute the bounding box of all nodes,
+  // size the image to it, and hand html-to-image a viewport transform that frames those bounds.
+  const [exporting, setExporting] = useState(false);
+  const handleExportPng = useCallback(async () => {
+    const inst = rfInstanceRef.current;
+    const viewportEl = wiringPaneRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null;
+    if (!inst || !viewportEl) return;
+    const nodes = inst.getNodes();
+    if (!nodes.length) return;
+    setExporting(true);
+    try {
+      const bounds = getNodesBounds(nodes);
+      // Size the image to the diagram (capped so a deeply-expanded graph can't produce a
+      // gigantic canvas); pixelRatio doubles the resolution for crisp text.
+      const PAD = 0.06;
+      const imageW = Math.max(640, Math.min(6000, Math.round(bounds.width  * (1 + PAD * 2))));
+      const imageH = Math.max(480, Math.min(6000, Math.round(bounds.height * (1 + PAD * 2))));
+      const vp = getViewportForBounds(bounds, imageW, imageH, 0.1, 4, PAD);
+      const dataUrl = await toPng(viewportEl, {
+        backgroundColor: '#0b1220',
+        width: imageW,
+        height: imageH,
+        pixelRatio: 2,
+        style: {
+          width: `${imageW}px`,
+          height: `${imageH}px`,
+          transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`,
+        },
+      });
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = `${(activeScopeName || 'interconnect').replace(/\s+/g, '-')}-interconnect.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[sysml-viz] PNG export failed:', err);
+    } finally {
+      setExporting(false);
+    }
+  }, [activeScopeName]);
   // When set, the add-element form is shown at {x,y} within the canvas.
   // target: 'scope' → insert into the scope def (active file); { defName } → add to
   // the usage's type definition (possibly in another file).
@@ -2402,6 +2449,26 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     setAddForm(null);
   }, [addForm, addContext, onIncrementalEdit, onAddMemberToDef, source]);
 
+  // Move mode: only the parts inside the focused frame are draggable; everything else stays
+  // non-draggable so left-drag pans. In pan mode (no focus) the base list is returned as-is,
+  // so React Flow's global nodesDraggable={false} keeps every node fixed. Declared here (before
+  // the empty-state early returns below) so this hook runs on every render — a hook after a
+  // conditional `return` breaks the rules of hooks (React error #300).
+  const interactiveNodes = useMemo(() => {
+    const base = displayNodes.length > 0 ? displayNodes : positionedNodes;
+    if (focusedFrameId == null) return base;
+    return base.map(n => {
+      if (n.type !== 'wiringPart') return n;
+      const inFocus = n.parentId === focusedFrameId || (focusedFrameId === TOP_FRAME && n.parentId == null);
+      const isFrame = n.id === focusedFrameId;
+      if (!inFocus && !isFrame) return n;
+      const style = isFrame
+        ? { ...(n.style as object), outline: `2px dashed ${PART_BORDER}`, outlineOffset: 3 }
+        : { ...(n.style as object), cursor: 'move' as const };
+      return { ...n, draggable: inFocus, style, data: { ...(n.data as Record<string, unknown>), _moveActive: inFocus, _focusedFrame: isFrame } };
+    });
+  }, [displayNodes, positionedNodes, focusedFrameId]);
+
   // ── Empty states ───────────────────────────────────────────────────────────
 
   if (!graph) {
@@ -2427,23 +2494,6 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   // button collapses everything; otherwise it opens the whole tree at once.
   const allExpanded = allExpandableIds.length > 0 && allExpandableIds.every(id => expandedParts.has(id));
 
-  // Move mode: only the parts inside the focused frame are draggable; everything else stays
-  // non-draggable so left-drag pans. In pan mode (no focus) the base list is returned as-is,
-  // so React Flow's global nodesDraggable={false} keeps every node fixed.
-  const interactiveNodes = useMemo(() => {
-    const base = displayNodes.length > 0 ? displayNodes : positionedNodes;
-    if (focusedFrameId == null) return base;
-    return base.map(n => {
-      if (n.type !== 'wiringPart') return n;
-      const inFocus = n.parentId === focusedFrameId || (focusedFrameId === TOP_FRAME && n.parentId == null);
-      const isFrame = n.id === focusedFrameId;
-      if (!inFocus && !isFrame) return n;
-      const style = isFrame
-        ? { ...(n.style as object), outline: `2px dashed ${PART_BORDER}`, outlineOffset: 3 }
-        : { ...(n.style as object), cursor: 'move' as const };
-      return { ...n, draggable: inFocus, style, data: { ...(n.data as Record<string, unknown>), _moveActive: inFocus, _focusedFrame: isFrame } };
-    });
-  }, [displayNodes, positionedNodes, focusedFrameId]);
   const focusedLabel = focusedFrameId === TOP_FRAME ? activeScopeName
     : focusedFrameId ? (interactiveNodes.find(n => n.id === focusedFrameId)?.data as Record<string, unknown> | undefined)?.['partLbl'] as string | undefined
     : undefined;
@@ -2527,6 +2577,14 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           onClick={() => setHideUnconnectedPorts(v => !v)}
         >
           {hideUnconnectedPorts ? '◎ Unconnected ports: hidden' : '◉ Unconnected ports: shown'}
+        </button>
+        <button
+          style={actionBtn}
+          title="Export the current interconnect diagram as a PNG image"
+          onClick={handleExportPng}
+          disabled={exporting}
+        >
+          {exporting ? '⏳ Exporting…' : '⇩ Export to PNG'}
         </button>
 
         {/* ── Palette: drag onto the canvas to add an element ──────────────── */}
