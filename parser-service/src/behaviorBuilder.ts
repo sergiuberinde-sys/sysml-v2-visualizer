@@ -94,8 +94,10 @@ function extractGuardName(transitionNode: ModelNode): string | undefined {
 // ── Endpoint extraction ───────────────────────────────────────────────────────
 
 /**
- * DFS through a succession node's children to collect the two endpoint names
- * (source, target) via ReferenceSubsetting or FeatureChaining labels.
+ * DFS through a node's children collecting ALL ReferenceSubsetting / FeatureChaining
+ * labels, flattened. A dotted reference contributes one entry per segment, so this
+ * yields the full qualified PATH — which is what allocations need (`sourcePath`).
+ * For succession endpoints use extractSuccessionEndpoints() instead.
  */
 function extractEndpointNames(node: ModelNode): string[] {
   const refs: string[] = [];
@@ -114,6 +116,46 @@ function extractEndpointNames(node: ModelNode): string[] {
 
   for (const child of node.children) findRef(child);
   return refs;
+}
+
+/**
+ * A succession's endpoint names — ONE per end (source, target).
+ *
+ * Each end is a child of the succession node. A QUALIFIED reference such as
+ * `faultManager.classifyAsEpc2` (an action allocated to a `ref part`) arrives as a CHAIN
+ * of segments under that same end, where the leading segments only qualify the final one,
+ * so the endpoint is the LAST segment.
+ *
+ * Flattening across ends instead (extractEndpointNames) would take the first two entries
+ * of a SINGLE end as if they were the two endpoints — turning
+ * `first faultManager.classifyAsEpc2 then faultManager.selectControllerResetIsolation`
+ * into `faultManager -> classifyAsEpc2`, an edge whose ends are not action nodes at all,
+ * so every such succession silently vanished from the Actions view.
+ */
+function extractSuccessionEndpoints(node: ModelNode): string[] {
+  function lastSegment(n: ModelNode): string | null {
+    const segs: string[] = [];
+    function walk(m: ModelNode): void {
+      if (
+        (m.type === 'ReferenceSubsetting' || m.type === 'FeatureChaining') &&
+        m.name != null &&
+        m.name !== m.type
+      ) {
+        segs.push(m.name);
+        return;
+      }
+      for (const c of m.children) walk(c);
+    }
+    walk(n);
+    return segs.length > 0 ? segs[segs.length - 1] : null;
+  }
+
+  const endpoints: string[] = [];
+  for (const child of node.children) {
+    const seg = lastSegment(child);
+    if (seg !== null) endpoints.push(seg);
+  }
+  return endpoints;
 }
 
 // ── Implicit succession resolver ──────────────────────────────────────────────
@@ -146,7 +188,7 @@ function resolveImplicitSucc(children: ModelNode[]): Map<number, [string, string
   for (let i = 0; i < children.length; i++) {
     const inner = innerOf(children[i]);
     if (!SUCCESSION_TYPES.has(inner.type)) continue;
-    if (extractEndpointNames(inner).length >= 2) continue; // already explicit
+    if (extractSuccessionEndpoints(inner).length >= 2) continue; // already explicit
 
     const isImplicit = inner.children.some(efm =>
       efm.type === 'EndFeatureMembership' &&
@@ -401,7 +443,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
 
     // ── SuccessionAsUsage / Succession ──────────────────────────────────────
     if (SUCCESSION_TYPES.has(node.type)) {
-      const refs   = extractEndpointNames(node);
+      const refs   = extractSuccessionEndpoints(node);
       const flowId = `flow:${path}`;
       if (refs.length >= 2) {
         flows.push({ id: flowId, source: refs[0], target: refs[1], type: 'succession' });
@@ -441,7 +483,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       // Target: OwningMembership → SuccessionAsUsage → ReferenceSubsetting
       const owningMembership = node.children.find(c => c.type === 'OwningMembership');
       const succession       = owningMembership?.children.find(c => SUCCESSION_TYPES.has(c.type));
-      const targetRefs       = succession ? extractEndpointNames(succession) : [];
+      const targetRefs       = succession ? extractSuccessionEndpoints(succession) : [];
       const targetName       = targetRefs[0] ?? null;
 
       const flowId = `flow:${path}`;

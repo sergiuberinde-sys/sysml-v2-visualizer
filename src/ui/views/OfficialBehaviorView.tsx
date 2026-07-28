@@ -737,8 +737,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         };
       });
 
-      const partEdges: Edge[] = resolvedFlows.map(f => ({
-        id:        `oflow-${behaviorName}-${f.source}-${f.target}`,
+      const partEdges: Edge[] = resolvedFlows.map((f, i) => ({
+        id:        `oflow-${behaviorName}-${i}-${f.source}-${f.target}`,
         source:    `oact-${behaviorName}-${f.source}`,
         target:    `oact-${behaviorName}-${f.target}`,
         type:      'smoothstep',
@@ -958,7 +958,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
 
     // ── Succession / transition edges ──────────────────────────────────────────
 
-    const flowEdges: Edge[] = resolvedFlows.map(f => {
+    const flowEdges: Edge[] = resolvedFlows.map((f, i) => {
       const srcId     = `oact-${behaviorName}-${f.source}`;
       const tgtId     = `oact-${behaviorName}-${f.target}`;
       const srcBranch = (outgoing.get(f.source)?.length ?? 0) > 1;
@@ -968,7 +968,10 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const guardColor = isNegated ? ELSE_COLOR : THEN_COLOR;
       const edgeColor = isGuarded ? guardColor : (srcBranch ? BRANCH_COLOR : ACT_BORDER);
       return {
-        id:           `oflow-${behaviorName}-${f.source}-${f.target}`,
+        // Index-qualified: two successions can share the same source/target names (and a
+        // model may legitimately declare parallel edges), so a name-only id collides —
+        // React then drops one of the duplicates and the edge silently vanishes.
+        id:           `oflow-${behaviorName}-${i}-${f.source}-${f.target}`,
         source:       srcId,
         target:       tgtId,
         sourceHandle: 'ctrl-out',
@@ -990,7 +993,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
 
     const actionByName = new Map(actionUsages.map(a => [a.name, a]));
     const allVisibleIds = new Set([...actNodeIds, ...boundaryNodeIds]);
-    const itemFlowEdges: Edge[] = itemFlows.flatMap(f => {
+    const itemFlowEdges: Edge[] = itemFlows.flatMap((f, i) => {
       const srcId = f.sourcePort !== null
         ? `oact-${behaviorName}-${f.source}`
         : `oparam-${behaviorName}-${f.source}`;
@@ -1006,7 +1009,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       const tgtHandle  = f.targetPort !== null ? `in-${f.targetPort}`  : 'param-port';
 
       return [{
-        id:           `oiflow-${behaviorName}-${f.source}.${f.sourcePort ?? 'bnd'}-${f.target}.${f.targetPort ?? 'bnd'}`,
+        id:           `oiflow-${behaviorName}-${i}-${f.source}.${f.sourcePort ?? 'bnd'}-${f.target}.${f.targetPort ?? 'bnd'}`,
         source:       srcId,
         target:       tgtId,
         sourceHandle: srcHandle,
@@ -1064,8 +1067,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
 
     const condBranchEdges: Edge[] = condEdges
       .filter(e => actNodeIds.has(`oact-${behaviorName}-${e.targetName}`))
-      .map(e => ({
-        id:           `ocond-edge-${behaviorName}-${e.condId}-${e.targetName}`,
+      .map((e, i) => ({
+        id:           `ocond-edge-${behaviorName}-${i}-${e.condId}-${e.targetName}`,
         source:       `ocond-${behaviorName}-${e.condId}`,
         target:       `oact-${behaviorName}-${e.targetName}`,
         targetHandle: 'ctrl-in',
