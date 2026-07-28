@@ -517,29 +517,32 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     const candidates = portUsagesByName.get(portName);
     if (!candidates?.length) return null;
 
-    // Resolve the port NODE id. It may be a port declared on a PartDefinition that
-    // several usages inherit (so a single candidate is shared) — that's fine here; the
-    // `part.` qualification below keeps the two usages distinct.
+    // The specific PART USAGE this endpoint refers to. When the part name is ambiguous across
+    // scopes (e.g. every domain owns a `controller`), prefer the usage that lives in the flow's
+    // OWN scope — otherwise `controller.tlfSpiRequest` inside HvmSafetyDomain would resolve
+    // against DrivingSafetyDomain's controller (declared earlier) and pick a port on the WRONG
+    // def, so the view can't map it and the whole edge silently vanishes.
+    const chainPartId = chain.length >= 2
+      ? (partUsagesByName.get(chain[0]) ?? []).find(pid => findEnclosingPartDef(pid) === scopeDefId)
+        ?? (partUsagesByName.get(chain[0]) ?? [])[0]
+      : undefined;
+
+    // Resolve the port NODE id, choosing the candidate declared on the chain part's OWN type
+    // (or any of its supertypes — inherited ports). A single shared candidate is fine; the
+    // `part.` qualification below keeps two usages of the same def distinct.
     let portId = candidates[0];
     if (candidates.length > 1) {
       let matched: string | undefined;
-      if (chain.length >= 2) {
-        const partIds = partUsagesByName.get(chain[0]) ?? [];
-        for (const partId of partIds) {
-          const defId = typedByBySource.get(partId);
-          if (!defId) continue;
-          // The port may be declared on defId OR any of its supertypes (inherited), so match
-          // the candidate whose owning def is anywhere in defId's supertype closure.
-          const defAndSupers = superClosure(defId);
-          for (const pid of candidates) {
-            let id: string | undefined = parentOf.get(pid);
-            while (id !== undefined) {
-              if (defAndSupers.has(id)) { matched = pid; break; }
-              const n = nodeById.get(id);
-              if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
-              id = parentOf.get(id);
-            }
-            if (matched) break;
+      const defId = chainPartId ? typedByBySource.get(chainPartId) : undefined;
+      if (defId) {
+        const defAndSupers = superClosure(defId);
+        for (const pid of candidates) {
+          let id: string | undefined = parentOf.get(pid);
+          while (id !== undefined) {
+            if (defAndSupers.has(id)) { matched = pid; break; }
+            const n = nodeById.get(id);
+            if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) break;
+            id = parentOf.get(id);
           }
           if (matched) break;
         }
@@ -568,8 +571,7 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     // both `drivingDomain.domainSupplyInput` and `hvmDomain.domainSupplyInput` would collapse
     // onto the one shared def port. A 1-element (boundary) chain has no part and stays bare.
     if (chain.length >= 2) {
-      const partIds = partUsagesByName.get(chain[0]) ?? [];
-      const partId  = partIds.find(pid => findEnclosingPartDef(pid) === scopeDefId) ?? partIds[0];
+      const partId = chainPartId;
       if (partId) return `${partId}::${portId}`;
     }
     return portId;
