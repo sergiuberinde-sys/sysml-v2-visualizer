@@ -2,11 +2,12 @@
 
 ## Purpose & status
 
-Five capabilities were **prototyped** in the SysML v2 Visualizer's **Interconnect view**
+Six capabilities were **prototyped** in the SysML v2 Visualizer's **Interconnect view**
 (the structural-wiring / Internal Block Diagram view; prototype code in
 `src/ui/views/StructuralWiringView.tsx`): (1) show / hide unconnected ports, (2) expand / collapse
 part internals, (3) automatic non-overlapping layout with viewport auto-fit, (4) one-click expand-all /
-collapse-all, and (5) pan-by-default navigation with a double-click-to-enter move mode. This document
+collapse-all, (5) pan-by-default navigation with a double-click-to-enter move mode, and (6) colour-coding
+of connections by the *data kind* they carry, with an on-canvas legend. This document
 specifies them so the development team can implement them as **official, supported features** in the
 parser/visualization pipeline. The prototype is a reference for behavior only — it is not the target
 implementation.
@@ -315,13 +316,100 @@ follow-the-node routing.
 
 ---
 
+## Feature 6 — Data-kind colour-coding of connections & legend
+
+### 6.1 Rationale
+An Interconnect diagram shows *that* two ports are wired, but not *what flows* across the wire. In
+practice the connections in a system carry qualitatively different things — electrical power, physical
+signals, logical/information payloads, environmental quantities — and engineers reason about them
+differently (safety, EMC, bandwidth, timing). The view SHALL therefore **colour and style each
+connection by the kind of data it carries**, and SHALL show a **legend** so the encoding is
+self-explanatory, turning the wiring diagram into a data-flow diagram at a glance.
+
+### 6.2 Definitions
+- **Data kind** — a classification of the item that a connection conveys, derived from the model. The
+  model expresses it by specialising a small set of base `item def`s (in the prototype model, the
+  `ExchangedContent` bases **PhysicalSignal**, **LogicalInformation**, **EnvironmentalData**); every
+  concrete payload item def resolves (transitively, via `:>`) to exactly one base. The official
+  implementation SHALL treat the base set as a **model-declared vocabulary**, not a hard-coded list.
+- **Carried item of a connection** — the item def carried by the ports the connection joins. Resolved
+  as: connection endpoint → its port → the port's definition → the port definition's item member →
+  that member's item def → the base data kind the item def specialises.
+- **Kind style** — the (colour, line style, human label) triple assigned to a data kind and used
+  consistently for both the wire and its legend row.
+- **Legend** — an on-canvas panel listing each data kind present in the current diagram with its
+  colour/line swatch and label.
+
+### 6.3 Functional requirements
+- **FR-DK-1** Each connection SHALL be rendered in the **kind style** of the data kind of its carried
+  item: a distinct colour per kind, plus a line style (solid vs dashed) so the encoding survives
+  greyscale printing and colour-vision deficiency.
+- **FR-DK-2** The data kind SHALL be **resolved from the model**, following the carried-item chain in
+  §6.2. Resolution MUST be robust to the ways the parser represents a port's carried item — including
+  when the item's type is delivered as a resolved `typedBy` edge **and** when the parser leaves it
+  unresolved and records only a type *label* on the carrying feature (see FR-DK-7).
+- **FR-DK-3** A connection whose data kind **cannot** be resolved SHALL fall back to a neutral default
+  style (no colour claim), and MUST NOT be mis-coloured as any specific kind. Unresolved connections
+  MUST NOT break rendering of the resolved ones.
+- **FR-DK-4** The kind→style mapping SHALL be **stable and shared** by every consumer (wire rendering,
+  legend, and any raster export) so a kind looks identical everywhere in one session.
+- **FR-DK-5** The view SHALL display a **legend** whenever the current model declares the data-kind
+  vocabulary. The legend SHALL list the kinds in a fixed, deterministic order, each with its
+  colour/line swatch and label, and SHALL be hidden for models that do not classify their items
+  (no false legend on a model without data kinds).
+- **FR-DK-6** The legend SHALL **fit within the viewport**: it SHALL be a compact overlay that does
+  not obscure the diagram's navigation controls, SHALL cap its own height and scroll internally rather
+  than overflow the canvas, and SHALL remain fully visible regardless of diagram size or zoom.
+- **FR-DK-7** Where the parser reshapes a port's carried item so its type is **not** reachable through
+  the resolved `typedBy` chain (e.g. the payload is emitted as a `ReferenceUsage`, or the item's type
+  appears only as an unresolved `FeatureTyping` label), the resolver SHALL apply a name-based fallback:
+  read the type label and resolve it to the matching item def by name, then classify that def. This
+  fallback MUST NOT change the result for connections that already resolve via the primary chain.
+- **FR-DK-8** Colour-coding and the legend SHALL be **purely presentational** — no change to the model
+  or diagnostics — and SHALL compose with all other features (hide-unconnected-ports, expand/collapse,
+  layout, move mode): wires inside expanded white boxes SHALL be coloured by the same rule.
+- **FR-DK-9** Raster export of the diagram (the "Export to PNG" action) SHALL include the legend in the
+  exported image, rendered in the same kind styles, so an exported diagram is interpretable standalone.
+
+### 6.4 Acceptance criteria
+- In a model that classifies its items, every connection is drawn in its kind's colour/line style, and
+  a legend lists exactly the kinds present, in a stable order, each with a matching swatch.
+- A connection whose carried item is a payload typed via a `ReferenceUsage` / label-only typing (e.g.
+  an Ethernet-frame port) is coloured the **same** as one typed via a resolved `typedBy` edge to the
+  same base kind — not left neutral (FR-DK-7).
+- A connection whose kind genuinely cannot be resolved renders in the neutral default; all resolvable
+  connections around it are still correctly coloured.
+- Opening a model that does **not** classify items shows **no** legend and no coloured wires (neutral
+  diagram), with no regression to layout or routing.
+- The legend stays on-screen and clear of the zoom / attribution controls at any zoom level and
+  diagram size; exporting to PNG produces an image that contains the legend in the same styles.
+
+### 6.5 Prototype reference
+`StructuralWiringView.tsx` — `DataKind` type; `INFO_BASE_KIND` (base item-def name → kind) as the
+model-declared vocabulary; `KIND_STYLE` (kind → `{ color, dashed, label }`, the shared mapping) and
+`DATA_KIND_ORDER` (deterministic legend order). Resolution: `specTargetsOf` (specialization edges) +
+`typedByTarget` (typedBy edges) feed `kindOfItemDef(defId)` (walks `:>` to a base in
+`INFO_BASE_KIND`); `dataKindOfPort(portId)` resolves port → port def → its `ItemUsage`/`ReferenceUsage`
+payload → item def → kind. The FR-DK-7 fallback uses `featureTypeLabelOf` (owner → `FeatureTyping`
+child label) + `itemDefIdByName` (item-def name → id): when the payload has no `typedBy` edge, the
+type *label* is resolved to the item def by name (this is what colours the `EthernetFrameIn/Out`
+ports, whose `EthernetFrame` payload the parser emits as a `ReferenceUsage` with a label-only typing).
+Wire styling in `rfConnEdges` picks `KIND_STYLE[dataKind]` for stroke colour and dashing; the legend
+is an absolutely-positioned overlay (bottom-right, `maxHeight`/`overflowY:auto`, clear of the React
+Flow controls) gated by the `hasDataKinds` memo (`INFO_BASE_KIND` base present in the graph); the
+"Export to PNG" handler (`handleExportPng`) redraws the legend onto the export canvas via the 2D API
+so it is baked into the PNG.
+
+---
+
 ## Cross-cutting notes for the dev team
 - **Purely presentational.** No feature edits the model; all are view state derived from the parsed
   containment graph. They MUST compose (e.g. hide unconnected ports *inside* an expanded white box,
   with the reduced port set feeding the automatic layout).
 - **Stable identity.** Correct behavior depends on stable, resolvable port/element identity from
   the parser (a `part.port` connection endpoint must resolve to the same port the type definition
-  declares) — this is the main correctness dependency for all three features.
+  declares) — this is the main correctness dependency across these features (it also underpins the
+  data-kind resolution of Feature 6, which walks port → carried item → base kind).
 - **Layout is the shared substrate.** Features 1 and 2 both change the element/port set that the
   automatic layout (Feature 3) consumes; the no-overlap, no-through-shape, and auto-fit guarantees
   MUST hold after every such change.
