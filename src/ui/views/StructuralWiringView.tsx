@@ -81,28 +81,22 @@ const MSG_C       = '#7dd3fc';
 const EDGE_SEL_C  = '#89b4fa'; // selected edge / port highlight colour
 
 // ── Data-kind visual language (connection colouring) ───────────────────────────
-// The model records each item's InformationRepresentationKind by specialising one of six
-// base "…Information" / "…Command" item defs. A connection is coloured by the kind of the
-// item its ports carry (port → typedBy portDef → its `item` member → typedBy itemDef → base).
-// On the dark canvas the "black" electrical line reads as light grey.
-type DataKind = 'power' | 'electrical' | 'protocol' | 'software' | 'functional' | 'internalHw';
+// The model classifies each item's ExchangeNatureKind by specialising one of the base
+// `ExchangedContent` item defs (LogicalInformation / PhysicalSignal / EnvironmentalData).
+// A connection is coloured by the nature of the item its ports carry
+// (port → typedBy portDef → its `item` member → typedBy itemDef → base).
+type DataKind = 'physical' | 'logical' | 'environmental';
 const INFO_BASE_KIND: Record<string, DataKind> = {
-  PhysicalEnergyInformation:           'power',
-  PhysicalElectricalSignalInformation: 'electrical',
-  ProtocolInformation:                 'protocol',
-  SoftwareInformation:                 'software',
-  FunctionalCommand:                   'functional',
-  InternalHardwareInformation:         'internalHw',
+  PhysicalSignal:     'physical',
+  LogicalInformation: 'logical',
+  EnvironmentalData:  'environmental',
 };
 const KIND_STYLE: Record<DataKind, { color: string; dashed: boolean; label: string }> = {
-  power:      { color: '#ef4444', dashed: false, label: 'Power' },
-  electrical: { color: '#e2e8f0', dashed: false, label: 'Physical electrical signal' },
-  protocol:   { color: '#3b82f6', dashed: false, label: 'Protocol communication' },
-  software:   { color: '#22c55e', dashed: true,  label: 'Software information' },
-  functional: { color: '#f59e0b', dashed: true,  label: 'Functional / control intent' },
-  internalHw: { color: '#94a3b8', dashed: false, label: 'Internal hardware information' },
+  physical:      { color: '#ef4444', dashed: false, label: 'Physical signal / power' },
+  logical:       { color: '#3b82f6', dashed: false, label: 'Logical information' },
+  environmental: { color: '#22c55e', dashed: true,  label: 'Environmental data' },
 };
-const DATA_KIND_ORDER: DataKind[] = ['power', 'electrical', 'protocol', 'software', 'functional', 'internalHw'];
+const DATA_KIND_ORDER: DataKind[] = ['physical', 'logical', 'environmental'];
 
 const DIM         = '#334155';
 const SCOPE_FRAME_BDR = '#1e3a5f';
@@ -641,6 +635,19 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       if (e.type === 'specialization') { const l = specTargetsOf.get(e.source); if (l) l.push(e.target); else specTargetsOf.set(e.source, [e.target]); }
       else if (e.type === 'typedBy') typedByTarget.set(e.source, e.target);
     }
+    // Fallbacks for when the parser leaves an item's type UNRESOLVED (no `typedBy`
+    // edge) and records it only as a `FeatureTyping` child label — e.g. the
+    // EthernetFrame ports. Resolve that label to the item def by name.
+    const featureTypeLabelOf = new Map<string, string>();
+    for (const e of graph.edges) {
+      if (e.type !== 'contains') continue;
+      const child = nodeById.get(e.target);
+      if (child?.type === 'FeatureTyping' && child.label) featureTypeLabelOf.set(e.source, child.label);
+    }
+    const itemDefIdByName = new Map<string, string>();
+    for (const n of graph.nodes) {
+      if (n.type === 'ItemDefinition' && n.label && !itemDefIdByName.has(n.label)) itemDefIdByName.set(n.label, n.id);
+    }
     const itemKindCache = new Map<string, DataKind | null>();
     const kindOfItemDef = (defId: string, seen = new Set<string>()): DataKind | null => {
       const cached = itemKindCache.get(defId);
@@ -662,9 +669,18 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       const pd = typedByTarget.get(portId);
       if (pd) {
         for (const kid of inheritedChildren(pd)) {
-          if (kid.type !== 'ItemUsage') continue;
+          // The carried payload is usually an `ItemUsage`, but when the parser
+          // can't resolve the item's type it re-shapes the member as a
+          // `ReferenceUsage` (e.g. EthernetFrameIn), so accept both.
+          if (kid.type !== 'ItemUsage' && kid.type !== 'ReferenceUsage') continue;
+          // Preferred: the item's resolved `typedBy` edge to its item def.
           const it = typedByTarget.get(kid.id);
-          if (it) { k = kindOfItemDef(it); break; }
+          if (it) { k = kindOfItemDef(it); if (k) break; else continue; }
+          // Fallback: the parser left the type unresolved (only a FeatureTyping
+          // label, e.g. EthernetFrame) — look the item def up by that name.
+          const label = featureTypeLabelOf.get(kid.id);
+          const byName = label ? itemDefIdByName.get(label) : undefined;
+          if (byName) { k = kindOfItemDef(byName); if (k) break; }
         }
       }
       portKindCache.set(portId, k);
@@ -2421,19 +2437,63 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       const imageW = Math.max(640, Math.min(6000, Math.round(bounds.width  * (1 + PAD * 2))));
       const imageH = Math.max(480, Math.min(6000, Math.round(bounds.height * (1 + PAD * 2))));
       const vp = getViewportForBounds(bounds, imageW, imageH, 0.1, 4, PAD);
+      const PIXEL_RATIO = 2;
       const dataUrl = await toPng(viewportEl, {
         backgroundColor: '#0b1220',
         width: imageW,
         height: imageH,
-        pixelRatio: 2,
+        pixelRatio: PIXEL_RATIO,
         style: {
           width: `${imageW}px`,
           height: `${imageH}px`,
           transform: `translate(${vp.x}px, ${vp.y}px) scale(${vp.zoom})`,
         },
       });
+
+      // Composite the data-kind legend into the bottom-left of the export. The on-screen
+      // legend is an overlay sibling of `.react-flow__viewport`, so it isn't captured by the
+      // diagram toPng — draw it directly with the 2D API (reliable, no html-to-image quirks).
+      const diagImg = await new Promise<HTMLImageElement>((res, rej) => {
+        const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataUrl;
+      });
+      let finalUrl = dataUrl;
+      if (hasDataKinds) {
+        const canvas = document.createElement('canvas');
+        canvas.width = diagImg.width; canvas.height = diagImg.height;   // already ×PIXEL_RATIO
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(diagImg, 0, 0);
+          const s = PIXEL_RATIO;
+          const padX = 9 * s, padY = 7 * s, rowH = 16 * s, headerH = 15 * s, lineW = 26 * s, gap = 7 * s;
+          ctx.textBaseline = 'top';
+          ctx.font = `${9 * s}px monospace`;
+          const rows = DATA_KIND_ORDER.map(k => KIND_STYLE[k]);
+          const maxTextW = Math.max(ctx.measureText('DATA KIND').width, ...rows.map(r => ctx.measureText(r.label).width));
+          const boxW = padX * 2 + lineW + gap + maxTextW;
+          const boxH = padY * 2 + headerH + rows.length * rowH;
+          const margin = 18 * s;
+          const x0 = margin, y0 = canvas.height - boxH - margin;
+          ctx.fillStyle = 'rgba(11,18,32,0.94)';
+          ctx.strokeStyle = '#334155'; ctx.lineWidth = s;
+          ctx.beginPath(); ctx.roundRect(x0, y0, boxW, boxH, 6 * s); ctx.fill(); ctx.stroke();
+          ctx.fillStyle = '#64748b'; ctx.font = `${8.5 * s}px monospace`;
+          ctx.fillText('DATA KIND', x0 + padX, y0 + padY);
+          rows.forEach((r, i) => {
+            const ry = y0 + padY + headerH + i * rowH + rowH / 2;
+            ctx.strokeStyle = r.color; ctx.lineWidth = 2 * s;
+            ctx.setLineDash(r.dashed ? [5 * s, 3 * s] : []);
+            ctx.beginPath(); ctx.moveTo(x0 + padX, ry); ctx.lineTo(x0 + padX + lineW, ry); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = '#cbd5e1'; ctx.font = `${9 * s}px monospace`; ctx.textBaseline = 'middle';
+            ctx.fillText(r.label, x0 + padX + lineW + gap, ry);
+            ctx.textBaseline = 'top';
+          });
+          finalUrl = canvas.toDataURL('image/png');
+        }
+      }
+
       const a = document.createElement('a');
-      a.href = dataUrl;
+      a.href = finalUrl;
       a.download = `${(activeScopeName || 'interconnect').replace(/\s+/g, '-')}-interconnect.png`;
       document.body.appendChild(a);
       a.click();
@@ -2444,7 +2504,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     } finally {
       setExporting(false);
     }
-  }, [activeScopeName]);
+  }, [activeScopeName, hasDataKinds]);
   // When set, the add-element form is shown at {x,y} within the canvas.
   // target: 'scope' → insert into the scope def (active file); { defName } → add to
   // the usage's type definition (possibly in another file).
@@ -2809,21 +2869,24 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             <Controls showFitView={false} />
             <FitPanel padding={0.3} autoFitVersion={layoutEpoch} onReset={() => setLayoutVersion(v => v + 1)} />
           </ReactFlow>
-          {/* Data-kind legend — the connection colour/line language (see KIND_STYLE). */}
+          {/* Data-kind legend — the connection colour/line language (see KIND_STYLE).
+              Bottom-RIGHT so it clears React Flow's zoom controls (bottom-left); maxHeight +
+              scroll so it can never spill past the canvas on a short window. */}
           {hasDataKinds && (
           <div style={{
-            position: 'absolute', left: 8, bottom: 8, zIndex: 20,
-            background: 'rgba(11,18,32,0.92)', border: `1px solid ${DIM}`, borderRadius: 6,
-            padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4,
+            position: 'absolute', right: 8, bottom: 22, zIndex: 20,  // bottom:22 clears the RF attribution
+            maxHeight: 'calc(100% - 30px)', overflowY: 'auto',
+            background: 'rgba(11,18,32,0.94)', border: `1px solid ${DIM}`, borderRadius: 6,
+            padding: '5px 8px', display: 'flex', flexDirection: 'column', gap: 3,
             pointerEvents: 'none', fontFamily: 'monospace',
           }}>
-            <div style={{ fontSize: 9, color: '#64748b', letterSpacing: '0.5px', marginBottom: 1 }}>DATA KIND</div>
+            <div style={{ fontSize: 8.5, color: '#64748b', letterSpacing: '0.5px', marginBottom: 1 }}>DATA KIND</div>
             {DATA_KIND_ORDER.map(k => {
               const s = KIND_STYLE[k];
               return (
-                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, color: '#cbd5e1', whiteSpace: 'nowrap' }}>
-                  <svg width="28" height="8" style={{ flexShrink: 0, overflow: 'visible' }}>
-                    <line x1="1" y1="4" x2="27" y2="4" stroke={s.color} strokeWidth="2"
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9, color: '#cbd5e1', whiteSpace: 'nowrap' }}>
+                  <svg width="24" height="7" style={{ flexShrink: 0, overflow: 'visible' }}>
+                    <line x1="1" y1="3.5" x2="23" y2="3.5" stroke={s.color} strokeWidth="2"
                       strokeDasharray={s.dashed ? '5 3' : undefined} strokeLinecap="round" />
                   </svg>
                   <span>{s.label}</span>
