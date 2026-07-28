@@ -292,6 +292,12 @@ const WIRING_LAYERED_OPTIONS: Record<string, string> = {
   'elk.edgeRouting':                           'ORTHOGONAL',
   'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
   'elk.layered.nodePlacement.strategy':        'BRANDES_KOEPF',
+  // NOTE: do NOT add elk.layered.cycleBreaking.strategy=MODEL_ORDER or
+  // considerModelOrder.strategy here — this elkjs build throws on them
+  // ("Cannot read properties of undefined"), layoutWiringElk falls into its catch, and
+  // EVERY edge silently degrades to the handle-following `channel` router (no obstacle
+  // avoidance, wires drawn on top of each other). Stable ordering is enforced after
+  // layout instead (see the input-order re-stack below).
   'elk.spacing.nodeNode':                      '56',
   'elk.layered.spacing.nodeNodeBetweenLayers': '170',
   'elk.spacing.edgeEdge':                      '16',
@@ -310,6 +316,9 @@ export async function layoutWiringElk(
   const portPos     = new Map<string, { x: number; y: number; side: PortSide }>();
   const boundaryPos = new Map<string, { x: number; y: number; side: PortSide; containerW: number }>();
   const routes: ElkRouteMap = new Map();
+  // Edges reversed for deterministic cycle breaking (see layoutOneLevel). Their ELK route
+  // runs target→source, so the waypoints are flipped back when emitted.
+  const reversedEdges = new Set<string>();
   const empty: WiringElkResult = { nodePos, nodeSize, portPos, boundaryPos, routes, width: 0, height: 0 };
   // Only `parts` is required: a scope may have no top-level edges yet still need layout for its
   // parts' positions and for edges nested inside expanded (compound) parts.
@@ -361,7 +370,46 @@ export async function layoutWiringElk(
             layoutOptions: { 'elk.port.side': p.side === 'left' ? 'WEST' : 'EAST' },
           })),
         });
-    const elkEdges = levelEdges.map(e => ({ id: e.id, sources: [e.sourcePort], targets: [e.targetPort] }));
+    // ── Deterministic cycle breaking ─────────────────────────────────────────
+    // Mutually-connected peers (e.g. EcuPlatform's two domains, linked by the bidirectional
+    // SGMII flows) form a cycle. ELK's default GREEDY cycle-breaker chooses which edge to
+    // reverse based on the current node SIZES, so expanding one part flipped which peer
+    // landed on top. Break cycles ourselves instead, by SOURCE order: every edge that runs
+    // backward w.r.t. the children's input order is reversed before ELK sees it. That leaves
+    // a DAG whose layering depends only on model order — identical in every expand state.
+    // (Doing this via elk.layered.cycleBreaking.strategy=MODEL_ORDER is NOT an option: this
+    // elkjs build throws on it, which silently drops every edge to the `channel` router.)
+    const childIndex = new Map(children.map((c, i) => [c.id, i]));
+    const portOwner  = new Map<string, string>();
+    for (const c of children) {
+      for (const p of c.fixedPorts ?? []) portOwner.set(p.id, c.id);
+      for (const p of c.sidePorts  ?? []) portOwner.set(p.id, c.id);
+    }
+    // A port id may be registered directly (leaf sidePorts / compound fixedPorts) or be a
+    // `${childId}::…` qualified id; fall back to the longest child-id prefix so an expanded
+    // (compound) peer is still recognised — otherwise its cycle stays unbroken and the
+    // layering flips again once BOTH peers are expanded.
+    const ownerOf = (portId: string): string | undefined => {
+      const direct = portOwner.get(portId);
+      if (direct !== undefined) return direct;
+      let best: string | undefined;
+      for (const c of children) {
+        if (portId === c.id || portId.startsWith(c.id + '::')) {
+          if (best === undefined || c.id.length > best.length) best = c.id;
+        }
+      }
+      return best;
+    };
+    const elkEdges = levelEdges.map(e => {
+      const sIdx = childIndex.get(ownerOf(e.sourcePort) ?? '');
+      const tIdx = childIndex.get(ownerOf(e.targetPort) ?? '');
+      // Frame/boundary ports have no owning child (undefined) — never reversed.
+      if (sIdx !== undefined && tIdx !== undefined && sIdx > tIdx) {
+        reversedEdges.add(e.id);
+        return { id: e.id, sources: [e.targetPort], targets: [e.sourcePort] };
+      }
+      return { id: e.id, sources: [e.sourcePort], targets: [e.targetPort] };
+    });
 
     // When the container has NO frame ports (the top scope), lay the parts out FLAT at the
     // root. Wrapping them in a compound `scope` node with `hierarchyHandling: INCLUDE_CHILDREN`
@@ -449,11 +497,14 @@ export async function layoutWiringElk(
         // This container's internal edges — sections are container-local; shift to absolute.
         for (const e of ((sc?.edges ?? []) as ElkExtendedEdge[])) {
           const s = e.sections?.[0]; if (!s) continue;
-          routes.set(e.id, [
+          const pts = [
             { x: s.startPoint.x + absX, y: s.startPoint.y + absY },
             ...(s.bendPoints ?? []).map(p => ({ x: p.x + absX, y: p.y + absY })),
             { x: s.endPoint.x + absX,   y: s.endPoint.y + absY   },
-          ]);
+          ];
+          // A cycle-broken edge was handed to ELK reversed, so its route runs target→source.
+          // Flip it back so the polyline still starts at the edge's real source port.
+          routes.set(e.id, reversedEdges.has(e.id) ? pts.reverse() : pts);
         }
       },
     };
@@ -556,6 +607,71 @@ export async function layoutWiringElk(
       const clear = candidates.find(c => obstaclesFor(c).length === 0);
       routes.set(eid, clear ?? candidates[0]);
     }
+
+    // ── De-overlap: separate COINCIDENT wire segments into parallel channels ─────
+    // Each frame (top scope + every expanded part) is routed by its OWN ELK pass, so a
+    // cross-boundary wire and a wire internal to the expanded part know nothing about each
+    // other and happily land on the same line. Spec FR-AL-2 requires no two segments be
+    // coincident, so nudge collinear-and-overlapping segments apart here, once all routes
+    // (from every pass) are known and expressed in the same absolute coordinates.
+    //
+    // Only INTERIOR segments move: shifting segment i changes pts[i] and pts[i+1], so the
+    // first and last points — which are pinned to port handles — must never be endpoints of
+    // a shifted segment. The two neighbouring perpendicular segments simply stretch, so the
+    // polyline stays orthogonal and still meets its ports exactly.
+    const SEP = 12;           // channel spacing between parallel wires
+    const COINCIDENT = 2.5;   // treat axes within this distance as the same line
+    const MIN_OVERLAP = 10;   // ignore incidental touches
+    type Seg = { eid: string; i: number; axis: number; lo: number; hi: number };
+
+    const collect = (horiz: boolean): Seg[] => {
+      const out: Seg[] = [];
+      for (const [eid, pts] of routes) {
+        for (let i = 1; i + 2 < pts.length; i++) {   // interior segments only
+          const a = pts[i], b = pts[i + 1];
+          const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+          if (horiz && dy < 0.8 && dx > 3) out.push({ eid, i, axis: (a.y + b.y) / 2, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) });
+          if (!horiz && dx < 0.8 && dy > 3) out.push({ eid, i, axis: (a.x + b.x) / 2, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y) });
+        }
+      }
+      return out;
+    };
+
+    const spread = (horiz: boolean): void => {
+      const segs = collect(horiz);
+      segs.sort((p, q) => p.axis - q.axis || p.lo - q.lo);
+      // Group segments that share an axis line (within COINCIDENT).
+      let g: Seg[] = [];
+      const flush = () => {
+        if (g.length < 2) { g = []; return; }
+        // Within the group, only segments that actually overlap need separating.
+        const used: Seg[] = [];
+        for (const s of g) {
+          const clash = used.filter(u => u.eid !== s.eid &&
+            Math.min(u.hi, s.hi) - Math.max(u.lo, s.lo) > MIN_OVERLAP);
+          if (clash.length) {
+            // Push to the first free channel (alternating out from the original line).
+            const k = clash.length;
+            const delta = (k % 2 === 1 ? 1 : -1) * Math.ceil(k / 2) * SEP;
+            const pts = routes.get(s.eid);
+            if (pts) {
+              if (horiz) { pts[s.i] = { ...pts[s.i], y: pts[s.i].y + delta }; pts[s.i + 1] = { ...pts[s.i + 1], y: pts[s.i + 1].y + delta }; }
+              else       { pts[s.i] = { ...pts[s.i], x: pts[s.i].x + delta }; pts[s.i + 1] = { ...pts[s.i + 1], x: pts[s.i + 1].x + delta }; }
+            }
+          }
+          used.push(s);
+        }
+        g = [];
+      };
+      for (const s of segs) {
+        if (g.length && Math.abs(s.axis - g[0].axis) > COINCIDENT) flush();
+        g.push(s);
+      }
+      flush();
+    };
+
+    // Two passes: separating one axis can expose coincidences on the other.
+    for (let pass = 0; pass < 2; pass++) { spread(true); spread(false); }
 
     // Preserve the INPUT (source/collapsed) vertical order of top parts when there are no edges
     // between them (e.g. EcuPlatform's two domains): ELK's order is then arbitrary and flips as a
