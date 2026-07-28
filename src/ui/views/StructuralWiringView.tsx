@@ -79,6 +79,31 @@ const CONN_C      = '#3f6b55'; // default wiring — muted so the diagram reads 
                                // edge still brightens to EDGE_SEL_C with the spotlight glow.
 const MSG_C       = '#7dd3fc';
 const EDGE_SEL_C  = '#89b4fa'; // selected edge / port highlight colour
+
+// ── Data-kind visual language (connection colouring) ───────────────────────────
+// The model records each item's InformationRepresentationKind by specialising one of six
+// base "…Information" / "…Command" item defs. A connection is coloured by the kind of the
+// item its ports carry (port → typedBy portDef → its `item` member → typedBy itemDef → base).
+// On the dark canvas the "black" electrical line reads as light grey.
+type DataKind = 'power' | 'electrical' | 'protocol' | 'software' | 'functional' | 'internalHw';
+const INFO_BASE_KIND: Record<string, DataKind> = {
+  PhysicalEnergyInformation:           'power',
+  PhysicalElectricalSignalInformation: 'electrical',
+  ProtocolInformation:                 'protocol',
+  SoftwareInformation:                 'software',
+  FunctionalCommand:                   'functional',
+  InternalHardwareInformation:         'internalHw',
+};
+const KIND_STYLE: Record<DataKind, { color: string; dashed: boolean; label: string }> = {
+  power:      { color: '#ef4444', dashed: false, label: 'Power' },
+  electrical: { color: '#e2e8f0', dashed: false, label: 'Physical electrical signal' },
+  protocol:   { color: '#3b82f6', dashed: false, label: 'Protocol communication' },
+  software:   { color: '#22c55e', dashed: true,  label: 'Software information' },
+  functional: { color: '#f59e0b', dashed: true,  label: 'Functional / control intent' },
+  internalHw: { color: '#94a3b8', dashed: false, label: 'Internal hardware information' },
+};
+const DATA_KIND_ORDER: DataKind[] = ['power', 'electrical', 'protocol', 'software', 'functional', 'internalHw'];
+
 const DIM         = '#334155';
 const SCOPE_FRAME_BDR = '#1e3a5f';
 
@@ -607,6 +632,45 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     // `wpart-drivingDomain::`), so expansion state — keyed on the full node-id path — is
     // resolved per INSTANCE, not per shared semantic id (two domains' inherited `controller`
     // expand independently).
+
+    // ── Data-kind resolver (shared across all scopes / expansions) ─────────────
+    // A connection's kind is the InformationRepresentationKind of the item its ports carry.
+    const specTargetsOf = new Map<string, string[]>();
+    const typedByTarget = new Map<string, string>();
+    for (const e of graph.edges) {
+      if (e.type === 'specialization') { const l = specTargetsOf.get(e.source); if (l) l.push(e.target); else specTargetsOf.set(e.source, [e.target]); }
+      else if (e.type === 'typedBy') typedByTarget.set(e.source, e.target);
+    }
+    const itemKindCache = new Map<string, DataKind | null>();
+    const kindOfItemDef = (defId: string, seen = new Set<string>()): DataKind | null => {
+      const cached = itemKindCache.get(defId);
+      if (cached !== undefined) return cached;
+      if (seen.has(defId)) return null;
+      seen.add(defId);
+      const n = nodeById.get(defId);
+      let k: DataKind | null = (n && INFO_BASE_KIND[n.label]) ?? null;
+      if (!k) for (const s of specTargetsOf.get(defId) ?? []) { k = kindOfItemDef(s, seen); if (k) break; }
+      itemKindCache.set(defId, k);
+      return k;
+    };
+    const portKindCache = new Map<string, DataKind | null>();
+    // port → its port def → the def's `item` member's item def → base kind.
+    const dataKindOfPort = (portId: string): DataKind | null => {
+      const cached = portKindCache.get(portId);
+      if (cached !== undefined) return cached;
+      let k: DataKind | null = null;
+      const pd = typedByTarget.get(portId);
+      if (pd) {
+        for (const kid of inheritedChildren(pd)) {
+          if (kid.type !== 'ItemUsage') continue;
+          const it = typedByTarget.get(kid.id);
+          if (it) { k = kindOfItemDef(it); break; }
+        }
+      }
+      portKindCache.set(portId, k);
+      return k;
+    };
+
     function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set(), externallyConnected: Set<string> = new Set(), pathPrefix = ''): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
       if (!graph) return { nodes: [], edges: [], width: 0, height: 0 };
 
@@ -1831,7 +1895,12 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         const highlightEdge = isEdgeSel || isConnected;
 
         const isMsg  = conn.type === 'message';
-        const edgeC  = highlightEdge ? EDGE_SEL_C : (isMsg ? MSG_C : CONN_C);
+        // Colour/dash by the data kind carried through the connection (see KIND_STYLE).
+        // Either endpoint resolves the same kind; fall back to CONN_C when unknown.
+        const dataKind = isMsg ? null
+          : (dataKindOfPort(epPortOf(conn.source)) ?? dataKindOfPort(epPortOf(conn.target)));
+        const kStyle = dataKind ? KIND_STYLE[dataKind] : null;
+        const edgeC  = highlightEdge ? EDGE_SEL_C : (isMsg ? MSG_C : (kStyle ? kStyle.color : CONN_C));
 
         // Route structural edges to port-handle squares; message edges connect parts directly.
         const isSrcPort = !isMsg && srcNode?.type === 'PortUsage';
@@ -1909,7 +1978,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           sourceHandle:    srcHandle,
           targetHandle:    tgtHandle,
           type:            'channel',
-          animated:        !isMsg && !isStructural && !isDimmed,
+          // Kinded edges carry a STATIC solid/dashed style (the data-kind language), so
+          // don't also animate them — animation would wash out the solid-vs-dashed cue.
+          // Unkinded flows keep the marching-ants animation as before.
+          animated:        !isMsg && !isStructural && !isDimmed && !kStyle,
           label:           displayLabel,
           // Label background prevents text landing directly on port glyphs or node text.
           labelStyle:      { fill: edgeC, fontSize: 9, fontFamily: 'monospace', ...(isDimmed ? { opacity: 0.3 } : {}) },
@@ -1918,7 +1990,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
           style: {
             stroke:       edgeC,
             strokeWidth:  isEdgeSel ? 3 : (highlightEdge ? 2.5 : 1.5),
-            ...(isMsg ? { strokeDasharray: '6 3' } : {}),
+            ...(isMsg || kStyle?.dashed ? { strokeDasharray: '6 3' } : {}),
             ...spotlightStyle,
           },
           ...(isEdgeSel ? { zIndex: 1000 } : {}),
@@ -2296,6 +2368,14 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
 
   const wiringPaneRef = useRef<HTMLDivElement>(null);
   const rfInstanceRef = useRef<ReactFlowInstance | null>(null);
+
+  // Only show the data-kind legend for models that actually classify their items by
+  // InformationRepresentationKind (i.e. define the base "…Information" item defs). Other
+  // models render every wire in the default colour, so a colour key would be misleading.
+  const hasDataKinds = useMemo(
+    () => !!graph?.nodes.some(n => n.type === 'ItemDefinition' && n.label in INFO_BASE_KIND),
+    [graph],
+  );
 
   // Double-click-a-part-to-enter-it, delivered by a NATIVE capture-phase mousedown listener on
   // the canvas wrapper. React's synthetic onMouseDownCapture is delegated through React's tree
@@ -2729,6 +2809,29 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             <Controls showFitView={false} />
             <FitPanel padding={0.3} autoFitVersion={layoutEpoch} onReset={() => setLayoutVersion(v => v + 1)} />
           </ReactFlow>
+          {/* Data-kind legend — the connection colour/line language (see KIND_STYLE). */}
+          {hasDataKinds && (
+          <div style={{
+            position: 'absolute', left: 8, bottom: 8, zIndex: 20,
+            background: 'rgba(11,18,32,0.92)', border: `1px solid ${DIM}`, borderRadius: 6,
+            padding: '6px 10px', display: 'flex', flexDirection: 'column', gap: 4,
+            pointerEvents: 'none', fontFamily: 'monospace',
+          }}>
+            <div style={{ fontSize: 9, color: '#64748b', letterSpacing: '0.5px', marginBottom: 1 }}>DATA KIND</div>
+            {DATA_KIND_ORDER.map(k => {
+              const s = KIND_STYLE[k];
+              return (
+                <div key={k} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 10, color: '#cbd5e1', whiteSpace: 'nowrap' }}>
+                  <svg width="28" height="8" style={{ flexShrink: 0, overflow: 'visible' }}>
+                    <line x1="1" y1="4" x2="27" y2="4" stroke={s.color} strokeWidth="2"
+                      strokeDasharray={s.dashed ? '5 3' : undefined} strokeLinecap="round" />
+                  </svg>
+                  <span>{s.label}</span>
+                </div>
+              );
+            })}
+          </div>
+          )}
         </div>
       ) : (
         <div style={{
