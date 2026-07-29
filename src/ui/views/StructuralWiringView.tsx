@@ -81,22 +81,22 @@ const MSG_C       = '#7dd3fc';
 const EDGE_SEL_C  = '#89b4fa'; // selected edge / port highlight colour
 
 // ── Data-kind visual language (connection colouring) ───────────────────────────
-// The model classifies each item's ExchangeNatureKind by specialising one of the base
-// `ExchangedContent` item defs (LogicalInformation / PhysicalSignal / EnvironmentalData).
+// The model classifies each item's ExchangedContentKind by specialising one of the base
+// `ExchangedContent` item defs (Matter / Energy / LogicalInformation).
 // A connection is coloured by the nature of the item its ports carry
 // (port → typedBy portDef → its `item` member → typedBy itemDef → base).
-type DataKind = 'physical' | 'logical' | 'environmental';
+type DataKind = 'matter' | 'energy' | 'logical';
 const INFO_BASE_KIND: Record<string, DataKind> = {
-  PhysicalSignal:     'physical',
+  Matter:             'matter',
+  Energy:             'energy',
   LogicalInformation: 'logical',
-  EnvironmentalData:  'environmental',
 };
 const KIND_STYLE: Record<DataKind, { color: string; dashed: boolean; label: string }> = {
-  physical:      { color: '#ef4444', dashed: false, label: 'Physical signal / power' },
-  logical:       { color: '#3b82f6', dashed: false, label: 'Logical information' },
-  environmental: { color: '#22c55e', dashed: true,  label: 'Environmental data' },
+  matter:  { color: '#22c55e', dashed: true,  label: 'Matter' },
+  energy:  { color: '#ef4444', dashed: false, label: 'Energy (e.g. power)' },
+  logical: { color: '#3b82f6', dashed: false, label: 'Logical information' },
 };
-const DATA_KIND_ORDER: DataKind[] = ['physical', 'logical', 'environmental'];
+const DATA_KIND_ORDER: DataKind[] = ['matter', 'energy', 'logical'];
 
 const DIM         = '#334155';
 const SCOPE_FRAME_BDR = '#1e3a5f';
@@ -447,6 +447,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
   const [scopeName, setScopeName] = useState('');
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [hideUnconnectedPorts, setHideUnconnectedPorts] = useState(false);
+  // Whether connections are colour-coded by the data kind they carry (and the legend shown).
+  const [showDataKinds, setShowDataKinds] = useState(true);
   // Part usages (by graph id) whose type-def internals are expanded in place.
   const [expandedParts, setExpandedParts] = useState<Set<string>>(new Set());
   const onToggleExpand = useCallback((partId: string) => {
@@ -1913,7 +1915,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         const isMsg  = conn.type === 'message';
         // Colour/dash by the data kind carried through the connection (see KIND_STYLE).
         // Either endpoint resolves the same kind; fall back to CONN_C when unknown.
-        const dataKind = isMsg ? null
+        const dataKind = (isMsg || !showDataKinds) ? null
           : (dataKindOfPort(epPortOf(conn.source)) ?? dataKindOfPort(epPortOf(conn.target)));
         const kStyle = dataKind ? KIND_STYLE[dataKind] : null;
         const edgeC  = highlightEdge ? EDGE_SEL_C : (isMsg ? MSG_C : (kStyle ? kStyle.color : CONN_C));
@@ -2079,7 +2081,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     return { rfNodes: top.nodes, rfEdges: top.edges, allExpandableIds };
   // layoutVersion in deps forces position recomputation when user clicks Reset
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graph, activeScopeName, nodeById, childrenOf, selection, layoutVersion, hideUnconnectedPorts, onPortSelect, expandedParts, onToggleExpand]);
+  }, [graph, activeScopeName, nodeById, childrenOf, selection, layoutVersion, hideUnconnectedPorts, showDataKinds, onPortSelect, expandedParts, onToggleExpand]);
 
   // Apply ELK-computed part positions to the built nodes; resize the scope frame to fit.
   // Falls back to the built (custom) positions until the async ELK layout resolves.
@@ -2457,7 +2459,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = dataUrl;
       });
       let finalUrl = dataUrl;
-      if (hasDataKinds) {
+      if (hasDataKinds && showDataKinds) {
         const canvas = document.createElement('canvas');
         canvas.width = diagImg.width; canvas.height = diagImg.height;   // already ×PIXEL_RATIO
         const ctx = canvas.getContext('2d');
@@ -2504,7 +2506,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     } finally {
       setExporting(false);
     }
-  }, [activeScopeName, hasDataKinds]);
+  }, [activeScopeName, hasDataKinds, showDataKinds]);
   // When set, the add-element form is shown at {x,y} within the canvas.
   // target: 'scope' → insert into the scope def (active file); { defName } → add to
   // the usage's type definition (possibly in another file).
@@ -2718,6 +2720,19 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
         >
           {hideUnconnectedPorts ? '◎ Unconnected ports: hidden' : '◉ Unconnected ports: shown'}
         </button>
+        {hasDataKinds && (
+          <button
+            style={showDataKinds
+              ? { ...actionBtn, background: '#1e3a5f', borderColor: '#38bdf8', color: '#7dd3fc' }
+              : actionBtn}
+            title={showDataKinds
+              ? 'Hide the data-kind colour-coding of connections and its legend'
+              : 'Colour-code connections by the kind of data they carry, with a legend'}
+            onClick={() => setShowDataKinds(v => !v)}
+          >
+            {showDataKinds ? '🎨 Data kinds: shown' : '🎨 Data kinds: hidden'}
+          </button>
+        )}
         <button
           style={actionBtn}
           title="Export the current interconnect diagram as a PNG image"
@@ -2765,7 +2780,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
       {rfNodes.length > 0 ? (
         <div
           ref={wiringPaneRef}
-          style={{ flex: 1, minHeight: 0, position: 'relative' }}
+          style={{ flex: 1, minHeight: 0, position: 'relative', display: 'flex', flexDirection: 'row' }}
           onDragOver={onCanvasDragOver}
           onDrop={onCanvasDrop}
           data-move-mode={focusedFrameId ? 'edit' : 'pan'}
@@ -2841,6 +2856,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
               </div>
             </div>
           )}
+          {/* React Flow lives in its own flex column so the legend (a sibling column, below)
+              reserves real horizontal space — the diagram lays out and auto-fits within this
+              area and can never overlap the legend, at any pan/zoom. */}
+          <div style={{ flex: 1, minWidth: 0, height: '100%', position: 'relative' }}>
           <ReactFlow
             // Remount when the set of expanded parts changes: ReactFlow keeps an existing
             // node's internal position and ignores a changed prop position, so a fresh mount
@@ -2869,16 +2888,18 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             <Controls showFitView={false} />
             <FitPanel padding={0.3} autoFitVersion={layoutEpoch} onReset={() => setLayoutVersion(v => v + 1)} />
           </ReactFlow>
+          </div>
           {/* Data-kind legend — the connection colour/line language (see KIND_STYLE).
-              Bottom-RIGHT so it clears React Flow's zoom controls (bottom-left); maxHeight +
-              scroll so it can never spill past the canvas on a short window. */}
-          {hasDataKinds && (
+              A real column beside the diagram (not an overlay) so it reserves horizontal
+              space and can never overlap model elements; vertically centred, with maxHeight
+              + scroll so it can't spill past the canvas on a short window. */}
+          {hasDataKinds && showDataKinds && (
           <div style={{
-            position: 'absolute', right: 8, bottom: 22, zIndex: 20,  // bottom:22 clears the RF attribution
-            maxHeight: 'calc(100% - 30px)', overflowY: 'auto',
+            alignSelf: 'center', flexShrink: 0, margin: '0 8px',
+            maxHeight: 'calc(100% - 16px)', overflowY: 'auto',
             background: 'rgba(11,18,32,0.94)', border: `1px solid ${DIM}`, borderRadius: 6,
             padding: '5px 8px', display: 'flex', flexDirection: 'column', gap: 3,
-            pointerEvents: 'none', fontFamily: 'monospace',
+            fontFamily: 'monospace',
           }}>
             <div style={{ fontSize: 8.5, color: '#64748b', letterSpacing: '0.5px', marginBottom: 1 }}>DATA KIND</div>
             {DATA_KIND_ORDER.map(k => {

@@ -329,7 +329,7 @@ self-explanatory, turning the wiring diagram into a data-flow diagram at a glanc
 ### 6.2 Definitions
 - **Data kind** — a classification of the item that a connection conveys, derived from the model. The
   model expresses it by specialising a small set of base `item def`s (in the prototype model, the
-  `ExchangedContent` bases **PhysicalSignal**, **LogicalInformation**, **EnvironmentalData**); every
+  `ExchangedContent` bases **Matter**, **Energy**, **LogicalInformation**); every
   concrete payload item def resolves (transitively, via `:>`) to exactly one base. The official
   implementation SHALL treat the base set as a **model-declared vocabulary**, not a hard-coded list.
 - **Carried item of a connection** — the item def carried by the ports the connection joins. Resolved
@@ -357,9 +357,18 @@ self-explanatory, turning the wiring diagram into a data-flow diagram at a glanc
   vocabulary. The legend SHALL list the kinds in a fixed, deterministic order, each with its
   colour/line swatch and label, and SHALL be hidden for models that do not classify their items
   (no false legend on a model without data kinds).
-- **FR-DK-6** The legend SHALL **fit within the viewport**: it SHALL be a compact overlay that does
-  not obscure the diagram's navigation controls, SHALL cap its own height and scroll internally rather
-  than overflow the canvas, and SHALL remain fully visible regardless of diagram size or zoom.
+- **FR-DK-6** The legend SHALL **fit within the viewport and never overlap model elements**. It SHALL
+  reserve its own space beside the diagram (a dedicated column, not an overlay drawn on top of the
+  canvas) so that no part box, port, or wire can ever sit underneath it — at any pan or zoom. The
+  diagram SHALL lay out and auto-fit within the remaining area. The legend SHALL cap its own height and
+  scroll internally rather than overflow the canvas, and SHALL remain fully visible regardless of
+  diagram size or zoom. When the legend is hidden (FR-DK-10) the diagram SHALL reclaim the full width.
+- **FR-DK-10** The view SHALL provide a single toolbar toggle that shows / hides the data-kind
+  colour-coding **and** its legend together. When hidden, every connection SHALL revert to the neutral
+  default style (as if the model declared no data kinds) and the legend SHALL not be shown; toggling is
+  purely presentational and MUST NOT trigger a re-layout or viewport change (wires recolour in place).
+  The toggle SHALL appear only when the model declares the data-kind vocabulary, and its state SHALL
+  also govern whether the PNG export includes the legend (FR-DK-9).
 - **FR-DK-7** Where the parser reshapes a port's carried item so its type is **not** reachable through
   the resolved `typedBy` chain (e.g. the payload is emitted as a `ReferenceUsage`, or the item's type
   appears only as an unresolved `FeatureTyping` label), the resolver SHALL apply a name-based fallback:
@@ -382,7 +391,10 @@ self-explanatory, turning the wiring diagram into a data-flow diagram at a glanc
 - Opening a model that does **not** classify items shows **no** legend and no coloured wires (neutral
   diagram), with no regression to layout or routing.
 - The legend stays on-screen and clear of the zoom / attribution controls at any zoom level and
-  diagram size; exporting to PNG produces an image that contains the legend in the same styles.
+  diagram size, and **no model element ever overlaps it** — panning the diagram cannot slide a box or
+  wire underneath the legend; exporting to PNG produces an image that contains the legend in the same styles.
+- Toggling the data-kind control off reverts every wire to the neutral style and removes the legend
+  (the diagram reclaims the space) without moving any box; toggling on restores the colours and legend.
 
 ### 6.5 Prototype reference
 `StructuralWiringView.tsx` — `DataKind` type; `INFO_BASE_KIND` (base item-def name → kind) as the
@@ -394,11 +406,14 @@ payload → item def → kind. The FR-DK-7 fallback uses `featureTypeLabelOf` (o
 child label) + `itemDefIdByName` (item-def name → id): when the payload has no `typedBy` edge, the
 type *label* is resolved to the item def by name (this is what colours the `EthernetFrameIn/Out`
 ports, whose `EthernetFrame` payload the parser emits as a `ReferenceUsage` with a label-only typing).
-Wire styling in `rfConnEdges` picks `KIND_STYLE[dataKind]` for stroke colour and dashing; the legend
-is an absolutely-positioned overlay (bottom-right, `maxHeight`/`overflowY:auto`, clear of the React
-Flow controls) gated by the `hasDataKinds` memo (`INFO_BASE_KIND` base present in the graph); the
-"Export to PNG" handler (`handleExportPng`) redraws the legend onto the export canvas via the 2D API
-so it is baked into the PNG.
+Wire styling in `rfConnEdges` picks `KIND_STYLE[dataKind]` for stroke colour and dashing. The legend is
+a real flex **column beside** the React Flow canvas (the pane is a flex row; React Flow sits in a
+`flex:1` column and the legend is a sibling with `maxHeight`/`overflowY:auto`), so it reserves space and
+can never overlap model elements (FR-DK-6). It is gated by the `hasDataKinds` memo (`INFO_BASE_KIND`
+base present in the graph) **and** the `showDataKinds` state. The toolbar `🎨 Data kinds` button toggles
+`showDataKinds`; because the ELK layout signature excludes edge colour, toggling recolours edges in
+place with no relayout. The "Export to PNG" handler (`handleExportPng`) redraws the legend onto the
+export canvas via the 2D API (when `showDataKinds`) so it is baked into the PNG.
 
 ---
 
