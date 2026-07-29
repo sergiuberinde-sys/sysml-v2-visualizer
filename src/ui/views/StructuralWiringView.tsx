@@ -98,6 +98,36 @@ const KIND_STYLE: Record<DataKind, { color: string; dashed: boolean; label: stri
 };
 const DATA_KIND_ORDER: DataKind[] = ['matter', 'energy', 'logical'];
 
+// ── Flow-trace camera ("double-click a wire to fly along it") ──────────────────
+// Double-clicking a connection flies the viewport from the wire's source to its
+// target, following the ELK-routed path, ending framed on the destination.
+type TracePt = { x: number; y: number };
+const TRACE_ZOOM     = 1.5;    // close zoom held while travelling along the wire
+const TRACE_MIN_MS   = 900;
+const TRACE_MAX_MS   = 2000;
+const TRACE_APPROACH = 0.18;   // first fraction of the flight: zoom in onto the source
+const smootherstep = (x: number) => { const t = Math.max(0, Math.min(1, x)); return t * t * t * (t * (t * 6 - 15) + 10); };
+const lerpPt = (a: TracePt, b: TracePt, f: number): TracePt => ({ x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f });
+function polySegments(pts: TracePt[]): { seg: number[]; total: number } {
+  const seg: number[] = []; let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) { const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y); seg.push(d); total += d; }
+  return { seg, total };
+}
+// The point a fraction `t` (0..1) of the way along a polyline, by arc length.
+function pointAlong(pts: TracePt[], seg: number[], total: number, t: number): TracePt {
+  if (pts.length === 1 || total === 0) return pts[0];
+  const target = Math.max(0, Math.min(1, t)) * total;
+  let acc = 0;
+  for (let i = 0; i < seg.length; i++) {
+    if (acc + seg[i] >= target || i === seg.length - 1) {
+      const f = seg[i] > 0 ? (target - acc) / seg[i] : 0;
+      return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * f, y: pts[i].y + (pts[i + 1].y - pts[i].y) * f };
+    }
+    acc += seg[i];
+  }
+  return pts[pts.length - 1];
+}
+
 const DIM         = '#334155';
 const SCOPE_FRAME_BDR = '#1e3a5f';
 
@@ -2344,14 +2374,106 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
     if (s) onSelect(s);
   }, [onSelect]);
 
+  // ── Flow trace: double-click a wire to fly the camera source → target ──────────
+  const traceRaf     = useRef<number | null>(null);
+  const traceStop    = useRef<(() => void) | null>(null);
+  const lastEdgeClick = useRef({ id: '', t: 0 });
+  const cancelTrace = useCallback(() => {
+    if (traceRaf.current != null) { cancelAnimationFrame(traceRaf.current); traceRaf.current = null; }
+    if (traceStop.current) { traceStop.current(); traceStop.current = null; }
+  }, []);
+
+  const traceEdge = useCallback((edge: Edge) => {
+    const inst = rfInstanceRef.current;
+    const rfEl = wiringPaneRef.current?.querySelector('.react-flow') as HTMLElement | null;
+    if (!inst || !rfEl) return;
+    cancelTrace();
+
+    // Flight path in absolute flow coords: prefer the ELK-routed waypoints; otherwise the
+    // straight line between the two endpoint nodes' centres (channel/un-routed edges).
+    let path: TracePt[];
+    const wp = ((edge.data as Record<string, unknown> | undefined)?.['waypoints'] as TracePt[] | undefined);
+    if (wp && wp.length >= 2) {
+      path = wp;
+    } else {
+      const centre = (id: string): TracePt | null => {
+        const n = inst.getInternalNode(id);
+        if (!n) return null;
+        const w = n.measured?.width ?? 0, h = n.measured?.height ?? 0;
+        return { x: n.internals.positionAbsolute.x + w / 2, y: n.internals.positionAbsolute.y + h / 2 };
+      };
+      const a = centre(edge.source), b = centre(edge.target);
+      if (!a || !b) return;
+      path = [a, b];
+    }
+
+    const src = path[0], dst = path[path.length - 1];
+    const { seg, total } = polySegments(path);
+    const rect = rfEl.getBoundingClientRect();
+    const W = rect.width, H = rect.height;
+    const vp0 = inst.getViewport();
+    const startCentre: TracePt = { x: (W / 2 - vp0.x) / vp0.zoom, y: (H / 2 - vp0.y) / vp0.zoom };
+    const targetZoom = Math.min(2, Math.max(TRACE_ZOOM, vp0.zoom)); // zoom IN, never out
+
+    // Reduced-motion, or an already-tiny on-screen hop: skip the sweep and just settle on the
+    // destination — the gesture still "goes to the destination" without a jarring flight.
+    const reduce   = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const sScr = inst.flowToScreenPosition(src), dScr = inst.flowToScreenPosition(dst);
+    const onScreen = (p: { x: number; y: number }) => p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom;
+    const shortHop = onScreen(sScr) && onScreen(dScr) && Math.hypot(dScr.x - sScr.x, dScr.y - sScr.y) < 0.45 * Math.min(W, H);
+    if (reduce || shortHop) { inst.setCenter(dst.x, dst.y, { zoom: targetZoom, duration: 500 }); return; }
+
+    // Duration scales with path length (bounded) so long wires neither crawl nor blur past.
+    const D  = Math.max(TRACE_MIN_MS, Math.min(TRACE_MAX_MS, 700 + total * targetZoom * 0.22));
+    const t0 = performance.now();
+
+    // Any real user input aborts the flight — never fight the user's own camera.
+    const abort = () => cancelTrace();
+    rfEl.addEventListener('wheel', abort, { passive: true });
+    rfEl.addEventListener('pointerdown', abort);
+    traceStop.current = () => {
+      rfEl.removeEventListener('wheel', abort);
+      rfEl.removeEventListener('pointerdown', abort);
+    };
+
+    const frame = (now: number) => {
+      const u = Math.min(1, (now - t0) / D);
+      let c: TracePt, z: number;
+      if (u < TRACE_APPROACH) {
+        const f = smootherstep(u / TRACE_APPROACH);
+        c = lerpPt(startCentre, src, f);
+        z = vp0.zoom + (targetZoom - vp0.zoom) * f;
+      } else {
+        c = pointAlong(path, seg, total, smootherstep((u - TRACE_APPROACH) / (1 - TRACE_APPROACH)));
+        z = targetZoom;
+      }
+      inst.setCenter(c.x, c.y, { zoom: z, duration: 0 });
+      if (u < 1) { traceRaf.current = requestAnimationFrame(frame); }
+      else { traceRaf.current = null; if (traceStop.current) { traceStop.current(); traceStop.current = null; } }
+    };
+    traceRaf.current = requestAnimationFrame(frame);
+  }, [cancelTrace]);
+
   const handleEdgeClick: EdgeMouseHandler = useCallback((_e, edge) => {
     const s = edge.data?._sel as SelectionState;
     if (s) onSelect(s);
-  }, [onSelect]);
+    // Double-click (two clicks on the same edge, <350 ms) flies the camera along the wire.
+    const now = Date.now(), prev = lastEdgeClick.current;
+    if (prev.id === edge.id && now - prev.t < 350) {
+      lastEdgeClick.current = { id: '', t: 0 };
+      traceEdge(edge);
+    } else {
+      lastEdgeClick.current = { id: edge.id, t: now };
+    }
+  }, [onSelect, traceEdge]);
 
   // Pane click clears selection — also clears the edge spotlight — and exits move mode
   // ("click outside the part to de-select it and return to default pan").
   const handlePaneClick = useCallback(() => { onSelect(null); setFocusedFrameId(null); }, [onSelect]);
+
+  // Abort an in-flight flow trace when the diagram changes under it (scope / expansion) or
+  // on unmount — the old node positions it was flying toward no longer exist.
+  useEffect(() => cancelTrace, [activeScopeName, expandedParts, cancelTrace]);
 
   // Enter move mode via a double-*mousedown* on a part — see the native capture-phase listener
   // installed on wiringPaneRef below. React Flow's pan (d3-zoom) swallows node click/dblclick
@@ -2877,6 +2999,9 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             // Left-drag pans the canvas by default (dense zoomed-in diagrams are hard to pan
             // otherwise); nodes only become draggable inside a double-clicked frame.
             nodesDraggable={false}
+            // Double-click is our gesture (part → move mode, wire → trace flight), so don't
+            // also let it zoom the canvas.
+            zoomOnDoubleClick={false}
             fitView
             // Allow zooming far out so a deeply-expanded diagram fits and stays pannable —
             // the default minZoom (0.5) clamps both manual zoom-out and the fit.

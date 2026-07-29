@@ -2,12 +2,13 @@
 
 ## Purpose & status
 
-Six capabilities were **prototyped** in the SysML v2 Visualizer's **Interconnect view**
+Seven capabilities were **prototyped** in the SysML v2 Visualizer's **Interconnect view**
 (the structural-wiring / Internal Block Diagram view; prototype code in
 `src/ui/views/StructuralWiringView.tsx`): (1) show / hide unconnected ports, (2) expand / collapse
 part internals, (3) automatic non-overlapping layout with viewport auto-fit, (4) one-click expand-all /
-collapse-all, (5) pan-by-default navigation with a double-click-to-enter move mode, and (6) colour-coding
-of connections by the *data kind* they carry, with an on-canvas legend. This document
+collapse-all, (5) pan-by-default navigation with a double-click-to-enter move mode, (6) colour-coding
+of connections by the *data kind* they carry, with an on-canvas legend, and (7) double-click a
+connection to fly the camera along it, from source to destination. This document
 specifies them so the development team can implement them as **official, supported features** in the
 parser/visualization pipeline. The prototype is a reference for behavior only — it is not the target
 implementation.
@@ -414,6 +415,76 @@ base present in the graph) **and** the `showDataKinds` state. The toolbar `🎨 
 `showDataKinds`; because the ELK layout signature excludes edge colour, toggling recolours edges in
 place with no relayout. The "Export to PNG" handler (`handleExportPng`) redraws the legend onto the
 export canvas via the 2D API (when `showDataKinds`) so it is baked into the PNG.
+
+---
+
+## Feature 7 — Trace a connection (fly the camera source → destination)
+
+### 7.1 Rationale
+In a large or zoomed-out Interconnect diagram a single wire can run clear across the canvas, so its two
+ends are rarely visible at once and following it by eye is hard. Selecting a connection highlights it
+but doesn't help you *find* where it goes. The view SHALL therefore let the user **trace a connection**:
+a gesture that flies the viewport from the wire's source to its destination, following the wire, so the
+user can see both endpoints and everything the wire passes on the way — useful for reviews and
+walkthroughs of cross-domain flows.
+
+### 7.2 Definitions
+- **Trace** — an animated viewport movement that starts framed on a connection's **source** endpoint
+  and ends framed on its **destination** endpoint, travelling **along the connection's routed path**.
+- **Routed path** — the connection's actual on-screen polyline (the layout's obstacle-avoiding
+  waypoints), so the camera follows the wire's bends rather than cutting a straight diagonal.
+- **Trace gesture** — the explicit user action that starts a trace (distinct from selecting the edge).
+
+### 7.3 Functional requirements
+- **FR-TR-1** The view SHALL start a trace on an explicit **trace gesture** on a connection, which MUST
+  be distinct from single-click selection: single-click SHALL continue to only select / spotlight the
+  edge; the trace gesture (prototype: **double-click the edge**) SHALL start the flight.
+- **FR-TR-2** A trace SHALL **zoom in** onto the source, then move the viewport **along the routed
+  path** to the destination, **ending framed on the destination** at a readable (zoomed-in) level. The
+  camera SHALL follow the wire's waypoints, not a straight source→target line, whenever the layout
+  provides them (falling back to a direct path only when it does not).
+- **FR-TR-3** The motion SHALL be **smooth and time-bounded**: eased (no abrupt starts/stops) and
+  capped to a reasonable total duration regardless of path length, so long wires neither crawl nor
+  blur past. The trace SHALL NOT zoom *out* below the user's current zoom (it is a zoom-*in* gesture).
+- **FR-TR-4** A trace SHALL be **interruptible**: any real user camera input (pan, zoom, wheel,
+  pointer-down on the canvas) SHALL immediately abort it and hand control back — the animation MUST
+  NEVER fight the user's own navigation.
+- **FR-TR-5** The trace SHALL respect the user's **reduced-motion** preference: when
+  `prefers-reduced-motion` is set, it SHALL skip the sweep and simply settle framed on the destination.
+- **FR-TR-6** When both endpoints are **already comfortably visible** (a short on-screen hop), the view
+  MAY skip the full flight and simply settle on the destination — a trace SHALL never produce a jarring
+  sweep when there is nothing to reveal.
+- **FR-TR-7** A trace SHALL be **purely a viewport movement** — no change to the model, diagnostics,
+  selection semantics, layout, or node positions. It SHALL self-abort if the diagram changes under it
+  (scope switch, expand / collapse, unmount), since the positions it was flying toward no longer exist.
+- **FR-TR-8** The trace gesture MUST compose with the other double-click semantics without conflict:
+  double-clicking a **part** enters move mode (Feature 5); double-clicking a **connection** traces it.
+  Double-click SHALL NOT also zoom the canvas (the default double-click-to-zoom is disabled so the
+  gesture is unambiguous).
+
+### 7.4 Acceptance criteria
+- Single-clicking a wire still only selects/spotlights it; double-clicking a wire flies the view from
+  its source to its destination, ending zoomed-in on the destination, following the wire's bends.
+- Tracing a long cross-canvas wire pans smoothly and finishes within the duration cap; tracing a short,
+  already-visible wire just settles on the destination without a big sweep.
+- Panning, zooming, or clicking during a trace stops it immediately; the user's input takes effect with
+  no camera fighting.
+- With `prefers-reduced-motion`, a trace jumps to the destination framing without the travel animation.
+- Starting a trace and then switching scope / expanding a part aborts the trace cleanly (no error, no
+  camera left mid-flight over stale positions).
+- Double-clicking a part still enters move mode; double-clicking empty canvas no longer zooms.
+
+### 7.5 Prototype reference
+`StructuralWiringView.tsx` — `traceEdge(edge)` builds the flight path in absolute flow coords from the
+edge's ELK `data.waypoints` (falling back to the two endpoint nodes' centres via `getInternalNode`),
+then drives a `requestAnimationFrame` loop that calls `setCenter(x, y, { zoom, duration: 0 })` each
+frame: an `TRACE_APPROACH` fraction eases the zoom-in onto the source, then `pointAlong()` walks the
+polyline by arc length with `smootherstep` easing to the destination (`TRACE_ZOOM`, duration clamped to
+`TRACE_MIN_MS`..`TRACE_MAX_MS`). `handleEdgeClick` detects the double-click (two clicks on the same edge
+id < 350 ms) and calls `traceEdge`; `cancelTrace` (via `traceRaf`/`traceStop` refs) is wired to
+`wheel`/`pointerdown` listeners on the pane and to a `useEffect` cleanup on scope / `expandedParts`
+change. `prefers-reduced-motion` and a short-on-screen-hop check short-circuit to a single `setCenter`.
+`zoomOnDoubleClick={false}` on `<ReactFlow>` frees the double-click for the trace / move-mode gestures.
 
 ---
 
