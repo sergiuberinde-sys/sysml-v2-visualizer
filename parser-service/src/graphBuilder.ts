@@ -527,13 +527,34 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
         ?? (partUsagesByName.get(chain[0]) ?? [])[0]
       : undefined;
 
-    // Resolve the port NODE id, choosing the candidate declared on the chain part's OWN type
+    // The def that OWNS the port. Walk the chain of nested parts from the top-level part down:
+    // chain[0] is the top part, chain[1..-2] are nested parts, chain[-1] is the port. For a
+    // plain `part.port` (length 2) this loop is a no-op and it stays the top part's def; for a
+    // deep `part.subpart[.…].port` it descends into the nested part that actually owns the port,
+    // so the candidate is disambiguated correctly (right direction/def), not last-writer-wins.
+    let portDefScope = chainPartId ? typedByBySource.get(chainPartId) : undefined;
+    for (let i = 1; i < chain.length - 1 && portDefScope; i++) {
+      const closure = superClosure(portDefScope);
+      const nested = (partUsagesByName.get(chain[i]) ?? []).find(pid => {
+        let id: string | undefined = parentOf.get(pid);
+        while (id !== undefined) {
+          if (closure.has(id)) return true;
+          const n = nodeById.get(id);
+          if (!n || !MEMBERSHIP_WRAPPERS.has(n.type)) return false;
+          id = parentOf.get(id);
+        }
+        return false;
+      });
+      portDefScope = nested ? typedByBySource.get(nested) : undefined;
+    }
+
+    // Resolve the port NODE id, choosing the candidate declared on the port's OWNING def
     // (or any of its supertypes — inherited ports). A single shared candidate is fine; the
     // `part.` qualification below keeps two usages of the same def distinct.
     let portId = candidates[0];
     if (candidates.length > 1) {
       let matched: string | undefined;
-      const defId = chainPartId ? typedByBySource.get(chainPartId) : undefined;
+      const defId = portDefScope;
       if (defId) {
         const defAndSupers = superClosure(defId);
         for (const pid of candidates) {
@@ -572,6 +593,12 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     // onto the one shared def port. A 1-element (boundary) chain has no part and stays bare.
     if (chain.length >= 2) {
       const partId = chainPartId;
+      // Anchor the endpoint to the TOP-LEVEL part (chain[0]) and keep the resolved port id.
+      // For a plain `part.port` the port is a direct/boundary port of that part. For a deep
+      // `part.subpart[.…].port` the port lives inside a NESTED part, so it isn't a direct port
+      // of the top-level part — the interconnect view synthesises a delegated boundary port for
+      // it on that part's box (so the wire lands on a real port and routes around obstacles)
+      // instead of dropping the edge for want of a rendered handle. (chainPartId = chain[0].)
       if (partId) return `${partId}::${portId}`;
     }
     return portId;
@@ -606,13 +633,28 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
       for (const kid2 of childrenOf.get(kid) ?? []) {
         const feNode = nodeById.get(kid2);
         if (!feNode || feNode.type !== 'FlowEnd') continue;
-        let partName: string | null = null;
+        const partChain: string[] = [];
         let portName: string | null = null;
         for (const kid3 of childrenOf.get(kid2) ?? []) {
           const n3 = nodeById.get(kid3);
           if (!n3) continue;
-          if (n3.type === 'ReferenceSubsetting' && n3.label !== n3.type) {
-            partName = n3.label;
+          if (n3.type === 'ReferenceSubsetting') {
+            if (n3.label !== n3.type) {
+              // Shallow endpoint `part.port`: the part name is on the ReferenceSubsetting.
+              partChain.push(n3.label);
+            } else {
+              // Deep endpoint `part.subpart[.subpart…].port`: the parser leaves the
+              // ReferenceSubsetting generic and carries the part PATH as a Feature whose
+              // FeatureChaining children are the successive part names (outermost first).
+              for (const kid4 of childrenOf.get(kid3) ?? []) {
+                const n4 = nodeById.get(kid4);
+                if (n4?.type !== 'Feature') continue;
+                for (const kid5 of childrenOf.get(kid4) ?? []) {
+                  const n5 = nodeById.get(kid5);
+                  if (n5?.type === 'FeatureChaining' && n5.label !== n5.type) partChain.push(n5.label);
+                }
+              }
+            }
           } else if (n3.type === 'FeatureMembership') {
             for (const kid4 of childrenOf.get(kid3) ?? []) {
               const n4 = nodeById.get(kid4);
@@ -634,8 +676,7 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
             }
           }
         }
-        const chain: string[] = [];
-        if (partName) chain.push(partName);
+        const chain: string[] = [...partChain];
         if (portName) chain.push(portName);
         if (chain.length > 0) chains.push(chain);
       }

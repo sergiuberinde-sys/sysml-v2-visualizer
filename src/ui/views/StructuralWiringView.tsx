@@ -1093,6 +1093,31 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       partPorts.set(part.id, deduped);
     }
 
+    // ── Delegated boundary ports for DEEP connection endpoints ──────────────────────
+    // A flow like `a.b → topPart.sub.port` is resolved (parser side) to `topPart::port`, where
+    // `port` is a port of a NESTED part, not a direct port of topPart. Add that port to topPart
+    // as a synthesised delegated boundary port so the wire lands on a real port square (and ELK
+    // routes it around obstacles) instead of floating onto the box. Guarded to ports not already
+    // present, and only for top-level parts rendered in THIS scope.
+    for (const e of graph.edges) {
+      if (e.type !== 'connection' && e.type !== 'interconnect') continue;
+      for (const ep of [e.source, e.target]) {
+        const sep = ep.indexOf('::');
+        if (sep < 0) continue;
+        const partId = ep.slice(0, sep);
+        const portId = ep.slice(sep + 2);
+        const all = partAllPorts.get(partId);
+        if (!all || all.some(p => p.id === portId)) continue; // not this scope, or already a real port
+        const portNode = nodeById.get(portId);
+        if (!portNode || (portNode.type !== 'PortUsage' && portNode.type !== 'PortDefinition')) continue;
+        all.push(portNode);
+        const dd = partPorts.get(partId)!;
+        const sameLabel = dd.find(p => p.label === portNode.label);
+        if (sameLabel) { canonicalPortId.set(portNode.id, sameLabel.id); }
+        else { dd.push(portNode); canonicalPortId.set(portNode.id, portNode.id); }
+      }
+    }
+
     // Propagate connection-inferred direction from alias port IDs (specialization
     // copies) onto the canonical port ID — otherwise a port whose only edge
     // reference is via its non-canonical alias would still resolve to no arrow.
@@ -2222,6 +2247,23 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     const boundaryNodes = rfNodes.filter(n => n.type === 'wiringScopePort');
     const boundaryIds   = new Set(boundaryNodes.map(n => n.id));
 
+    // Every ELK port id that buildNode (below) actually emits per node: a leaf exposes its
+    // `data.ports`; a compound exposes its embedded boundary-port nodes. An edge that references
+    // a port NOT in this set — e.g. a synthesised delegated port that renders as a leaf port when
+    // its part is COLLAPSED but has no compound port when the part is EXPANDED — must fall back to
+    // a node-level attachment. elkjs THROWS on a missing port ("Referenced shape does not exist"),
+    // which drops the whole layout into the catch → every edge reverts to un-routed channel
+    // routing (crossing shapes). Falling back to the node keeps ELK routing the rest correctly.
+    const validElkPorts = new Set<string>();
+    for (const n of partNodes) {
+      if (partNodes.some(c => c.parentId === n.id)) {
+        for (const b of boundaryNodes) if (b.parentId === n.id) validElkPorts.add(b.id);
+      } else {
+        const ports = ((n.data as Record<string, unknown>)?.['ports'] as PortDisplay[]) ?? [];
+        for (const p of ports) validElkPorts.add(`${n.id}::${p.id}`);
+      }
+    }
+
     const sizeOf = (n: Node) => {
       const st = n.style as Record<string, unknown> | undefined;
       const dd = n.data as Record<string, unknown>;
@@ -2259,7 +2301,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     // ELK port id for an endpoint: a boundary/frame port is the node itself; a part port is
     // `${partNode}::${portGraphId}`. Works at any nesting depth (node ids are already prefixed).
     const elkPortFor = (nodeId: string, portId: unknown): string | null =>
-      boundaryIds.has(nodeId) ? nodeId : (portId ? `${nodeId}::${portId}` : null);
+      boundaryIds.has(nodeId) ? nodeId
+      : !portId ? null
+      : validElkPorts.has(`${nodeId}::${portId}`) ? `${nodeId}::${portId}`
+      : nodeId; // port isn't a real ELK port on this node (e.g. delegated port on an expanded frame) → node-level
     const edgeToElk = (e: Edge): WiringElkEdge | null => {
       const d  = e.data as Record<string, unknown> | undefined;
       const sp = elkPortFor(e.source, d?.['srcPortId']);
