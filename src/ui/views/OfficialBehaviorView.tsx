@@ -492,6 +492,7 @@ interface Props {
   onBehaviorChange?: (name: string) => void;
   selection:        SelectionState;
   onSelect:         (s: SelectionState) => void;
+  onShapeContextMenu?: (e: React.MouseEvent, sel: SelectionState) => void;
   focusSubtree?:    boolean;
 }
 
@@ -622,7 +623,7 @@ interface CondEdge {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function OfficialBehaviorView({ behavior, behaviorName, behaviorNames, onBehaviorChange, onSelect, selection, focusSubtree }: Props) {
+export default function OfficialBehaviorView({ behavior, behaviorName, behaviorNames, onBehaviorChange, onSelect, onShapeContextMenu, selection, focusSubtree }: Props) {
   // ReactFlow instance ref for programmatic fitView (Focus Subtree)
   const rfInstanceRef = useRef<ReturnType<typeof useReactFlow> | null>(null);
 
@@ -1369,6 +1370,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
           onEdgeClick={handleEdgeClick}
+          onNodeContextMenu={(e, n) => { const s = n.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
+          onEdgeContextMenu={(e, ed) => { const s = ed.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
           onPaneClick={handlePaneClick}
           onInit={inst => { rfInstanceRef.current = inst as ReturnType<typeof useReactFlow>; }}
           fitView

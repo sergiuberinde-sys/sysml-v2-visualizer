@@ -236,11 +236,12 @@ interface Props {
   stateMachineName: string;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
+  onShapeContextMenu?: (e: React.MouseEvent, sel: SelectionState) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function StateView({ result, stateMachineName, selection, onSelect }: Props) {
+export default function StateView({ result, stateMachineName, selection, onSelect, onShapeContextMenu }: Props) {
 
   const sm = useMemo(
     () => result.nodes.find(
@@ -322,6 +323,8 @@ export default function StateView({ result, stateMachineName, selection, onSelec
         nodeTypes={NODE_TYPES}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
+        onNodeContextMenu={(e, n) => { const s = n.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
+        onEdgeContextMenu={(e, ed) => { const s = ed.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
         fitView
         fitViewOptions={{ padding: 0.2 }}
       >

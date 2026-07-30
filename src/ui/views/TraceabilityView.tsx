@@ -174,13 +174,14 @@ interface Props {
   result: VisualizerModel;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
+  onShapeContextMenu?: (e: React.MouseEvent, sel: SelectionState) => void;
   trlcData?: TrlcData;
   graph?: ContainmentGraph;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function TraceabilityView({ result, selection, onSelect, trlcData, graph }: Props) {
+export default function TraceabilityView({ result, selection, onSelect, onShapeContextMenu, trlcData, graph }: Props) {
   // Depict only requirements declared in the open file; links/targets stay full so a
   // primary requirement's trace targets (possibly in other files) still resolve.
   const reqs  = result.nodes.filter((n): n is RD => n.kind === 'requirementDef' && n.fromPrimary !== false);
@@ -408,6 +409,8 @@ export default function TraceabilityView({ result, selection, onSelect, trlcData
         edges={rfEdges}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
+        onNodeContextMenu={(e, n) => { const s = n.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
+        onEdgeContextMenu={(e, ed) => { const s = ed.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
         onNodesChange={handleNodesChange}
         fitView
         fitViewOptions={{ padding: 0.25 }}

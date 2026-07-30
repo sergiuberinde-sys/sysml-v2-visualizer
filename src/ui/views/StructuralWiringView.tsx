@@ -410,6 +410,8 @@ interface Props {
   graph:     ContainmentGraph | null | undefined;
   selection: SelectionState;
   onSelect:  (s: SelectionState) => void;
+  /** Right-click a shape → "Go to model" context menu (handled by the app shell). */
+  onShapeContextMenu?: (e: React.MouseEvent, sel: SelectionState) => void;
   /** Full source text — used to compute where to insert new elements. */
   source?:   string;
   /** Apply a source edit (write-back). Present only in editable (VS Code) mode. */
@@ -473,7 +475,7 @@ function buildAddPortEdit(
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function StructuralWiringView({ graph, selection, onSelect, source, onIncrementalEdit, onAddMemberToDef }: Props) {
+export default function StructuralWiringView({ graph, selection, onSelect, onShapeContextMenu, source, onIncrementalEdit, onAddMemberToDef }: Props) {
   const [scopeName, setScopeName] = useState('');
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [hideUnconnectedPorts, setHideUnconnectedPorts] = useState(false);
@@ -2993,6 +2995,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, sourc
             edgeTypes={WIRING_EDGE_TYPES}
             onNodeClick={handleNodeClick}
             onEdgeClick={handleEdgeClick}
+            onNodeContextMenu={(e, n) => { const s = (n.data as { _sel?: SelectionState })?._sel; if (s) onShapeContextMenu?.(e, s); }}
+            onEdgeContextMenu={(e, ed) => { const s = (ed.data as { _sel?: SelectionState })?._sel; if (s) onShapeContextMenu?.(e, s); }}
             onPaneClick={handlePaneClick}
             onNodesChange={handleNodesChange}
             onInit={inst => { rfInstanceRef.current = inst; }}

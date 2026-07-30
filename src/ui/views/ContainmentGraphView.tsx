@@ -138,24 +138,35 @@ function buildNodeIndex(graph: ContainmentGraph): Map<string, GraphNode> {
 export default function ContainmentGraphView({
   graph,
   onSelect,
+  onShapeContextMenu,
 }: {
   graph: ContainmentGraph;
   onSelect?: (s: SelectionState) => void;
+  onShapeContextMenu?: (e: React.MouseEvent, sel: SelectionState) => void;
 }) {
   const { nodes, edges } = useMemo(() => buildLayout(graph), [graph]);
   const nodeIndex = useMemo(() => buildNodeIndex(graph), [graph]);
 
+  // Map an rf node → its SelectionState (shared by left-click select and right-click menu).
+  const selForNode = useCallback((rfNode: Node): NonNullable<SelectionState> | null => {
+    const gn = nodeIndex.get(rfNode.id);
+    if (!gn) return null;
+    // Skip transparent wrappers and anonymous nodes (label === type means no name)
+    if (gn.label === gn.type) return null;
+    return { id: `cgv-${gn.id}`, type: emfTypeToSelType(gn.type), name: gn.label };
+  }, [nodeIndex]);
+
   const handleNodeClick = useCallback((_e: React.MouseEvent, rfNode: Node) => {
     if (!onSelect) return;
-    const gn = nodeIndex.get(rfNode.id);
-    if (!gn) return;
-    // Skip transparent wrappers and anonymous nodes (label === type means no name)
-    if (gn.label === gn.type) return;
-    const selType = emfTypeToSelType(gn.type);
-    const sel: NonNullable<SelectionState> = { id: `cgv-${gn.id}`, type: selType, name: gn.label };
-    console.log('[ContainmentGraphView] click → selection:', sel);
-    onSelect(sel);
-  }, [onSelect, nodeIndex]);
+    const sel = selForNode(rfNode);
+    if (sel) onSelect(sel);
+  }, [onSelect, selForNode]);
+
+  const handleNodeContextMenu = useCallback((e: React.MouseEvent, rfNode: Node) => {
+    if (!onShapeContextMenu) return;
+    const sel = selForNode(rfNode);
+    if (sel) onShapeContextMenu(e, sel);
+  }, [onShapeContextMenu, selForNode]);
 
   if (nodes.length === 0) {
     return (
@@ -176,6 +187,7 @@ export default function ContainmentGraphView({
         nodesConnectable={false}
         elementsSelectable={!!onSelect}
         onNodeClick={onSelect ? handleNodeClick : undefined}
+        onNodeContextMenu={onShapeContextMenu ? handleNodeContextMenu : undefined}
       >
         <Background color="#2a2a3a" gap={24} />
       </ReactFlow>

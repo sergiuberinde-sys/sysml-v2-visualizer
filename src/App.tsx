@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import Editor, { type OnMount, type BeforeMount } from '@monaco-editor/react';
 import type { Monaco } from '@monaco-editor/react';
 import type { editor as MonacoEditorNS } from 'monaco-editor';
@@ -741,69 +741,75 @@ export default function App() {
     }
   }, [selection]);
 
-  // Auto-open inspector when the user selects an element (architect only)
-  useEffect(() => {
-    if (userRole === 'architect' && selection !== null) setInspectorOpen(true);
-  }, [selection]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Sync selection → editor cursor (skip if selection came from editor).
-  useEffect(() => {
-    if (selection === null) return;
-    if (suppressRevealSource.current) {
-      suppressRevealSource.current = false;
-      return;
-    }
-
+  // Reveal an element in the editor / source text. Called explicitly by the right-click
+  // "Go to model" action, and by the selection-sync effect below for NON-diagram selections
+  // (model explorer, inspector, diagnostics, lists). Diagram-shape left-clicks intentionally
+  // do NOT reveal — they set `suppressRevealSource` first (see selectFromDiagram) so the user
+  // stays in the diagram; use right-click → "Go to model" to jump to the text.
+  function revealSelectionInSource(sel: SelectionState) {
+    if (!sel) return;
     if (APP_MODE === 'standalone') {
       // Resolve line: prefer graphId → graph node startLine, fall back to selection.line.
       let line: number | undefined;
-      const rawGraphId = selection.extra?.graphId as string | undefined;
+      const rawGraphId = sel.extra?.graphId as string | undefined;
       if (rawGraphId && officialParseResultRef.current?.graph) {
         const node = officialParseResultRef.current.graph.nodes.find(n => n.id === rawGraphId);
         if (node?.startLine && node.startLine > 0) line = node.startLine;
       }
-      if (line === undefined && selection.line !== undefined && selection.line > 0) {
-        line = selection.line;
-      }
+      if (line === undefined && sel.line !== undefined && sel.line > 0) line = sel.line;
       if (line !== undefined) {
-        console.log('[CursorSync] visualizer→editor (standalone)', selection.type, selection.name,
-          'line:', line);
-        // Suppress the cursor-position listener so it doesn't echo the selection back.
-        suppressRevealSource.current = true;
+        suppressRevealSource.current = true; // don't let the cursor listener echo it back
         jumpToLine(line);
       }
       return;
     }
-
-    // VS Code mode: send semantic reveal message to the extension.
-    const graphId = resolveGraphNodeId(selection, officialParseResultRef.current);
+    // VS Code mode: send a semantic reveal message to the extension.
+    const graphId = resolveGraphNodeId(sel, officialParseResultRef.current);
     if (graphId) {
-      // Include startLine so the extension can fall back to line-based reveal when
-      // nodeIdToRange is empty (prototype mode / first open before official parse).
       const graphNode = officialParseResultRef.current?.graph?.nodes.find(n => n.id === graphId);
-      const startLine = graphNode?.startLine ?? selection.line;
-      console.log('[CursorSync] visualizer→editor', selection.type, selection.name,
-        'graphId:', graphId, 'startLine:', startLine);
+      const startLine = graphNode?.startLine ?? sel.line;
       getVsCodeApi()?.postMessage({ type: 'revealSemanticElement', semanticId: graphId, startLine });
       return;
     }
-    // Fallback: line-based reveal (elements with no graph ID)
-    if (selection.line !== undefined) {
-      console.log('[CursorSync] visualizer→editor (line fallback)', selection.type, selection.name,
-        'line:', selection.line);
-      getVsCodeApi()?.postMessage({
-        type: 'revealSource',
-        sourceLocation: { line: selection.line, column: 1 },
-      });
+    if (sel.line !== undefined) {
+      getVsCodeApi()?.postMessage({ type: 'revealSource', sourceLocation: { line: sel.line, column: 1 } });
       return;
     }
-    // Last-resort fallback: text-search by element name (e.g. trace-chip click when
-    // graph is unavailable). The extension uses findSysMLDefinition across all .sysml files.
-    if (selection.extra?.lookupByName === 'true' && selection.name) {
-      console.log('[CursorSync] visualizer→editor (name lookup fallback)', selection.name);
-      getVsCodeApi()?.postMessage({ type: 'revealElementInSource', name: selection.name });
+    if (sel.extra?.lookupByName === 'true' && sel.name) {
+      getVsCodeApi()?.postMessage({ type: 'revealElementInSource', name: sel.name });
     }
+  }
+
+  // Sync selection → editor for NON-diagram selections (model explorer, inspector, lists,
+  // diagnostics). Diagram-shape selections suppress this (selectFromDiagram) so a left-click
+  // in a diagram never jumps to the text — the user uses right-click → "Go to model" instead.
+  useEffect(() => {
+    if (selection === null) return;
+    if (suppressRevealSource.current) { suppressRevealSource.current = false; return; }
+    revealSelectionInSource(selection);
   }, [selection]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Diagram-shape interaction ──────────────────────────────────────────────────
+  // Left-click a shape SELECTS it (highlights, feeds the inspector) but does NOT jump to
+  // the source — we suppress the reveal sync. Right-click a shape opens a "Go to model"
+  // menu that performs the jump on demand.
+  const selectFromDiagram = useCallback((sel: SelectionState) => {
+    if (sel !== null) suppressRevealSource.current = true;
+    setSelection(sel);
+  }, []);
+  const [shapeMenu, setShapeMenu] = useState<{ x: number; y: number; sel: SelectionState } | null>(null);
+  const openShapeMenu = useCallback((e: React.MouseEvent, sel: SelectionState) => {
+    if (!sel) return;
+    e.preventDefault();
+    setShapeMenu({ x: e.clientX, y: e.clientY, sel });
+  }, []);
+  function goToModel(sel: SelectionState) {
+    setShapeMenu(null);
+    if (!sel) return;
+    suppressRevealSource.current = true; // highlight without the sync effect double-revealing
+    setSelection(sel);
+    revealSelectionInSource(sel);
+  }
 
   // ── Cmd/Ctrl+S shortcut ────────────────────────────────────────────────────
 
@@ -1556,7 +1562,8 @@ export default function App() {
                   result={vizModel}
                   graph={officialParseResult?.graph}
                   selection={selection}
-                  onSelect={setSelection}
+                  onSelect={selectFromDiagram}
+                  onShapeContextMenu={openShapeMenu}
                 />
               )}
             </ErrorBoundary>
@@ -1581,7 +1588,8 @@ export default function App() {
                 <StructuralWiringView
                   graph={officialParseResult?.graph}
                   selection={selection}
-                  onSelect={setSelection}
+                  onSelect={selectFromDiagram}
+                  onShapeContextMenu={openShapeMenu}
                   source={source}
                   onIncrementalEdit={
                     APP_MODE === 'vscode'
@@ -1604,7 +1612,8 @@ export default function App() {
                   behaviorNames={behaviorDefNames}
                   onBehaviorChange={setSelectedBehavior}
                   selection={selection}
-                  onSelect={setSelection}
+                  onSelect={selectFromDiagram}
+                  onShapeContextMenu={openShapeMenu}
                   focusSubtree={focusSubtree}
                 />
               )}
@@ -1615,7 +1624,8 @@ export default function App() {
                   result={vizModel}
                   stateMachineName={selectedStateMachine}
                   selection={selection}
-                  onSelect={setSelection}
+                  onSelect={selectFromDiagram}
+                  onShapeContextMenu={openShapeMenu}
                 />
               )}
             </ErrorBoundary>
@@ -1634,7 +1644,8 @@ export default function App() {
                 <TraceabilityView
                   result={vizModel}
                   selection={selection}
-                  onSelect={setSelection}
+                  onSelect={selectFromDiagram}
+                  onShapeContextMenu={openShapeMenu}
                   trlcData={trlcDataWithTraces ?? undefined}
                   graph={officialParseResult?.graph}
                 />
@@ -1646,7 +1657,7 @@ export default function App() {
             <ErrorBoundary label="Containment graph error">
               {tab === 'graph' && (
                 officialParseResult?.graph
-                  ? <ContainmentGraphView graph={officialParseResult.graph} onSelect={setSelection} />
+                  ? <ContainmentGraphView graph={officialParseResult.graph} onSelect={selectFromDiagram} onShapeContextMenu={openShapeMenu} />
                   : <div style={{ padding: 24, color: '#64748b', fontFamily: 'monospace', fontSize: 13 }}>
                       No graph data yet. Open a SysML v2 file to parse it.
                     </div>
@@ -1743,6 +1754,38 @@ export default function App() {
           onRestore={handleHistoryRestore}
           onClose={() => setShowHistoryModal(false)}
         />
+      )}
+
+      {/* ── Right-click "Go to model" menu for diagram shapes ──────────────── */}
+      {shapeMenu && (
+        <div
+          onClick={() => setShapeMenu(null)}
+          onContextMenu={(e) => { e.preventDefault(); setShapeMenu(null); }}
+          style={{ position: 'fixed', inset: 0, zIndex: 4000 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'fixed', left: shapeMenu.x, top: shapeMenu.y,
+              background: '#1e293b', border: '1px solid #334155', borderRadius: 6,
+              boxShadow: '0 6px 20px rgba(0,0,0,0.45)', padding: 4, minWidth: 150,
+              fontFamily: 'system-ui, sans-serif', fontSize: 12,
+            }}
+          >
+            <button
+              onClick={() => goToModel(shapeMenu.sel)}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#334155')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+                padding: '6px 10px', background: 'transparent', color: '#e2e8f0',
+                border: 'none', borderRadius: 4, cursor: 'pointer',
+              }}
+            >
+              <span aria-hidden>↦</span> Go to model
+            </button>
+          </div>
+        </div>
       )}
 
     </div>

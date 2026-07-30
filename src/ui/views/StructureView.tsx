@@ -387,6 +387,7 @@ interface Props {
   graph?: ContainmentGraph;
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
+  onShapeContextMenu?: (e: React.MouseEvent, sel: SelectionState) => void;
 }
 
 // Definition types that map to top-level nodes in the General View.
@@ -412,7 +413,7 @@ function findTopLevelDefInGraph(line: number, graph: ContainmentGraph): string |
   return candidates[0].id;
 }
 
-export default function StructureView({ result, graph, selection, onSelect }: Props) {
+export default function StructureView({ result, graph, selection, onSelect, onShapeContextMenu }: Props) {
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
   const [displayEdges,   setDisplayEdges]   = useState<Edge[]>([]);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
@@ -1581,6 +1582,8 @@ export default function StructureView({ result, graph, selection, onSelect }: Pr
           onNodesChange={handleNodesChange}
           onNodeClick={handleNodeClick}
           onEdgeClick={handleEdgeClick}
+          onNodeContextMenu={(e, n) => { const s = n.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
+          onEdgeContextMenu={(e, ed) => { const s = ed.data?._sel as SelectionState; if (s) onShapeContextMenu?.(e, s); }}
           fitViewOptions={{ padding: 0.18 }}
         >
           <Background color="#2a2a3a" gap={24} />
