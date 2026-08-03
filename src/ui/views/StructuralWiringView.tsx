@@ -26,7 +26,7 @@ import { PortHandles, makeBoundaryPortDisplay, resolvePortDirection, type PortDi
 import { AsilBadge, RealizationBadge, HwSwAllocBadge, asilLabel } from '../layout/AsilBadge';
 import { fitNodeWidth, type TextRow } from '../layout/nodeSize';
 import '@xyflow/react/dist/style.css';
-import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
+import type { ContainmentGraph, GraphNode, GraphEdge } from '../../core/sysmlv2Official/ContainmentGraph';
 import type { IncrementalEdit } from '../../core/editDescriptor';
 import { buildChildrenMap, directSemanticChildren } from '../../core/sysmlv2Official/graphHelpers';
 import { ElkEdge } from '../layout/ElkEdge';
@@ -721,8 +721,13 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       return k;
     };
 
-    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set(), externallyConnected: Set<string> = new Set(), pathPrefix = ''): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
+    function computeInterconnect(scopeDef: GraphNode, seen: Set<string> = new Set(), externallyConnected: Set<string> = new Set(), pathPrefix = '', injectedConns: GraphEdge[] = []): { nodes: Node[]; edges: Edge[]; width: number; height: number } {
       if (!graph) return { nodes: [], edges: [], width: 0, height: 0 };
+
+    // Connection edges considered in THIS scope = the graph's own edges PLUS any parent-scope
+    // deep flows re-anchored down into this expanded scope (see the expandedInternals loop).
+    // Injected edges are graph-edge-like (`{source, target, type, label}`) in raw-id space.
+    const allConnEdges: GraphEdge[] = injectedConns.length ? [...graph.edges, ...injectedConns] : graph.edges;
 
     // Semantic children of the scope PartDef (including members inherited via `:>`).
     const scopeChildren = inheritedChildren(scopeDef.id);
@@ -1099,7 +1104,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     // as a synthesised delegated boundary port so the wire lands on a real port square (and ELK
     // routes it around obstacles) instead of floating onto the box. Guarded to ports not already
     // present, and only for top-level parts rendered in THIS scope.
-    for (const e of graph.edges) {
+    for (const e of allConnEdges) {
       if (e.type !== 'connection' && e.type !== 'interconnect') continue;
       for (const ep of [e.source, e.target]) {
         const sep = ep.indexOf('::');
@@ -1144,6 +1149,38 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     const isExpandable = (partId: string): boolean => {
       const td = typeDefOf(partId);
       return !!td && inheritedChildren(td.id).some(n => n.type === 'PartUsage');
+    };
+
+    // Does part-def `defId` reach the port node `portId` — as a direct port, or transitively
+    // through one of its nested part usages' type defs? Used to re-anchor a deep connection
+    // endpoint (`topPart::deepPort`) to the direct child of an expanded scope that owns the port.
+    const defReachesPortCache = new Map<string, boolean>();
+    const defReachesPort = (defId: string, portId: string, seen = new Set<string>()): boolean => {
+      const key = `${defId}|${portId}`;
+      const cached = defReachesPortCache.get(key);
+      if (cached !== undefined) return cached;
+      if (seen.has(defId)) return false;
+      seen.add(defId);
+      const kids = inheritedChildren(defId);
+      let hit = kids.some(k => k.id === portId);
+      if (!hit) {
+        for (const c of kids) {
+          if (c.type !== 'PartUsage') continue;
+          const td = typeDefOf(c.id);
+          if (td && defReachesPort(td.id, portId, seen)) { hit = true; break; }
+        }
+      }
+      defReachesPortCache.set(key, hit);
+      return hit;
+    };
+    // The direct child PartUsage of `scopeDefId` whose type (transitively) owns `portId`, or null.
+    const directChildUsageForPort = (scopeDefId: string, portId: string): string | null => {
+      for (const c of inheritedChildren(scopeDefId)) {
+        if (c.type !== 'PartUsage') continue;
+        const td = typeDefOf(c.id);
+        if (td && defReachesPort(td.id, portId)) return c.id;
+      }
+      return null;
     };
 
     // ASIL / Realization for a part box: the PartUsage's own metadata, else its
@@ -1217,7 +1254,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     }
 
     // Connection edges within this scope (structural port-to-port + behavioral message part-to-part)
-    const inScopeConns = graph.edges.filter(
+    const inScopeConns = allConnEdges.filter(
       e => (e.type === 'connection' || e.type === 'message' || e.type === 'interconnect') && portOwner.has(e.source) && portOwner.has(e.target),
     );
 
@@ -1257,9 +1294,29 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       if (!td || seen.has(td.id)) continue; // guard against self-referential recursion
       const tdChildren = inheritedChildren(td.id);
       if (!tdChildren.some(n => n.type === 'PartUsage')) continue;
+
+      // Inject this scope's DEEP internal flows into the expanded part so its sub-parts show
+      // connected. A flow authored here as `part.subA.p -> part.subB.q` was resolved to
+      // `part::p -> part::q` (both anchored to this one part) — a self-loop we drop at this
+      // scope. Re-anchor each endpoint to the direct child of `td` that owns the port, so inside
+      // the expansion it renders as a real wire between those sub-parts (e.g. the ethernetBridge
+      // ⇄ communicationControllers links). Only genuinely-internal flows (both ends inside this
+      // part, landing on DIFFERENT direct children) are injected.
+      const injected: GraphEdge[] = [];
+      for (const conn of inScopeConns) {
+        const sPart = conn.source.includes('::') ? conn.source.slice(0, conn.source.indexOf('::')) : conn.source;
+        const tPart = conn.target.includes('::') ? conn.target.slice(0, conn.target.indexOf('::')) : conn.target;
+        if (sPart !== part.id || tPart !== part.id) continue; // not an internal-to-this-part flow
+        const sPort = epPortOf(conn.source), tPort = epPortOf(conn.target);
+        const sChild = directChildUsageForPort(td.id, sPort);
+        const tChild = directChildUsageForPort(td.id, tPort);
+        if (!sChild || !tChild || sChild === tChild) continue; // unresolved, or same box → still a self-loop
+        injected.push({ ...conn, id: `${conn.id}-in-${part.id}`, source: `${sChild}::${sPort}`, target: `${tChild}::${tPort}` });
+      }
+
       // This scope's connected-port set includes (canonicalised to def-port ids) every
       // boundary port of `part` that we wire to — pass it so the child keeps them visible.
-      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]), connectedPortIds, `${pathPrefix}wpart-${part.id}::`);
+      const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]), connectedPortIds, `${pathPrefix}wpart-${part.id}::`, injected);
       if (!sub.nodes.length) continue;
       const prefix  = `wpart-${part.id}::`;
       const frameId = `wpart-${part.id}`;
