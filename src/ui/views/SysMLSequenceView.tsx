@@ -251,7 +251,7 @@ function negateCondition(cond: string): string {
 
 // ── Data types ─────────────────────────────────────────────────────────────────
 
-type FragmentKind = 'alt' | 'loop';
+type FragmentKind = 'alt' | 'loop' | 'opt';
 
 interface ParsedMessage {
   id:               string;
@@ -261,7 +261,7 @@ interface ParsedMessage {
   line?:            number;
   guard?:           string;
   fragmentBlockId?: string;       // groups consecutive messages into one combined fragment
-  fragmentKind?:    FragmentKind; // 'alt' for if/else, 'loop' for while-loops
+  fragmentKind?:    FragmentKind; // 'alt' for if/else, 'opt' for a single guarded branch, 'loop' for while-loops
 }
 
 interface AltBranchLayout {
@@ -348,8 +348,10 @@ function parseSequenceDefs(
         if (thenFlows.length === 0 && elseFlows.length === 0) continue;
         const cond     = condition || 'condition';
         const elseCond = negateCondition(cond);
-        for (const f of thenFlows) messages.push(resolveFlow(f, childrenOf, nodeById, cond,     child.id, 'alt'));
-        for (const f of elseFlows) messages.push(resolveFlow(f, childrenOf, nodeById, elseCond, child.id, 'alt'));
+        // Two populated branches → UML `alt`; a single guarded branch → UML `opt`.
+        const kind: FragmentKind = thenFlows.length > 0 && elseFlows.length > 0 ? 'alt' : 'opt';
+        for (const f of thenFlows) messages.push(resolveFlow(f, childrenOf, nodeById, cond,     child.id, kind));
+        for (const f of elseFlows) messages.push(resolveFlow(f, childrenOf, nodeById, elseCond, child.id, kind));
       } else if (child.type === 'WhileLoopActionUsage') {
         const bodyFlows = extractLoopBody(child.id, childrenOf, nodeById);
         if (bodyFlows.length === 0) continue;
@@ -589,7 +591,7 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
                   x={altX} y={blk.topY} width={altW} height={blk.bottomY - blk.topY}
                   fill="none" stroke={C_ALT_BORDER} strokeWidth={1} rx={2}
                 />
-                {/* Pentagon tag — 'alt' or 'loop' */}
+                {/* Pentagon tag — 'alt' / 'opt' / 'loop' */}
                 <polygon
                   points={[
                     `${altX},${blk.topY}`,
