@@ -639,10 +639,14 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       const ports = new Set(inheritedChildren(defId)
         .filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition').map(n => n.id));
       if (ports.size < 2) return false;
+      // BOTH endpoints must be BARE (no `part::` qualifier) and be this def's OWN ports — i.e. a
+      // pass-through declared INSIDE the def (`flow from portA to portB`). A part-qualified
+      // endpoint (`a::p`) means the flow runs between SEPARATE instances at a parent scope, which
+      // does NOT make this def composite — so it must not earn a "+" expand control.
       return graph.edges.some(e =>
         (e.type === 'connection' || e.type === 'interconnect') &&
-        ports.has(epPortOf(e.source)) && ports.has(epPortOf(e.target)) &&
-        epPortOf(e.source) !== epPortOf(e.target));
+        !e.source.includes('::') && !e.target.includes('::') &&
+        ports.has(e.source) && ports.has(e.target) && e.source !== e.target);
     };
 
     // Every part that can be expanded, at every nesting depth, keyed by the SAME
@@ -657,11 +661,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
         const te = graph.edges.find(e => e.type === 'typedBy' && e.source === child.id);
         const td = te ? nodeById.get(te.target) : undefined;
         if (!td || nextSeen.has(td.id)) continue;
-        const hasParts = inheritedChildren(td.id).some(n => n.type === 'PartUsage');
-        if (!hasParts && !defHasInternalPortFlows(td.id)) continue;
+        if (!inheritedChildren(td.id).some(n => n.type === 'PartUsage')) continue; // composite only
         const id = `${prefix}wpart-${child.id}`;
         allExpandableIds.push(id);
-        if (hasParts) collectExpandable(td.id, `${id}::`, nextSeen);
+        collectExpandable(td.id, `${id}::`, nextSeen);
       }
     };
     collectExpandable(scopeDefTop.id, '', new Set());
@@ -1166,10 +1169,13 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       const e = typedByEdges.find(x => x.source === partId);
       return e ? nodeById.get(e.target) : undefined;
     };
+    // A part earns a "+" expand control only when it is COMPOSITE — its type owns nested part
+    // usages. A leaf connector block (only ports + internal pass-through flows, no sub-parts) is
+    // NOT composite, so it gets no "+"; its internal wiring is still viewable by selecting it as
+    // the scope (which takes the IBD path via hasInternalPortFlows below).
     const isExpandable = (partId: string): boolean => {
       const td = typeDefOf(partId);
-      if (!td) return false;
-      return inheritedChildren(td.id).some(n => n.type === 'PartUsage') || defHasInternalPortFlows(td.id);
+      return !!td && inheritedChildren(td.id).some(n => n.type === 'PartUsage');
     };
 
     // Does part-def `defId` reach the port node `portId` — as a direct port, or transitively
