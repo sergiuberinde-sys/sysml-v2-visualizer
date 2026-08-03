@@ -632,6 +632,19 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       return merged;
     };
 
+    // Does part-def `defId` have internal port-to-port flows — a connection whose BOTH ends are
+    // its own ports (a leaf connector's pass-through wiring)? Such a block is worth expanding
+    // even with no sub-parts, so its innermost wiring can be seen.
+    const defHasInternalPortFlows = (defId: string): boolean => {
+      const ports = new Set(inheritedChildren(defId)
+        .filter(n => n.type === 'PortUsage' || n.type === 'PortDefinition').map(n => n.id));
+      if (ports.size < 2) return false;
+      return graph.edges.some(e =>
+        (e.type === 'connection' || e.type === 'interconnect') &&
+        ports.has(epPortOf(e.source)) && ports.has(epPortOf(e.target)) &&
+        epPortOf(e.source) !== epPortOf(e.target));
+    };
+
     // Every part that can be expanded, at every nesting depth, keyed by the SAME
     // path-prefixed node id the expand toggle uses (`wpart-a::wpart-b`). Walks the type
     // tree independently of the current expansion state so "Expand all" knows the full set.
@@ -644,10 +657,11 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
         const te = graph.edges.find(e => e.type === 'typedBy' && e.source === child.id);
         const td = te ? nodeById.get(te.target) : undefined;
         if (!td || nextSeen.has(td.id)) continue;
-        if (!inheritedChildren(td.id).some(n => n.type === 'PartUsage')) continue;
+        const hasParts = inheritedChildren(td.id).some(n => n.type === 'PartUsage');
+        if (!hasParts && !defHasInternalPortFlows(td.id)) continue;
         const id = `${prefix}wpart-${child.id}`;
         allExpandableIds.push(id);
-        collectExpandable(td.id, `${id}::`, nextSeen);
+        if (hasParts) collectExpandable(td.id, `${id}::`, nextSeen);
       }
     };
     collectExpandable(scopeDefTop.id, '', new Set());
@@ -764,6 +778,12 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     // (`port X : ~Y_Port`) was tagged `'out'` and ended up on the wrong side
     // of the IBD frame.
     const scopePortIdSet = new Set(scopePorts.map(p => p.id));
+
+    // Internal port-to-port flows (a connector block's pass-through wiring): with these but NO
+    // sub-parts a block still gets an IBD frame (boundary ports + the internal wires) rather than
+    // a featureless leaf box — so it can be expanded and its deepest wiring seen. (See
+    // defHasInternalPortFlows.)
+    const hasInternalPortFlows = defHasInternalPortFlows(scopeDef.id);
 
     // ── Owner-relative port direction ─────────────────────────────────────────────
     // A port's frame-relative direction is a property of its OWNING definition, not of
@@ -933,7 +953,7 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     // Render the scope PartDef itself as a container showing its ports, items,
     // and owned action usages. Also render package-sibling PortDefinitions as
     // context boxes (they describe the port item-flow types).
-    if (partUsages.length === 0) {
+    if (partUsages.length === 0 && !hasInternalPortFlows) {
       const selfId     = `wself-${scopeDef.id}`;
       const isSelfSel  = selection?.extra?.graphId === scopeDef.id || selection?.id === selfId;
 
@@ -1148,7 +1168,8 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     };
     const isExpandable = (partId: string): boolean => {
       const td = typeDefOf(partId);
-      return !!td && inheritedChildren(td.id).some(n => n.type === 'PartUsage');
+      if (!td) return false;
+      return inheritedChildren(td.id).some(n => n.type === 'PartUsage') || defHasInternalPortFlows(td.id);
     };
 
     // Does part-def `defId` reach the port node `portId` — as a direct port, or transitively
@@ -1563,7 +1584,12 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     const innerW     = colX - H_GAP;
     const maxColH    = colHeight.length > 0 ? Math.max(...colHeight) : 0;
     const containerW = SCOPE_PAD_LEFT + innerW + SCOPE_PAD_RIGHT;
-    const containerH = SCOPE_PAD_TOP  + maxColH + SCOPE_PAD_BOTTOM;
+    // A parts-less connector block (only boundary ports + internal pass-through wires) has no
+    // part column to size the frame, so height it by its boundary ports instead — otherwise the
+    // ports get 0 usable height and stack on top of each other. (Only when there are no parts;
+    // part-having scopes keep their column-driven height unchanged.)
+    const portDrivenH = partUsages.length === 0 ? (scopePorts.length + 1) * PORT_ROW_H + 16 : 0;
+    const containerH = SCOPE_PAD_TOP  + Math.max(maxColH, portDrivenH) + SCOPE_PAD_BOTTOM;
 
     // Shift all part positions so they sit inside the container frame.
     // Y_PARTS is the current top baseline; SCOPE_PAD_TOP is the target.
