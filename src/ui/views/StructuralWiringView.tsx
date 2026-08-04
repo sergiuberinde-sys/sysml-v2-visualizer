@@ -2010,7 +2010,15 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       .filter(conn => {
         const srcRf = portToRfId.get(conn.source);
         const tgtRf = portToRfId.get(conn.target);
-        return srcRf && tgtRf && srcRf !== tgtRf;
+        if (!srcRf || !tgtRf) return false;
+        if (srcRf !== tgtRf) return true;
+        // Same box: draw a LEAF connector's internal pass-through so its ports show connected on
+        // the box (`flow from farMacTxIn to sgmiiTxToHvmBridge` inside FarSgmiiCommunicationHw) —
+        // both endpoints are BARE ports of that one part. A COMPOSITE part's deep self-loop
+        // (`part::deepPort`, from deep-endpoint anchoring) stays hidden here; it renders inside
+        // the part when expanded (see the injected-flows path). Drop degenerate same-port loops.
+        return !conn.source.includes('::') && !conn.target.includes('::')
+          && epPortOf(conn.source) !== epPortOf(conn.target);
       })
       .map(conn => {
         const srcRf   = portToRfId.get(conn.source)!;
