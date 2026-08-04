@@ -1033,48 +1033,78 @@ export async function applyBehaviorLayout(
   if (!nodes.length) return new Map();
   if (!laneMap || laneMap.size === 0) return runBehaviorElk(nodes, edges);
 
-  // ── Per-lane column layout ──────────────────────────────────────────────────
-  const LANE_COL_GAP = 170;   // horizontal gap between swimlane columns (px) — wide enough that cross-lane succession edges have routing room outside both containers
+  // ── Swimlane layout: flow DOWN, lanes as vertical columns ─────────────────────
+  // The OLD approach laid out each lane in isolation (intra-lane edges only) and drew the
+  // cross-lane succession edges — which are the bulk of the flow — straight across the columns,
+  // producing a horizontal tangle. Instead we run ONE ELK pass over the WHOLE graph so the
+  // successions set a clean top-to-bottom flow order (Y), then place each node in its lane's
+  // column (X). Time flows down; edges cross between columns only where the performer changes.
+  const LANE_GAP = 64;   // horizontal gap between swimlane columns
+  const ROW_GAP  = 34;   // minimum vertical gap between two nodes in the same lane
 
-  const byLane = new Map<number, Array<{ id: string; width: number; height: number }>>();
-  const unallocated: Array<{ id: string; width: number; height: number }> = [];
+  const dim = new Map(nodes.map(n => [n.id, { w: n.width, h: n.height }]));
 
+  // Full-graph flow layout → Y is the flow depth (ELK direction is DOWN). We keep the Y and
+  // discard ELK's X (we assign X by lane); ELK's X is only a fallback for unallocated nodes.
+  const flow = await runBehaviorElk(nodes, edges);
+
+  // Lane columns, left-to-right by lane index. Column width = widest node in the lane.
+  const lanes = [...new Set([...laneMap.values()])].sort((a, b) => a - b);
+  const laneW = new Map<number, number>();
   for (const n of nodes) {
-    const lane = laneMap.get(n.id);
-    if (lane === undefined) { unallocated.push(n); continue; }
-    if (!byLane.has(lane)) byLane.set(lane, []);
-    byLane.get(lane)!.push(n);
+    const l = laneMap.get(n.id);
+    if (l !== undefined) laneW.set(l, Math.max(laneW.get(l) ?? 0, n.width));
+  }
+  const laneCenter = new Map<number, number>();
+  let cursor = 0;
+  for (const l of lanes) {
+    const w = laneW.get(l) ?? 140;
+    laneCenter.set(l, cursor + w / 2);
+    cursor += w + LANE_GAP;
   }
 
-  const laneGroups = [...byLane.entries()].sort(([a], [b]) => a - b).map(([, g]) => g);
-  const allGroups  = [...laneGroups, ...(unallocated.length ? [unallocated] : [])];
-
-  // Run all lane layouts in parallel — only intra-lane edges are fed in.
-  const groupResults = await Promise.all(
-    allGroups.map(groupNodes => {
-      const groupSet = new Set(groupNodes.map(n => n.id));
-      return runBehaviorElk(
-        groupNodes,
-        edges.filter(e => groupSet.has(e.source) && groupSet.has(e.target)),
-      );
-    }),
-  );
-
-  // Concatenate columns left-to-right.
-  const result   = new Map<string, { x: number; y: number }>();
-  let xCursor    = 0;
-
-  for (let i = 0; i < allGroups.length; i++) {
-    const groupNodes = allGroups[i];
-    const positions  = groupResults[i];
-    let colWidth     = 0;
-    for (const n of groupNodes) {
-      const pos = positions.get(n.id) ?? { x: 0, y: 0 };
-      result.set(n.id, { x: pos.x + xCursor, y: pos.y });
-      colWidth = Math.max(colWidth, pos.x + n.width);
+  // X: allocated nodes → centered in their lane column.
+  const x = new Map<string, number>();
+  for (const n of nodes) {
+    const l = laneMap.get(n.id);
+    if (l !== undefined) x.set(n.id, laneCenter.get(l)! - n.width / 2);
+  }
+  // Unallocated (control/junction) nodes → the average X of their connected neighbours, so they
+  // sit between the lanes they wire together (short cross-lane edges). Iterate a few times since
+  // neighbours may themselves be unallocated; fall back to ELK's X.
+  const nbr = new Map<string, string[]>();
+  for (const e of edges) {
+    (nbr.get(e.source) ?? nbr.set(e.source, []).get(e.source)!).push(e.target);
+    (nbr.get(e.target) ?? nbr.set(e.target, []).get(e.target)!).push(e.source);
+  }
+  const unalloc = nodes.filter(n => laneMap.get(n.id) === undefined);
+  for (let pass = 0; pass < 4; pass++) {
+    for (const n of unalloc) {
+      const centres = (nbr.get(n.id) ?? [])
+        .map(m => { const xm = x.get(m); return xm !== undefined ? xm + (dim.get(m)?.w ?? 0) / 2 : undefined; })
+        .filter((v): v is number => v !== undefined);
+      const centre = centres.length ? centres.reduce((a, b) => a + b, 0) / centres.length
+                                     : (flow.get(n.id)?.x ?? 0) + n.width / 2;
+      x.set(n.id, centre - n.width / 2);
     }
-    xCursor += colWidth + LANE_COL_GAP;
   }
 
+  // Y: the ELK flow depth, then de-clutter WITHIN each lane column so same-lane nodes that land
+  // at the same flow depth (parallel actions of one performer) stack instead of overlapping.
+  const y = new Map<string, number>();
+  for (const n of nodes) y.set(n.id, flow.get(n.id)?.y ?? 0);
+  for (const l of lanes) {
+    const laneNodes = nodes.filter(n => laneMap.get(n.id) === l).sort((a, b) => (y.get(a.id)! - y.get(b.id)!));
+    let prevBottom = -Infinity;
+    for (const n of laneNodes) {
+      let ny = y.get(n.id)!;
+      if (ny < prevBottom + ROW_GAP) ny = prevBottom + ROW_GAP;
+      y.set(n.id, ny);
+      prevBottom = ny + (dim.get(n.id)?.h ?? 0);
+    }
+  }
+
+  const result = new Map<string, { x: number; y: number }>();
+  for (const n of nodes) result.set(n.id, { x: x.get(n.id) ?? 0, y: y.get(n.id) ?? 0 });
   return result;
 }
