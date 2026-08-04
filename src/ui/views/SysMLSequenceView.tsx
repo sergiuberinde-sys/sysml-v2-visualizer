@@ -33,6 +33,7 @@ const ALT_VPAD     = 8;
 const ALT_HMARGIN  = 12;
 const ALT_TAG_W    = 28;
 const ALT_TAG_H    = 18;
+const ALT_NEST_INSET = 12; // horizontal inset per nesting level, so nested fragments sit inside
 
 const boxW = (label: string) =>
   Math.max(LBOX_MIN_W, Math.ceil(label.length * CHAR_W) + BOX_PAD_X);
@@ -135,113 +136,80 @@ function findMembershipLabel(
   return null;
 }
 
-/**
- * Extract all FlowUsage direct children of an ActionUsage body.
- * These are wrapped in FeatureMembership inside the ActionUsage.
- */
-function flowsInActionUsage(
-  actionId: string,
+// SysML v2 control-structure node types that become sequence messages / fragments.
+const SEQ_CHILD_TYPES = new Set(['FlowUsage', 'IfActionUsage', 'WhileLoopActionUsage']);
+
+/** The FlowUsage / If / While members of a body (ActionDef or a branch ActionUsage), source-ordered. */
+function seqChildren(
+  containerId: string,
   childrenOf: Map<string, string[]>,
   nodeById: Map<string, GraphNode>,
 ): GraphNode[] {
-  const flows: GraphNode[] = [];
-  for (const membId of childrenOf.get(actionId) ?? []) {
-    const memb = nodeById.get(membId);
-    if (!memb || memb.type !== 'FeatureMembership') continue;
-    for (const kid of childrenOf.get(membId) ?? []) {
-      const n = nodeById.get(kid);
-      if (n?.type === 'FlowUsage') flows.push(n);
-    }
-  }
-  return flows;
-}
-
-interface IfBranches {
-  condition:  string;   // e.g. "credentialsValid" or "not credentialsValid"
-  thenFlows:  GraphNode[];
-  elseFlows:  GraphNode[];
+  return semanticChildren(containerId, childrenOf, nodeById)
+    .filter(c => SEQ_CHILD_TYPES.has(c.type))
+    .sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
 }
 
 /**
- * Decode an IfActionUsage node into its condition label and branch FlowUsages.
- *
- * Children layout (positional, per SysML v2 §11.4):
- *   ParameterMembership[0]  → ifTest (FeatureReferenceExpression or OperatorExpression)
- *   ParameterMembership[1]  → then-branch ActionUsage (any name; demo files use
- *                              names like `enableSupplyBranch`, not `thenClause`)
- *   ParameterMembership[2]? → else-branch ActionUsage (any name)
- *
- * The earlier label-based match for `thenClause` / `elseClause` was too strict
- * and silently dropped both branches in real demos.
+ * Condition label of an IfActionUsage (ParameterMembership[0] → ifTest), negated form included.
  */
-function extractIfBranches(
+function ifCondition(
   ifId: string,
   childrenOf: Map<string, string[]>,
   nodeById: Map<string, GraphNode>,
-): IfBranches {
-  let condition  = '';
-  let negated    = false;
-  const thenFlows: GraphNode[] = [];
-  const elseFlows: GraphNode[] = [];
-
+): string {
   const params = (childrenOf.get(ifId) ?? [])
     .filter(id => nodeById.get(id)?.type === 'ParameterMembership');
-
-  // Param 0 → condition expression
-  if (params.length > 0) {
-    for (const kid of childrenOf.get(params[0]) ?? []) {
-      const n = nodeById.get(kid);
-      if (!n) continue;
-      if (n.type === 'FeatureReferenceExpression') {
-        const name = findMembershipLabel(kid, childrenOf, nodeById);
-        if (name) condition = name;
-      } else if (n.type === 'OperatorExpression') {
-        const name = findMembershipLabel(kid, childrenOf, nodeById);
-        if (name) { condition = name; negated = true; }
-      }
+  if (params.length === 0) return '';
+  let condition = '';
+  let negated   = false;
+  for (const kid of childrenOf.get(params[0]) ?? []) {
+    const n = nodeById.get(kid);
+    if (!n) continue;
+    if (n.type === 'FeatureReferenceExpression') {
+      const name = findMembershipLabel(kid, childrenOf, nodeById);
+      if (name) condition = name;
+    } else if (n.type === 'OperatorExpression') {
+      const name = findMembershipLabel(kid, childrenOf, nodeById);
+      if (name) { condition = name; negated = true; }
     }
   }
-
-  // Param 1 → then-branch ActionUsage; param 2 → else-branch ActionUsage.
-  const collectBranchFlows = (pmId: string, target: GraphNode[]) => {
-    for (const kid of childrenOf.get(pmId) ?? []) {
-      if (nodeById.get(kid)?.type === 'ActionUsage') {
-        target.push(...flowsInActionUsage(kid, childrenOf, nodeById));
-      }
-    }
-  };
-  if (params.length > 1) collectBranchFlows(params[1], thenFlows);
-  if (params.length > 2) collectBranchFlows(params[2], elseFlows);
-
-  if (negated) condition = `not ${condition}`;
-  return { condition, thenFlows, elseFlows };
+  return negated ? `not ${condition}` : condition;
 }
 
 /**
- * Decode a WhileLoopActionUsage into its body FlowUsages.
- *
- *   ParameterMembership[0] → whileTest (often empty in modeling-from-XMI code)
- *   ParameterMembership[1] → body ActionUsage containing FlowUsage children
- *
- * Renders as a `loop` combined fragment with one branch.
+ * The then / else branch ActionUsage node ids of an IfActionUsage (positional, per SysML v2 §11.4):
+ *   ParameterMembership[1] → then-branch ActionUsage; [2]? → else-branch ActionUsage.
+ * Each branch body may itself contain FlowUsages AND nested If/While actions → nested fragments.
  */
-function extractLoopBody(
+function ifBranchActionIds(
+  ifId: string,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+): { thenId: string | null; elseId: string | null } {
+  const params = (childrenOf.get(ifId) ?? [])
+    .filter(id => nodeById.get(id)?.type === 'ParameterMembership');
+  const action = (pmId: string | undefined): string | null => {
+    if (!pmId) return null;
+    for (const kid of childrenOf.get(pmId) ?? [])
+      if (nodeById.get(kid)?.type === 'ActionUsage') return kid;
+    return null;
+  };
+  return { thenId: action(params[1]), elseId: action(params[2]) };
+}
+
+/** Body ActionUsage node id of a WhileLoopActionUsage (last ParameterMembership, after whileTest). */
+function loopBodyActionId(
   loopId: string,
   childrenOf: Map<string, string[]>,
   nodeById: Map<string, GraphNode>,
-): GraphNode[] {
-  const flows: GraphNode[] = [];
+): string | null {
   const params = (childrenOf.get(loopId) ?? [])
     .filter(id => nodeById.get(id)?.type === 'ParameterMembership');
-  if (params.length < 2) return flows;
-  // Body is the LAST parameter (after whileTest).
-  const bodyParam = params[params.length - 1];
-  for (const kid of childrenOf.get(bodyParam) ?? []) {
-    if (nodeById.get(kid)?.type === 'ActionUsage') {
-      flows.push(...flowsInActionUsage(kid, childrenOf, nodeById));
-    }
-  }
-  return flows;
+  if (params.length < 2) return null;
+  for (const kid of childrenOf.get(params[params.length - 1]) ?? [])
+    if (nodeById.get(kid)?.type === 'ActionUsage') return kid;
+  return null;
 }
 
 /** Logical negation of a guard label (strips or adds "not "). */
@@ -253,15 +221,21 @@ function negateCondition(cond: string): string {
 
 type FragmentKind = 'alt' | 'loop' | 'opt';
 
+/** One enclosing combined fragment for a message. A message's `fragments` array is the full
+ *  nesting path, outermost first, so nested `if`s render as nested `alt`/`opt` boxes. */
+interface FragmentCtx {
+  blockId: string;
+  kind:    FragmentKind;
+  guard:   string;        // the branch guard this message sits under (`cond`, `not cond`, loop label)
+}
+
 interface ParsedMessage {
-  id:               string;
-  label:            string;
-  from:             Endpoint | null;
-  to:               Endpoint | null;
-  line?:            number;
-  guard?:           string;
-  fragmentBlockId?: string;       // groups consecutive messages into one combined fragment
-  fragmentKind?:    FragmentKind; // 'alt' for if/else, 'opt' for a single guarded branch, 'loop' for while-loops
+  id:         string;
+  label:      string;
+  from:       Endpoint | null;
+  to:         Endpoint | null;
+  line?:      number;
+  fragments?: FragmentCtx[]; // enclosing combined fragments, outermost → innermost
 }
 
 interface AltBranchLayout {
@@ -275,6 +249,7 @@ interface AltBlockLayout {
   topY:     number;
   bottomY:  number;
   branches: AltBranchLayout[];
+  depth:    number;        // nesting level (0 = outermost) → horizontal inset
 }
 
 interface SequenceDef {
@@ -289,9 +264,7 @@ function resolveFlow(
   flow: GraphNode,
   childrenOf: Map<string, string[]>,
   nodeById: Map<string, GraphNode>,
-  guard?: string,
-  fragmentBlockId?: string,
-  fragmentKind?: FragmentKind,
+  fragments?: FragmentCtx[],
 ): ParsedMessage {
   const paramMembs = (childrenOf.get(flow.id) ?? [])
     .map(id => nodeById.get(id))
@@ -303,10 +276,47 @@ function resolveFlow(
     from:  m0 ? resolveEndpoint(m0.id, childrenOf, nodeById) : null,
     to:    m1 ? resolveEndpoint(m1.id, childrenOf, nodeById) : null,
     line:  flow.startLine,
-    ...(guard           !== undefined ? { guard }           : {}),
-    ...(fragmentBlockId !== undefined ? { fragmentBlockId } : {}),
-    ...(fragmentKind    !== undefined ? { fragmentKind }    : {}),
+    ...(fragments && fragments.length ? { fragments } : {}),
   };
+}
+
+/**
+ * Walk one sequence node (flow / if / while), emitting messages that each carry the stack of
+ * enclosing fragments. Recurses into if-branch and loop bodies, so a nested `if` inside a branch
+ * produces messages whose `fragments` path has the outer fragment followed by the inner one —
+ * which the layout renders as a nested combined fragment.
+ */
+function processSeqNode(
+  node: GraphNode,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+  frags: FragmentCtx[],
+  out: ParsedMessage[],
+): void {
+  if (node.type === 'FlowUsage') {
+    out.push(resolveFlow(node, childrenOf, nodeById, frags));
+    return;
+  }
+  if (node.type === 'IfActionUsage') {
+    const { thenId, elseId } = ifBranchActionIds(node.id, childrenOf, nodeById);
+    const thenKids = thenId ? seqChildren(thenId, childrenOf, nodeById) : [];
+    const elseKids = elseId ? seqChildren(elseId, childrenOf, nodeById) : [];
+    if (thenKids.length === 0 && elseKids.length === 0) return;
+    // Two populated branches → UML `alt`; a single guarded branch → UML `opt`.
+    const kind: FragmentKind = thenKids.length > 0 && elseKids.length > 0 ? 'alt' : 'opt';
+    const cond     = ifCondition(node.id, childrenOf, nodeById) || 'condition';
+    const elseCond = negateCondition(cond);
+    for (const k of thenKids) processSeqNode(k, childrenOf, nodeById, [...frags, { blockId: node.id, kind, guard: cond }],     out);
+    for (const k of elseKids) processSeqNode(k, childrenOf, nodeById, [...frags, { blockId: node.id, kind, guard: elseCond }], out);
+    return;
+  }
+  if (node.type === 'WhileLoopActionUsage') {
+    const bodyId   = loopBodyActionId(node.id, childrenOf, nodeById);
+    const bodyKids = bodyId ? seqChildren(bodyId, childrenOf, nodeById) : [];
+    if (bodyKids.length === 0) return;
+    const loopLabel = node.label && node.label !== node.type ? node.label : 'loop';
+    for (const k of bodyKids) processSeqNode(k, childrenOf, nodeById, [...frags, { blockId: node.id, kind: 'loop', guard: loopLabel }], out);
+  }
 }
 
 // ── Parsing ────────────────────────────────────────────────────────────────────
@@ -323,7 +333,6 @@ function parseSequenceDefs(
     if (n.type !== 'PartDefinition' && n.type !== 'ActionDefinition') continue;
 
     const sChildren = semanticChildren(n.id, childrenOf, nodeById);
-    const SEQ_CHILD_TYPES = new Set(['FlowUsage', 'IfActionUsage', 'WhileLoopActionUsage']);
     if (!sChildren.some(c => SEQ_CHILD_TYPES.has(c.type))) continue;
 
     const sorted = sChildren.slice().sort((a, b) => (a.startLine ?? 0) - (b.startLine ?? 0));
@@ -341,23 +350,7 @@ function parseSequenceDefs(
     const messages: ParsedMessage[] = [];
 
     for (const child of sorted) {
-      if (child.type === 'FlowUsage') {
-        messages.push(resolveFlow(child, childrenOf, nodeById));
-      } else if (child.type === 'IfActionUsage') {
-        const { condition, thenFlows, elseFlows } = extractIfBranches(child.id, childrenOf, nodeById);
-        if (thenFlows.length === 0 && elseFlows.length === 0) continue;
-        const cond     = condition || 'condition';
-        const elseCond = negateCondition(cond);
-        // Two populated branches → UML `alt`; a single guarded branch → UML `opt`.
-        const kind: FragmentKind = thenFlows.length > 0 && elseFlows.length > 0 ? 'alt' : 'opt';
-        for (const f of thenFlows) messages.push(resolveFlow(f, childrenOf, nodeById, cond,     child.id, kind));
-        for (const f of elseFlows) messages.push(resolveFlow(f, childrenOf, nodeById, elseCond, child.id, kind));
-      } else if (child.type === 'WhileLoopActionUsage') {
-        const bodyFlows = extractLoopBody(child.id, childrenOf, nodeById);
-        if (bodyFlows.length === 0) continue;
-        const loopLabel = child.label && child.label !== child.type ? child.label : 'loop';
-        for (const f of bodyFlows) messages.push(resolveFlow(f, childrenOf, nodeById, loopLabel, child.id, 'loop'));
-      }
+      if (SEQ_CHILD_TYPES.has(child.type)) processSeqNode(child, childrenOf, nodeById, [], messages);
     }
 
     results.push({ node: n, participants, messages });
@@ -378,46 +371,51 @@ function computeMessageLayout(messages: ParsedMessage[]): MessageLayout {
   const msgY: number[]              = new Array(messages.length);
   const altBlocks: AltBlockLayout[] = [];
   let curY = MSG_START_Y;
-  let i    = 0;
 
-  while (i < messages.length) {
-    const blockId = messages[i].fragmentBlockId;
-    if (!blockId) {
-      msgY[i] = curY;
-      curY   += MSG_STEP_Y;
-      i++;
-      continue;
+  // Stack of currently-open fragments (outermost at index 0), tracked as we walk messages in
+  // order. A message's `fragments` path tells us which fragments must be open around it: we close
+  // any that no longer match (deepest first) and open any new ones, so nested `if`s nest visually.
+  interface Open { blockId: string; kind: FragmentKind; depth: number; topY: number; currentGuard: string | null; branches: AltBranchLayout[]; }
+  const open: Open[] = [];
+  const closeTop = () => {
+    const f = open.pop()!;
+    const bottomY = curY + ALT_VPAD;
+    altBlocks.push({ kind: f.kind, topY: f.topY, bottomY, branches: f.branches, depth: f.depth });
+    curY = bottomY;
+  };
+
+  for (let i = 0; i < messages.length; i++) {
+    const path = messages[i].fragments ?? [];
+    // Close fragments (deepest first) that this message is no longer inside.
+    while (open.length > 0 && (open.length > path.length || open[open.length - 1].blockId !== path[open.length - 1].blockId)) {
+      closeTop();
+      curY += MSG_STEP_Y / 4; // small gap after a fragment closes
     }
-
-    const blockKind   = messages[i].fragmentKind ?? 'alt';
-    const blockTopY   = curY;
-    curY += ALT_HEADER_H;
-
-    const branches: AltBranchLayout[] = [];
-    let currentCondition = '';
-
-    // Consume every consecutive message with the same fragmentBlockId.
-    while (i < messages.length && messages[i].fragmentBlockId === blockId) {
-      const cond = messages[i].guard ?? '';
-      if (cond !== currentCondition) {
-        if (currentCondition === '') {
-          branches.push({ condition: cond, condLabelY: blockTopY + ALT_TAG_H / 2 });
+    // Open fragments this message newly enters.
+    for (let d = open.length; d < path.length; d++) {
+      const topY = curY;
+      curY += ALT_HEADER_H;
+      open.push({ blockId: path[d].blockId, kind: path[d].kind, depth: d, topY, currentGuard: null, branches: [] });
+    }
+    // Branch (guard) bookkeeping on the innermost open fragment.
+    if (path.length > 0) {
+      const top = open[open.length - 1];
+      const g   = path[path.length - 1].guard;
+      if (g !== top.currentGuard) {
+        if (top.currentGuard === null) {
+          top.branches.push({ condition: g, condLabelY: top.topY + ALT_TAG_H / 2 });
         } else {
           const sepY = curY;
-          curY     += ALT_SEP_H;
-          branches.push({ condition: cond, sepY, condLabelY: sepY + 10 });
+          curY += ALT_SEP_H;
+          top.branches.push({ condition: g, sepY, condLabelY: sepY + 10 });
         }
-        currentCondition = cond;
+        top.currentGuard = g;
       }
-      msgY[i] = curY;
-      curY   += MSG_STEP_Y;
-      i++;
     }
-
-    const blockBottomY = curY + ALT_VPAD;
-    altBlocks.push({ kind: blockKind, topY: blockTopY, bottomY: blockBottomY, branches });
-    curY = blockBottomY + MSG_STEP_Y / 2;
+    msgY[i] = curY;
+    curY   += MSG_STEP_Y;
   }
+  while (open.length > 0) closeTop();
 
   return { msgY, altBlocks, totalH: curY + SVG_PAD_BOT };
 }
@@ -582,28 +580,32 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
           preserveAspectRatio="xMidYMid meet"
           style={{ fontFamily: 'monospace', userSelect: 'none', display: 'block' }}
         >
-          {/* Combined fragment backgrounds (alt / loop) — rendered before lifelines */}
+          {/* Combined fragment backgrounds (alt / opt / loop, possibly nested) — before lifelines.
+              Nested fragments are inset by depth * ALT_NEST_INSET so they sit inside their parent. */}
           {altBlocks.map((blk, bi) => {
             const tagW = blk.kind === 'loop' ? 36 : ALT_TAG_W;
+            const inset = blk.depth * ALT_NEST_INSET;
+            const bx = altX + inset;
+            const bw = altW - inset * 2;
             return (
               <g key={`alt-${bi}`}>
                 <rect
-                  x={altX} y={blk.topY} width={altW} height={blk.bottomY - blk.topY}
+                  x={bx} y={blk.topY} width={bw} height={blk.bottomY - blk.topY}
                   fill="none" stroke={C_ALT_BORDER} strokeWidth={1} rx={2}
                 />
                 {/* Pentagon tag — 'alt' / 'opt' / 'loop' */}
                 <polygon
                   points={[
-                    `${altX},${blk.topY}`,
-                    `${altX + tagW},${blk.topY}`,
-                    `${altX + tagW},${blk.topY + ALT_TAG_H - 6}`,
-                    `${altX + tagW - 6},${blk.topY + ALT_TAG_H}`,
-                    `${altX},${blk.topY + ALT_TAG_H}`,
+                    `${bx},${blk.topY}`,
+                    `${bx + tagW},${blk.topY}`,
+                    `${bx + tagW},${blk.topY + ALT_TAG_H - 6}`,
+                    `${bx + tagW - 6},${blk.topY + ALT_TAG_H}`,
+                    `${bx},${blk.topY + ALT_TAG_H}`,
                   ].join(' ')}
                   fill={C_ALT_TAG_BG} stroke={C_ALT_TAG_BD} strokeWidth={1}
                 />
                 <text
-                  x={altX + tagW / 2} y={blk.topY + ALT_TAG_H / 2}
+                  x={bx + tagW / 2} y={blk.topY + ALT_TAG_H / 2}
                   textAnchor="middle" dominantBaseline="central"
                   fill={C_ALT_TAG_TX} fontSize={9} fontWeight={600}
                 >{blk.kind}</text>
@@ -611,13 +613,13 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
                   <g key={`br-${bri}`}>
                     {br.sepY !== undefined && (
                       <line
-                        x1={altX} y1={br.sepY} x2={altX + altW} y2={br.sepY}
+                        x1={bx} y1={br.sepY} x2={bx + bw} y2={br.sepY}
                         stroke={C_ALT_SEP} strokeWidth={1} strokeDasharray="5 3"
                       />
                     )}
                     {br.condition && (
                       <text
-                        x={bri === 0 ? altX + tagW + 4 : altX + 6}
+                        x={bri === 0 ? bx + tagW + 4 : bx + 6}
                         y={br.condLabelY}
                         dominantBaseline="central"
                         fill={C_ALT_COND} fontSize={10} fontStyle="italic"
