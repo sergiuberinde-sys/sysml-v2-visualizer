@@ -14,7 +14,7 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ReactFlow, Background, Controls, MarkerType,
-  useReactFlow, applyNodeChanges, Handle, Position,
+  useReactFlow, useViewport, useStore, applyNodeChanges, Handle, Position,
   type Node, type Edge, type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -100,12 +100,26 @@ const LANE_COLORS = [
 const PART_PAD     = 28;   // padding inside the part container around its child nodes
 const PART_LABEL_H = 28;   // height of the part name label row at the top
 
-interface PartContainerNodeData { label: string; color: string }
+interface PartContainerNodeData { label: string; color: string; laneTop: number; laneHeight: number }
 
-// SysML part box: solid colored border, name label, transparent interior.
+// SysML part box: solid colored border, transparent interior, and a vertical
+// actor label pinned to the left edge.  Because lanes are tall, the label
+// tracks the visible viewport centre (clamped to the lane) so the actor name
+// stays in view no matter how far the user scrolls up or down.
 function PartContainerNode({ data }: { data: PartContainerNodeData }) {
+  const { y: vpY, zoom } = useViewport();
+  const paneH = useStore(s => s.height);
+
+  // Centre of the visible pane, expressed in the lane's own (flow) coordinates.
+  const centreFlowY = (paneH / 2 - vpY) / zoom;
+  // Half the label's vertical footprint (it is rotated, so this ≈ text length).
+  const half = Math.min(data.laneHeight / 2, (data.label.length * 6.5) / 2 + 8);
+  const rawOffset = centreFlowY - data.laneTop;
+  const labelTop = Math.max(half, Math.min(data.laneHeight - half, rawOffset));
+
   return (
     <div style={{
+      position:      'relative',
       width:         '100%',
       height:        '100%',
       borderRadius:  4,
@@ -116,16 +130,20 @@ function PartContainerNode({ data }: { data: PartContainerNodeData }) {
       overflow:      'hidden',
     }}>
       <div style={{
-        padding:       '3px 8px',
-        fontSize:      9,
-        fontWeight:    600,
+        position:      'absolute',
+        left:          13,
+        top:           labelTop,
+        transform:     'translate(-50%, -50%) rotate(-90deg)',
+        transformOrigin: 'center',
+        fontSize:      12,
+        fontWeight:    700,
         color:         data.color,
         fontFamily:    'monospace',
-        letterSpacing: '0.3px',
+        letterSpacing: '0.4px',
         whiteSpace:    'nowrap',
-        overflow:      'hidden',
-        textOverflow:  'ellipsis',
-        borderBottom:  `1px solid ${data.color}30`,
+        padding:       '1px 6px',
+        borderRadius:  3,
+        background:    `${data.color}14`,
       }}>
         {data.label}
       </div>
@@ -555,7 +573,7 @@ function buildCompoundLayout(
       id:         `partbox-${partName}`,
       type:       'partContainer',
       position:   { x: cx, y: cy },
-      data:       { label: partName, color } satisfies PartContainerNodeData,
+      data:       { label: partName, color, laneTop, laneHeight } satisfies PartContainerNodeData,
       style:      { width: cw, height: ch, zIndex: -1 },
       selectable: false,
       draggable:  false,
