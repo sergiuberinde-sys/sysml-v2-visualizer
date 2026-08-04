@@ -603,6 +603,14 @@ function buildActionAllocMap(
 
   const map = new Map<string, string>();
   for (const alloc of allocations) {
+    // `perform action` inside a `ref part` (`ref part P { perform action A; }` ⇒ A on lane P),
+    // scoped to this behavior's ActionDefinition. No perform-usage indirection to resolve.
+    if (alloc.kind === 'perform') {
+      if (alloc.behaviorScope && alloc.behaviorScope !== defPart) continue;
+      const actionName = alloc.sourcePath[alloc.sourcePath.length - 1];
+      if (actionName) map.set(actionName, alloc.targetName);
+      continue;
+    }
     if (alloc.sourcePath.length < 2) continue;
     if (!performNames.has(alloc.sourcePath[0])) continue;
     // Last segment = action name; first = perform usage name.

@@ -69,6 +69,10 @@ export interface BehaviorAllocation {
   sourcePath: string[];
   /** Target part/element name, e.g. 'signalConversion' */
   targetName: string;
+  /** `allocate` (default) or a `perform action` inside a `ref part`. */
+  kind?: 'allocate' | 'perform';
+  /** For `perform` allocations: the enclosing ActionDefinition name (scopes the swimlane map). */
+  behaviorScope?: string;
 }
 
 export interface BehaviorData {

@@ -80,6 +80,12 @@ export interface BehaviorAllocation {
   sourcePath: string[];
   /** Target part/element name, e.g. 'signalConversion' */
   targetName: string;
+  /** How the assignment was authored: an explicit `allocate` (default) or a `perform action`
+   *  inside a `ref part` — `ref part P { perform action A; }` ⇒ A on lane P. */
+  kind?: 'allocate' | 'perform';
+  /** For `perform` allocations: name of the enclosing ActionDefinition, so the swimlane mapping
+   *  is scoped to the right behavior. */
+  behaviorScope?: string;
 }
 
 export interface BehaviorData {

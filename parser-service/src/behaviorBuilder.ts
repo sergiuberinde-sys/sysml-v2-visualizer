@@ -620,6 +620,25 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
     ctx.forEach((root, i) => visit(root, `ctx${ci}_${i}`, null));
   });
 
+  // Swimlane assignments from `perform action` inside a `ref part` — the SysML v2 way to say a
+  // part performs an action WITHOUT an explicit `allocate` (e.g. `ref part smu : Tc4zSmuHw
+  // { perform action acceptEpc2Alarm; }` ⇒ smu performs acceptEpc2Alarm → lane smu). Scoped to
+  // the enclosing ActionDefinition. Complements the AllocationUsage path above.
+  const collectPerformAllocations = (nodes: ModelNode[]): void => {
+    const walk = (node: ModelNode, performer: string | null, behaviorDef: string | null): void => {
+      const named = node.name && node.name !== node.type ? node.name : null;
+      const nextDef = node.type === 'ActionDefinition' && named ? named : behaviorDef;
+      const nextPerformer = (node.type === 'PartUsage' || node.type === 'ReferenceUsage') && named ? named : performer;
+      if (node.type === 'PerformActionUsage' && named && performer) {
+        allocations.push({ sourcePath: [performer, named], targetName: performer, kind: 'perform', ...(behaviorDef ? { behaviorScope: behaviorDef } : {}) });
+      }
+      for (const c of node.children ?? []) walk(c, nextPerformer, nextDef);
+    };
+    for (const n of nodes) walk(n, null, null);
+  };
+  collectPerformAllocations(roots);
+  contextRoots.forEach(ctx => collectPerformAllocations(ctx));
+
   // Inherit ports onto typed ActionUsages from their ActionDefinition.
   // Primary model first, then context files (cross-file defs don't override local ones).
   const defPortsByName = new Map<string, ActionPort[]>();
