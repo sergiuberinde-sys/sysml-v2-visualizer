@@ -528,6 +528,17 @@ function buildCompoundLayout(
     boxes.set(allocatedTo, b);
   }
 
+  // All lanes share the same vertical extent so the swimlanes read as uniform
+  // columns — the tallest lane dictates top and bottom for every lane.
+  let globalY1 = Infinity;
+  let globalY2 = -Infinity;
+  for (const box of boxes.values()) {
+    globalY1 = Math.min(globalY1, box.y1);
+    globalY2 = Math.max(globalY2, box.y2);
+  }
+  const laneTop    = globalY1 - PART_LABEL_H - PART_PAD;
+  const laneHeight = globalY2 - globalY1 + PART_LABEL_H + 2 * PART_PAD;
+
   // Container nodes and their absolute positions (needed to relativize children).
   const containerNodes: Node[] = [];
   const containerAbsPos = new Map<string, { x: number; y: number }>();
@@ -535,9 +546,9 @@ function buildCompoundLayout(
   for (const [partName, box] of boxes) {
     const color = laneColors.get(partName) ?? LANE_COLORS[0];
     const cx = box.x1 - PART_PAD;
-    const cy = box.y1 - PART_LABEL_H - PART_PAD;
+    const cy = laneTop;
     const cw = box.x2 - box.x1 + 2 * PART_PAD;
-    const ch = box.y2 - box.y1 + PART_LABEL_H + 2 * PART_PAD;
+    const ch = laneHeight;
 
     containerAbsPos.set(partName, { x: cx, y: cy });
     containerNodes.push({
