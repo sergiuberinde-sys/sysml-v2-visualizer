@@ -46,7 +46,7 @@ export type BehaviorFlow =
   | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true }
   | { id: string; source: string; target: string; type: 'transition'; guard?: string; sourceQual?: string; targetQual?: string }
   | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true }
-  | { id: string; source: string; sourcePort: string | null; target: string; targetPort: string | null; type: 'itemFlow' };
+  | { id: string; source: string; sourcePort: string | null; target: string; targetPort: string | null; type: 'itemFlow'; sourceQual?: string; targetQual?: string };
 
 /**
  * A conditional or loop construct discovered in the model.

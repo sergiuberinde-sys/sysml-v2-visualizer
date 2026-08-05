@@ -1039,8 +1039,10 @@ export async function applyBehaviorLayout(
   // producing a horizontal tangle. Instead we run ONE ELK pass over the WHOLE graph so the
   // successions set a clean top-to-bottom flow order (Y), then place each node in its lane's
   // column (X). Time flows down; edges cross between columns only where the performer changes.
-  const LANE_GAP = 64;   // horizontal gap between swimlane columns
-  const ROW_GAP  = 34;   // minimum vertical gap between two nodes in the same lane
+  const LANE_GAP  = 110;  // horizontal gap between swimlane columns — wide enough that a fork's
+                          // outputs, which land in neighbouring lanes, never touch
+  const ROW_GAP   = 44;   // minimum vertical gap between two nodes in the same lane
+  const LANE_PAD  = 28;   // extra breathing room added to each lane's widest node
 
   const dim = new Map(nodes.map(n => [n.id, { w: n.width, h: n.height }]));
 
@@ -1058,7 +1060,7 @@ export async function applyBehaviorLayout(
   const laneCenter = new Map<number, number>();
   let cursor = 0;
   for (const l of lanes) {
-    const w = laneW.get(l) ?? 140;
+    const w = (laneW.get(l) ?? 140) + LANE_PAD;
     laneCenter.set(l, cursor + w / 2);
     cursor += w + LANE_GAP;
   }

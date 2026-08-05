@@ -325,9 +325,14 @@ function asilOf(node: ModelNode): string | undefined {
 // contains a chain: ReferenceSubsetting(action) + ReferenceUsage(port).
 // Returns [actionName, portName] or null if the chain can't be resolved.
 
-// Returns [actionName, portName] for `action.port` endpoints,
-// or [paramName, null] for bare boundary-parameter names (activityInput1, etc.).
-function extractFlowEndpointPair(efm: ModelNode): [string, string | null] | null {
+// Returns [actionName, portName, actionQual?] where:
+//   • `performer.action.port` (3 segs) → [action, port, "performer.action"]  — the qualifier
+//     disambiguates two actions that share a name across `ref part`s (e.g. can.inhibitTx).
+//   • `action.port`          (2 segs) → [action, port]
+//   • bare param name        (1 seg)  → [param, null]  (boundary-parameter node)
+// The PORT is always the last segment and the ACTION the one before it, so deeper qualification
+// does not shift which segment is the port.
+function extractFlowEndpointPair(efm: ModelNode): [string, string | null, string?] | null {
   const names: string[] = [];
   function collect(n: ModelNode): void {
     if (
@@ -342,7 +347,12 @@ function extractFlowEndpointPair(efm: ModelNode): [string, string | null] | null
     }
   }
   for (const c of efm.children) collect(c);
-  if (names.length >= 2) return [names[0], names[1]];
+  if (names.length >= 3) {
+    const action = names[names.length - 2];
+    const port   = names[names.length - 1];
+    return [action, port, `${names[names.length - 3]}.${action}`];
+  }
+  if (names.length === 2) return [names[0], names[1]];
   if (names.length === 1) return [names[0], null];   // boundary parameter node
   return null;
 }
@@ -552,6 +562,8 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
             target:     tgt[0],
             targetPort: tgt[1],
             type:       'itemFlow',
+            ...(src[2] ? { sourceQual: src[2] } : {}),
+            ...(tgt[2] ? { targetQual: tgt[2] } : {}),
           });
         }
       }

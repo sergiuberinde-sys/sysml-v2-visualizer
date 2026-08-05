@@ -1055,18 +1055,21 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     // Endpoints with a null port refer to a boundary parameter node; non-null
     // ports refer to an action port handle.
 
-    const actionByName = new Map(actionUsages.map(a => [a.name, a]));
+    // Resolve to a qualified instance when the item flow endpoint targets a shared-name action.
+    const actionByKey = new Map(actionUsages.map(a => [keyOf(a), a]));
     const allVisibleIds = new Set([...actNodeIds, ...boundaryNodeIds]);
     const itemFlowEdges: Edge[] = itemFlows.flatMap((f, i) => {
+      const srcKey = endpointKey(f.source, f.sourceQual);
+      const tgtKey = endpointKey(f.target, f.targetQual);
       const srcId = f.sourcePort !== null
-        ? `oact-${behaviorName}-${f.source}`
+        ? `oact-${behaviorName}-${srcKey}`
         : `oparam-${behaviorName}-${f.source}`;
       const tgtId = f.targetPort !== null
-        ? `oact-${behaviorName}-${f.target}`
+        ? `oact-${behaviorName}-${tgtKey}`
         : `oparam-${behaviorName}-${f.target}`;
       if (!allVisibleIds.has(srcId) || !allVisibleIds.has(tgtId)) return [];
 
-      const srcAction  = f.sourcePort !== null ? actionByName.get(f.source) : undefined;
+      const srcAction  = f.sourcePort !== null ? actionByKey.get(srcKey) : undefined;
       const srcPortDef = srcAction?.ports?.find(p => p.name === f.sourcePort);
       const itemType   = srcPortDef?.itemType ?? f.sourcePort ?? f.targetPort ?? undefined;
       const srcHandle  = f.sourcePort !== null ? `out-${f.sourcePort}` : 'param-port';
