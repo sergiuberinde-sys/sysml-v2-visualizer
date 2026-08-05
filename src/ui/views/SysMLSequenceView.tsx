@@ -319,6 +319,119 @@ function processSeqNode(
   }
 }
 
+// ── First/then ordering (SysML v2 succession → causal message order) ───────────
+//
+// A sequence's `first A.evt then B.evt` lines are SuccessionAsUsage nodes whose two
+// EndFeatureMembership ends chain to `participant.event`. They state the temporal order
+// of the events on the lifelines. We turn them — plus each message's own send→receive
+// order — into an event DAG, rank every event by its longest causal path, and order the
+// messages by the rank of their SEND event, so the diagram follows the declared order of
+// events rather than the order the `message` lines happen to be written in.
+
+/** DFS for the `participant.event` (or bare `participant`) chain under a subtree. */
+function chainKeyUnder(
+  rootId: string,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+): string | null {
+  const queue = [rootId];
+  while (queue.length) {
+    const id = queue.shift()!;
+    const n = nodeById.get(id);
+    if (!n) continue;
+    if (n.type === 'Feature') {
+      const chains = (childrenOf.get(id) ?? [])
+        .map(c => nodeById.get(c))
+        .filter((c): c is GraphNode => c?.type === 'FeatureChaining' && c.label !== c.type);
+      if (chains.length >= 2) return `${chains[0].label}.${chains[1].label}`;
+      if (chains.length === 1) return chains[0].label;
+    }
+    for (const c of childrenOf.get(id) ?? []) queue.push(c);
+  }
+  return null;
+}
+
+/** The [earlierKey, laterKey] event pair of a SuccessionAsUsage (`first … then …`). */
+function successionEventPair(
+  succId: string,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+): [string, string] | null {
+  const ends = (childrenOf.get(succId) ?? [])
+    .map(id => nodeById.get(id))
+    .filter((n): n is GraphNode => n?.type === 'EndFeatureMembership');
+  if (ends.length < 2) return null;
+  const a = chainKeyUnder(ends[0].id, childrenOf, nodeById);
+  const b = chainKeyUnder(ends[1].id, childrenOf, nodeById);
+  return a && b ? [a, b] : null;
+}
+
+/** Longest-path depth of every node in a DAG, or null if the graph has a cycle. */
+function longestPathDepths(
+  edges: Array<[string, string]>,
+  nodes: Set<string>,
+): Map<string, number> | null {
+  const adj   = new Map<string, string[]>();
+  const indeg = new Map<string, number>();
+  for (const k of nodes) { adj.set(k, []); indeg.set(k, 0); }
+  for (const [a, b] of edges) {
+    if (!nodes.has(a) || !nodes.has(b) || a === b) continue;
+    adj.get(a)!.push(b);
+    indeg.set(b, (indeg.get(b) ?? 0) + 1);
+  }
+  const depth = new Map<string, number>();
+  const queue: string[] = [];
+  for (const k of nodes) if ((indeg.get(k) ?? 0) === 0) { queue.push(k); depth.set(k, 0); }
+  let processed = 0;
+  while (queue.length) {
+    const u = queue.shift()!;
+    processed++;
+    for (const v of adj.get(u) ?? []) {
+      depth.set(v, Math.max(depth.get(v) ?? 0, (depth.get(u) ?? 0) + 1));
+      indeg.set(v, indeg.get(v)! - 1);
+      if (indeg.get(v) === 0) queue.push(v);
+    }
+  }
+  return processed === nodes.size ? depth : null;   // incomplete ⇒ cycle
+}
+
+const endpointKey = (e: Endpoint | null): string | null =>
+  e ? (e.event ? `${e.participant}.${e.event}` : e.participant) : null;
+
+/**
+ * Reorder messages to follow the `first/then` event ordering. Returns the input
+ * UNCHANGED (so nothing regresses) when there are no successions, when ANY message sits
+ * inside a fragment (reordering could break alt/opt contiguity), or when the event graph
+ * has a cycle. Otherwise messages are sorted by the longest-path depth of their send
+ * event, ties broken by original (source-line) order.
+ */
+export function orderMessagesByFirstThen(
+  messages: ParsedMessage[],
+  successions: Array<[string, string]>,
+): ParsedMessage[] {
+  if (successions.length === 0) return messages;
+  if (messages.some(m => m.fragments && m.fragments.length > 0)) return messages;
+
+  const nodes = new Set<string>();
+  const edges: Array<[string, string]> = [];
+  for (const [a, b] of successions) { nodes.add(a); nodes.add(b); edges.push([a, b]); }
+  for (const m of messages) {
+    const f = endpointKey(m.from), t = endpointKey(m.to);
+    if (f) nodes.add(f);
+    if (t) nodes.add(t);
+    if (f && t) edges.push([f, t]);   // a message's send precedes its own receive
+  }
+  const depth = longestPathDepths(edges, nodes);
+  if (!depth) return messages;        // cycle ⇒ leave as authored
+
+  const origIndex = new Map(messages.map((m, i) => [m, i]));
+  const rankOf = (m: ParsedMessage) => depth.get(endpointKey(m.from) ?? '') ?? Number.MAX_SAFE_INTEGER;
+  return messages.slice().sort((a, b) => {
+    const d = rankOf(a) - rankOf(b);
+    return d !== 0 ? d : origIndex.get(a)! - origIndex.get(b)!;
+  });
+}
+
 // ── Parsing ────────────────────────────────────────────────────────────────────
 
 function parseSequenceDefs(
@@ -353,7 +466,18 @@ function parseSequenceDefs(
       if (SEQ_CHILD_TYPES.has(child.type)) processSeqNode(child, childrenOf, nodeById, [], messages);
     }
 
-    results.push({ node: n, participants, messages });
+    // Order the messages by the `first/then` event ordering when present (falls back
+    // to the source-line order collected above — see orderMessagesByFirstThen).
+    const successions: Array<[string, string]> = [];
+    for (const child of sorted) {
+      if (child.type === 'SuccessionAsUsage' || child.type === 'Succession') {
+        const pair = successionEventPair(child.id, childrenOf, nodeById);
+        if (pair) successions.push(pair);
+      }
+    }
+    const ordered = orderMessagesByFirstThen(messages, successions);
+
+    results.push({ node: n, participants, messages: ordered });
   }
 
   return results.sort((a, b) => (a.node.startLine ?? 0) - (b.node.startLine ?? 0));
