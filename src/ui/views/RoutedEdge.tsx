@@ -8,7 +8,9 @@ import { routeOrthogonal, pointsToPath, type Rect, type Side } from '../layout/e
 // containers and boundary params are not), and asks the router for a clear
 // poly-line between the two handles.
 
-const MARGIN = 10;                                        // clearance kept around each shape
+const MARGIN = 10;            // clearance kept around other shapes
+const ENDPOINT_INSET = 5;    // this edge's own shapes are protected too, but inset so the
+                             // handle stub (which starts on the border) still attaches cleanly
 const NON_OBSTACLE = new Set(['partContainer', 'boundaryParam']);
 
 function sideOf(pos?: Position): Side {
@@ -36,12 +38,15 @@ function RoutedEdgeInner({
     (s) => {
       const out: Rect[] = [];
       for (const [nid, n] of s.nodeLookup) {
-        if (nid === source || nid === target) continue;
         if (n.type && NON_OBSTACLE.has(n.type)) continue;
         const p = n.internals?.positionAbsolute ?? n.position;
         const w = n.measured?.width ?? 0, h = n.measured?.height ?? 0;
         if (!w || !h) continue;
-        out.push({ left: p.x - MARGIN, top: p.y - MARGIN, right: p.x + w + MARGIN, bottom: p.y + h + MARGIN });
+        // This edge's own endpoints are obstacles too — so the line can't cut back
+        // across the shape it attaches to — but inset, so the handle stub (which starts
+        // on the border) still attaches cleanly.
+        const m = (nid === source || nid === target) ? -ENDPOINT_INSET : MARGIN;
+        out.push({ left: p.x - m, top: p.y - m, right: p.x + w + m, bottom: p.y + h + m });
       }
       return out;
     },

@@ -45,6 +45,16 @@ function polyClear(pts: Pt[], obs: Rect[]): boolean {
   return true;
 }
 
+// How many obstacle hits does this poly-line have? (used to pick the least-bad
+// route when no candidate is fully clear).
+function hitCount(pts: Pt[], obs: Rect[]): number {
+  let n = 0;
+  for (let i = 0; i < pts.length - 1; i++)
+    for (const r of obs)
+      if (segHitsRect(pts[i], pts[i + 1], r)) n++;
+  return n;
+}
+
 // Merge overlapping 1-D intervals, then return the centres of the gaps between
 // them (plus one just outside each end) — the clear channels for routing.
 function channelCenters(intervals: Array<[number, number]>, pad: number): number[] {
@@ -109,11 +119,16 @@ export function routeOrthogonal(
   for (const cy of ys) candidates.push([p0, { x: p0.x, y: cy }, { x: p3.x, y: cy }, p3]);
 
   let best: Pt[] | null = null;
+  let fallback: Pt[] | null = null;
+  let fallbackHits = Infinity;
   for (const mid of candidates) {
     const full = [S, ...mid, T];
     if (polyClear(full, obstacles)) { best = full; break; }
+    const hits = hitCount(full, obstacles);
+    if (hits < fallbackHits) { fallbackHits = hits; fallback = full; }
   }
-  if (!best) best = [S, p0, { x: p3.x, y: p0.y }, p3, T];   // last-resort direct L
+  // No fully-clear route → take the one that crosses the fewest shapes.
+  if (!best) best = fallback ?? [S, p0, { x: p3.x, y: p0.y }, p3, T];
 
   const pts = simplify(best);
 
