@@ -158,6 +158,40 @@ function extractSuccessionEndpoints(node: ModelNode): string[] {
   return endpoints;
 }
 
+/**
+ * Like extractSuccessionEndpoints, but keeps the FULL qualifier chain per end
+ * (e.g. `can.inhibitTx` rather than just `inhibitTx`).  The qualifier is what
+ * distinguishes two identically-named actions that live under different
+ * `ref part`s, so the Actions view can route their edges to the right node.
+ * Returns one dot-joined string per end (source, target), aligned with
+ * extractSuccessionEndpoints' output.
+ */
+function extractSuccessionEndpointPaths(node: ModelNode): string[] {
+  function fullChain(n: ModelNode): string | null {
+    const segs: string[] = [];
+    function walk(m: ModelNode): void {
+      if (
+        (m.type === 'ReferenceSubsetting' || m.type === 'FeatureChaining') &&
+        m.name != null &&
+        m.name !== m.type
+      ) {
+        segs.push(m.name);
+        return;
+      }
+      for (const c of m.children) walk(c);
+    }
+    walk(n);
+    return segs.length > 0 ? segs.join('.') : null;
+  }
+
+  const paths: string[] = [];
+  for (const child of node.children) {
+    const chain = fullChain(child);
+    if (chain !== null) paths.push(chain);
+  }
+  return paths;
+}
+
 // ── Implicit succession resolver ──────────────────────────────────────────────
 //
 // `then action X` emits a SuccessionAsUsage whose EndFeatureMembership children
@@ -355,13 +389,14 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
     conditionalId?: string,
     branch?: 'then' | 'else' | 'loop',
     ownerCtx: OwnerCtx | null = null,
+    performer: string | null = null,
   ): void {
 
     // ── Structural definition types (record as owner context for contained ActionDefs) ──
     if (STRUCTURAL_DEF_TYPES.has(node.type)) {
       const ctx: OwnerCtx = { name: node.name ?? node.type, type: node.type };
       for (let i = 0; i < node.children.length; i++) {
-        visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ctx);
+        visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ctx, performer);
       }
       return;
     }
@@ -383,7 +418,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
           const [source, target] = implicitDef.get(i)!;
           flows.push({ id: `flow:${path}.${i}.0`, source, target, type: 'succession' });
         } else {
-          visit(node.children[i], `${path}.${i}`, path, undefined, undefined, ownerCtx);
+          visit(node.children[i], `${path}.${i}`, path, undefined, undefined, ownerCtx, performer);
         }
       }
       return;
@@ -395,7 +430,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       // These are transparent — recurse into their children without creating an action entry.
       if (node.name === null && node.direction === 'in') {
         for (let i = 0; i < node.children.length; i++) {
-          visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx);
+          visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx, performer);
         }
         return;
       }
@@ -406,6 +441,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       if (ownerDefId !== null) action.ownerId = ownerDefId;
       if (conditionalId)       action.conditionalId = conditionalId;
       if (branch)              action.branch = branch;
+      if (performer)           action.performer = performer;
       // Structural owner context (e.g. PartDefinition directly containing this ActionUsage).
       if (ownerCtx && ownerDefId === null) {
         action.owningDefName = ownerCtx.name;
@@ -434,7 +470,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
             const [source, target] = implicitUsage.get(i)!;
             flows.push({ id: `flow:${path}.${i}.0`, source, target, type: 'succession' });
           } else {
-            visit(node.children[i], `${path}.${i}`, path, undefined, undefined, null);
+            visit(node.children[i], `${path}.${i}`, path, undefined, undefined, null, performer);
           }
         }
       }
@@ -444,9 +480,14 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
     // ── SuccessionAsUsage / Succession ──────────────────────────────────────
     if (SUCCESSION_TYPES.has(node.type)) {
       const refs   = extractSuccessionEndpoints(node);
+      const paths  = extractSuccessionEndpointPaths(node);
       const flowId = `flow:${path}`;
       if (refs.length >= 2) {
-        flows.push({ id: flowId, source: refs[0], target: refs[1], type: 'succession' });
+        flows.push({
+          id: flowId, source: refs[0], target: refs[1], type: 'succession',
+          ...(paths[0] && paths[0] !== refs[0] ? { sourceQual: paths[0] } : {}),
+          ...(paths[1] && paths[1] !== refs[1] ? { targetQual: paths[1] } : {}),
+        });
       } else {
         flows.push({
           id: flowId,
@@ -485,10 +526,12 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       const succession       = owningMembership?.children.find(c => SUCCESSION_TYPES.has(c.type));
       const targetRefs       = succession ? extractSuccessionEndpoints(succession) : [];
       const targetName       = targetRefs[0] ?? null;
+      const targetPaths      = succession ? extractSuccessionEndpointPaths(succession) : [];
+      const targetQual       = targetPaths[0] && targetPaths[0] !== targetName ? targetPaths[0] : undefined;
 
       const flowId = `flow:${path}`;
       if (sourceName && targetName) {
-        flows.push({ id: flowId, source: sourceName, target: targetName, type: 'transition' as const, ...(guard !== undefined ? { guard } : {}) });
+        flows.push({ id: flowId, source: sourceName, target: targetName, type: 'transition' as const, ...(guard !== undefined ? { guard } : {}), ...(targetQual ? { targetQual } : {}) });
       } else {
         flows.push({ id: flowId, sourceName: sourceName ?? '', targetName: targetName ?? '', type: 'transition' as const, ...(guard !== undefined ? { guard } : {}), unresolved: true as const });
       }
@@ -528,7 +571,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       if (thenContainer) {
         const before = actions.length;
         for (let i = 0; i < thenContainer.children.length; i++) {
-          visit(thenContainer.children[i], `${path}.then.${i}`, ownerDefId, path, 'then', ownerCtx);
+          visit(thenContainer.children[i], `${path}.then.${i}`, ownerDefId, path, 'then', ownerCtx, performer);
         }
         for (let j = before; j < actions.length; j++) thenIds.push(actions[j].id);
       }
@@ -538,7 +581,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       if (elseContainer) {
         const before = actions.length;
         for (let i = 0; i < elseContainer.children.length; i++) {
-          visit(elseContainer.children[i], `${path}.else.${i}`, ownerDefId, path, 'else', ownerCtx);
+          visit(elseContainer.children[i], `${path}.else.${i}`, ownerDefId, path, 'else', ownerCtx, performer);
         }
         for (let j = before; j < actions.length; j++) elseIds.push(actions[j].id);
       }
@@ -572,7 +615,7 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
       if (bodyContainer) {
         const before = actions.length;
         for (let i = 0; i < bodyContainer.children.length; i++) {
-          visit(bodyContainer.children[i], `${path}.loop.${i}`, ownerDefId, path, 'loop', ownerCtx);
+          visit(bodyContainer.children[i], `${path}.loop.${i}`, ownerDefId, path, 'loop', ownerCtx, performer);
         }
         for (let j = before; j < actions.length; j++) loopIds.push(actions[j].id);
       }
@@ -605,8 +648,13 @@ export function buildBehavior(roots: ModelNode[], contextRoots: ModelNode[][] = 
     }
 
     // ── Transparent wrapper (OwningMembership, FeatureMembership, ParameterMembership, etc.) ──
+    // A `ref part` (PartUsage/ReferenceUsage) becomes the performer for the actions nested
+    // beneath it, so a `perform action` inside it is tagged with that part (its swimlane).
+    const named = node.name && node.name !== node.type ? node.name : null;
+    const childPerformer =
+      (node.type === 'PartUsage' || node.type === 'ReferenceUsage') && named ? named : performer;
     for (let i = 0; i < node.children.length; i++) {
-      visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx);
+      visit(node.children[i], `${path}.${i}`, ownerDefId, conditionalId, branch, ownerCtx, childPerformer);
     }
   }
 

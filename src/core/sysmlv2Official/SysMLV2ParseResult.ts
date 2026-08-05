@@ -30,6 +30,9 @@ export interface BehaviorAction {
   owningDefType?: string;
   /** For ActionUsage/PerformActionUsage: resolved type name from FeatureTyping (e.g. "ReadSensor") */
   actionType?: string;
+  /** Enclosing `ref part` (performer/swimlane) for a `perform action`, if any — disambiguates
+   *  two actions sharing a name under different parts (e.g. can.inhibitTx vs flexRay.inhibitTx). */
+  performer?: string;
   /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
   asil?: string;
   /** In/out item ports (parameters) on this action */
@@ -37,9 +40,11 @@ export interface BehaviorAction {
 }
 
 export type BehaviorFlow =
-  | { id: string; source: string; target: string; type: 'succession' }
+  // `sourceQual` / `targetQual` carry the full qualified endpoint (e.g. `can.inhibitTx`) when the
+  // reference was qualified — used to route edges to the right node when a name is shared across lanes.
+  | { id: string; source: string; target: string; type: 'succession'; sourceQual?: string; targetQual?: string }
   | { id: string; sourceName: string; targetName: string; type: 'succession'; unresolved: true }
-  | { id: string; source: string; target: string; type: 'transition'; guard?: string }
+  | { id: string; source: string; target: string; type: 'transition'; guard?: string; sourceQual?: string; targetQual?: string }
   | { id: string; sourceName: string; targetName: string; type: 'transition'; guard?: string; unresolved: true }
   | { id: string; source: string; sourcePort: string | null; target: string; targetPort: string | null; type: 'itemFlow' };
 

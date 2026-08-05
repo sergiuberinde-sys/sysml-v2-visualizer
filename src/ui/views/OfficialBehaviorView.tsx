@@ -18,7 +18,7 @@ import {
   type Node, type Edge, type NodeChange,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import type { BehaviorData, ActionPort } from '../../core/sysmlv2Official';
+import type { BehaviorData, BehaviorAction, ActionPort } from '../../core/sysmlv2Official';
 import type { SelectionState } from '../../app/selection';
 import { applyBehaviorLayout } from '../layout/graphLayout';
 import { FitPanel } from '../layout/FitPanel';
@@ -806,6 +806,24 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       a => (a.type === 'ActionUsage' || a.type === 'PerformActionUsage' || CTRL_FLOW_TYPES.has(a.type)) && a.ownerId === def.id,
     );
 
+    // ── Duplicate-name disambiguation ───────────────────────────────────────────
+    // Two `perform action`s can share a name under different `ref part`s (e.g.
+    // `can.inhibitTx` and `flexRay.inhibitTx`), which are distinct nodes in distinct
+    // swimlanes. Node identity is normally the bare name; when a name is shared we
+    // qualify it with the performer (`performer.name`) so the instances stay separate
+    // and each flow reaches the right one via its qualified endpoint. Unique names are
+    // untouched, so all existing single-instance behaviors are unaffected.
+    const nameCounts = new Map<string, number>();
+    for (const a of actionUsages) nameCounts.set(a.name, (nameCounts.get(a.name) ?? 0) + 1);
+    const isAmbiguous = (name: string) => (nameCounts.get(name) ?? 0) > 1;
+    const keyOf = (a: BehaviorAction): string =>
+      isAmbiguous(a.name) && a.performer ? `${a.performer}.${a.name}` : a.name;
+    // Every qualified key that actually names a node — an endpoint may only resolve to one of these.
+    const qualifiedKeys = new Set(actionUsages.map(keyOf).filter(k => k.includes('.')));
+    // Resolve a flow endpoint (bare name + optional qualified form) to a node key.
+    const endpointKey = (name: string, qual?: string): string =>
+      qual && qualifiedKeys.has(qual) ? qual : name;
+
     // Collect conditionals owned by this definition.
     const ownedConditionals = (behavior.conditionals ?? []).filter(
       c => c.ownerId === def.id,
@@ -852,29 +870,32 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       return { rfNodes: [], rfEdges: [] };
     }
 
-    // Outgoing targets per action — used for branch badge and Inspector.
+    // Outgoing targets per action (keyed by node key) — used for branch badge and Inspector.
     const outgoing = new Map<string, string[]>();
     for (const f of resolvedFlows) {
-      if (!outgoing.has(f.source)) outgoing.set(f.source, []);
-      outgoing.get(f.source)!.push(f.target);
+      const srcKey = endpointKey(f.source, f.sourceQual);
+      const tgtKey = endpointKey(f.target, f.targetQual);
+      if (!outgoing.has(srcKey)) outgoing.set(srcKey, []);
+      outgoing.get(srcKey)!.push(tgtKey);
     }
 
     // ── Node dimension helpers ─────────────────────────────────────────────────
 
     const nodeDims = new Map<string, { w: number; h: number }>();
     for (const a of actionUsages) {
-      const targets = outgoing.get(a.name) ?? [];
+      const key     = keyOf(a);
+      const targets = outgoing.get(key) ?? [];
       if (FORK_JOIN_TYPES.has(a.type)) {
         const kind     = a.type === 'ForkNode' ? 'fork' : 'join';
         const labelLen = `«${kind}» ${a.name}`.length;
-        nodeDims.set(a.name, { w: Math.max(FORK_JOIN_MIN_W, labelLen * 5.5 + 16), h: FORK_JOIN_NODE_H });
+        nodeDims.set(key, { w: Math.max(FORK_JOIN_MIN_W, labelLen * 5.5 + 16), h: FORK_JOIN_NODE_H });
       } else if (DECIDE_MERGE_TYPES.has(a.type)) {
-        nodeDims.set(a.name, { w: DIAMOND_NODE_W, h: DIAMOND_NODE_H });
+        nodeDims.set(key, { w: DIAMOND_NODE_W, h: DIAMOND_NODE_H });
       } else {
         const isBranch = targets.length > 1;
         const inPorts  = (a.ports ?? []).filter(p => p.direction === 'in');
         const outPorts = (a.ports ?? []).filter(p => p.direction === 'out');
-        nodeDims.set(a.name, behaviorNodeDims(a.name, a.actionType, isBranch, '«action»', inPorts, outPorts, !!a.asil));
+        nodeDims.set(key, behaviorNodeDims(a.name, a.actionType, isBranch, '«action»', inPorts, outPorts, !!a.asil));
       }
     }
     for (const c of ownedConditionals) {
@@ -887,10 +908,13 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     const DUMMY_POS = { x: 0, y: 0 };
 
     const actNodes: Node[] = actionUsages.map(a => {
-      const nodeId    = `oact-${behaviorName}-${a.name}`;
-      const targets   = outgoing.get(a.name) ?? [];
-      const dims      = nodeDims.get(a.name) ?? { w: NODE_W, h: NODE_H };
-      const allocPart = actionAllocMap.get(a.name);
+      const key       = keyOf(a);
+      const nodeId    = `oact-${behaviorName}-${key}`;
+      const targets   = outgoing.get(key) ?? [];
+      const dims      = nodeDims.get(key) ?? { w: NODE_W, h: NODE_H };
+      // A qualified (disambiguated) node lives in its performer's lane directly; a bare node
+      // uses the name→lane allocation map as before.
+      const allocPart = key === a.name ? actionAllocMap.get(a.name) : a.performer;
       const sel: SelectionState = {
         id:   nodeId,
         type: 'actionInst',
@@ -997,9 +1021,11 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     // ── Succession / transition edges ──────────────────────────────────────────
 
     const flowEdges: Edge[] = resolvedFlows.map((f, i) => {
-      const srcId     = `oact-${behaviorName}-${f.source}`;
-      const tgtId     = `oact-${behaviorName}-${f.target}`;
-      const srcBranch = (outgoing.get(f.source)?.length ?? 0) > 1;
+      const srcKey    = endpointKey(f.source, f.sourceQual);
+      const tgtKey    = endpointKey(f.target, f.targetQual);
+      const srcId     = `oact-${behaviorName}-${srcKey}`;
+      const tgtId     = `oact-${behaviorName}-${tgtKey}`;
+      const srcBranch = (outgoing.get(srcKey)?.length ?? 0) > 1;
       const isGuarded = f.type === 'transition' && 'guard' in f && f.guard !== undefined;
       const guardText = isGuarded ? (f as { guard: string }).guard : undefined;
       const isNegated = guardText?.startsWith('not ') ?? false;
