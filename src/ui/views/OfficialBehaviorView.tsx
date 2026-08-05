@@ -21,6 +21,7 @@ import '@xyflow/react/dist/style.css';
 import type { BehaviorData, BehaviorAction, ActionPort } from '../../core/sysmlv2Official';
 import type { SelectionState } from '../../app/selection';
 import { applyBehaviorLayout } from '../layout/graphLayout';
+import { RoutedEdge } from './RoutedEdge';
 import { FitPanel } from '../layout/FitPanel';
 import { fitNodeWidth, estimateWrapLines, type TextRow } from '../layout/nodeSize';
 import { AsilBadge } from '../layout/AsilBadge';
@@ -462,6 +463,9 @@ const ALL_NODE_TYPES = {
   forkJoinBar:        ForkJoinBarNode,
   decideMergeDiamond: DecideMergeDiamondNode,
 } as const;
+
+// Every behavior edge routes around the action shapes (see RoutedEdge).
+const ALL_EDGE_TYPES = { routed: RoutedEdge } as const;
 
 // ── Per-node dimension helper ─────────────────────────────────────────────────
 
@@ -1040,7 +1044,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         target:       tgtId,
         sourceHandle: 'ctrl-out',
         targetHandle: 'ctrl-in',
-        type:         'smoothstep',
+        type:         'routed',
         ...(guardText !== undefined ? {
           label:        `[${guardText}]`,
           labelStyle:   { fill: guardColor, fontSize: 10, fontWeight: 600, fontFamily: 'monospace' },
@@ -1055,8 +1059,6 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
     // Endpoints with a null port refer to a boundary parameter node; non-null
     // ports refer to an action port handle.
 
-    // Resolve to a qualified instance when the item flow endpoint targets a shared-name action.
-    const actionByKey = new Map(actionUsages.map(a => [keyOf(a), a]));
     const allVisibleIds = new Set([...actNodeIds, ...boundaryNodeIds]);
     const itemFlowEdges: Edge[] = itemFlows.flatMap((f, i) => {
       const srcKey = endpointKey(f.source, f.sourceQual);
@@ -1069,9 +1071,8 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         : `oparam-${behaviorName}-${f.target}`;
       if (!allVisibleIds.has(srcId) || !allVisibleIds.has(tgtId)) return [];
 
-      const srcAction  = f.sourcePort !== null ? actionByKey.get(srcKey) : undefined;
-      const srcPortDef = srcAction?.ports?.find(p => p.name === f.sourcePort);
-      const itemType   = srcPortDef?.itemType ?? f.sourcePort ?? f.targetPort ?? undefined;
+      // Label the flow with the SIGNAL name (the port carrying the data), not its item type.
+      const signalName = f.sourcePort ?? f.targetPort ?? undefined;
       const srcHandle  = f.sourcePort !== null ? `out-${f.sourcePort}` : 'param-port';
       const tgtHandle  = f.targetPort !== null ? `in-${f.targetPort}`  : 'param-port';
 
@@ -1081,9 +1082,9 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         target:       tgtId,
         sourceHandle: srcHandle,
         targetHandle: tgtHandle,
-        type:         'smoothstep',
-        ...(itemType !== undefined ? {
-          label:        itemType,
+        type:         'routed',
+        ...(signalName !== undefined ? {
+          label:        signalName,
           labelStyle:   { fill: ITEM_FLOW_COLOR, fontSize: 8, fontWeight: 500, fontFamily: 'monospace' },
           labelBgStyle: { fill: '#041e26', fillOpacity: 0.9, rx: 3, ry: 3 },
         } : {}),
@@ -1139,7 +1140,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
         source:       `ocond-${behaviorName}-${e.condId}`,
         target:       `oact-${behaviorName}-${e.targetName}`,
         targetHandle: 'ctrl-in',
-        type:         'smoothstep',
+        type:         'routed',
         label:        e.label,
         labelStyle:   { fill: e.color, fontSize: 10, fontWeight: 600, fontFamily: 'monospace' },
         labelBgStyle: { fill: '#0a0f0a', fillOpacity: 0.9, rx: 3, ry: 3 },
@@ -1432,6 +1433,7 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
           nodes={styledNodes}
           edges={displayEdges}
           nodeTypes={ALL_NODE_TYPES}
+          edgeTypes={ALL_EDGE_TYPES}
           onNodeClick={handleNodeClick}
           onNodesChange={handleNodesChange}
           onNodeDragStop={handleNodeDragStop}
