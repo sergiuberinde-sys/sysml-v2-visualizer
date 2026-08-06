@@ -7,7 +7,7 @@
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "${workspaceFolder}/demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full"
+        "${workspaceFolder}/demo-projects/SafeFaultManagement_FarHwAndSwEpc2Behavior_MultiFile"
       ],
       "outFiles": ["${workspaceFolder}/out-extension/**/*.js"],
       "preLaunchTask": "npm: dev:launch"
