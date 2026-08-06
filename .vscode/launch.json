@@ -10,7 +10,7 @@
         "${workspaceFolder}/demo-projects/AcpdCdd_SysMLv2_Integrated_Project_Full"
       ],
       "outFiles": ["${workspaceFolder}/out-extension/**/*.js"],
-      "preLaunchTask": "npm: compile:extension"
+      "preLaunchTask": "npm: dev:launch"
     },
     {
       "name": "Run Extension (empty window)",
@@ -18,7 +18,7 @@
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
       "outFiles": ["${workspaceFolder}/out-extension/**/*.js"],
-      "preLaunchTask": "npm: compile:extension"
+      "preLaunchTask": "npm: dev:launch"
     }
   ]
 }

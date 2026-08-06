@@ -77,6 +77,7 @@
     "test": "vitest run && npm --prefix parser-service test",
     "test:watch": "vitest",
     "compile:extension": "tsc -p tsconfig.extension.json && node scripts/write-extension-pkg.cjs",
+    "dev:launch": "npm run build && npm run compile:extension",
     "watch:extension": "tsc -p tsconfig.extension.json --watch",
     "package:extension": "vsce package",
     "parser:dev": "npm --prefix parser-service install && npm --prefix parser-service run dev",
