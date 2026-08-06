@@ -256,6 +256,7 @@ interface SequenceDef {
   node:         GraphNode;
   participants: GraphNode[];
   messages:     ParsedMessage[];
+  entries:      Endpoint[];   // root event occurrences that start the interaction (found messages)
 }
 
 // ── Flow resolver (shared helper) ──────────────────────────────────────────────
@@ -432,6 +433,54 @@ export function orderMessagesByFirstThen(
   });
 }
 
+/** Split an endpoint key (`participant.event`) back into an Endpoint. */
+function keyToEndpoint(key: string): Endpoint {
+  const dot = key.indexOf('.');
+  return dot < 0
+    ? { participant: key, event: '' }
+    : { participant: key.slice(0, dot), event: key.slice(dot + 1) };
+}
+
+/**
+ * The interaction's ENTRY events — root event occurrences that start the sequence:
+ * an event with no `first/then` predecessor that no message arrives at, yet which leads
+ * somewhere (e.g. `smu.alarmAccepted`). These are the SysML/UML "found messages" — a
+ * stimulus whose sender is outside the interaction. Returns [] when there are no
+ * successions, so sequences without a first/then ordering are left exactly as-is.
+ */
+export function findEntryEvents(
+  messages: ParsedMessage[],
+  successions: Array<[string, string]>,
+): Endpoint[] {
+  if (successions.length === 0) return [];
+  const epOf   = new Map<string, Endpoint>();
+  const indeg  = new Map<string, number>();
+  const outdeg = new Map<string, number>();
+  const touch = (k: string) => { if (!indeg.has(k)) { indeg.set(k, 0); outdeg.set(k, 0); } };
+  const edge  = (a: string, b: string) => {
+    touch(a); touch(b);
+    if (a === b) return;
+    outdeg.set(a, outdeg.get(a)! + 1);
+    indeg.set(b, indeg.get(b)! + 1);
+  };
+  const reg = (ep: Endpoint | null): string | null => {
+    const k = endpointKey(ep);
+    if (k) { touch(k); if (!epOf.has(k)) epOf.set(k, ep!); }
+    return k;
+  };
+  for (const m of messages) { const f = reg(m.from), t = reg(m.to); if (f && t) edge(f, t); }
+  for (const [a, b] of successions) {
+    if (!epOf.has(a)) epOf.set(a, keyToEndpoint(a));
+    if (!epOf.has(b)) epOf.set(b, keyToEndpoint(b));
+    edge(a, b);
+  }
+  const entries: Endpoint[] = [];
+  for (const [k, ep] of epOf) {
+    if ((indeg.get(k) ?? 0) === 0 && (outdeg.get(k) ?? 0) > 0 && ep.event) entries.push(ep);
+  }
+  return entries;
+}
+
 // ── Parsing ────────────────────────────────────────────────────────────────────
 
 function parseSequenceDefs(
@@ -476,8 +525,9 @@ function parseSequenceDefs(
       }
     }
     const ordered = orderMessagesByFirstThen(messages, successions);
+    const entries = findEntryEvents(messages, successions);
 
-    results.push({ node: n, participants, messages: ordered });
+    results.push({ node: n, participants, messages: ordered, entries });
   }
 
   return results.sort((a, b) => (a.node.startLine ?? 0) - (b.node.startLine ?? 0));
@@ -491,10 +541,10 @@ interface MessageLayout {
   totalH:    number;
 }
 
-function computeMessageLayout(messages: ParsedMessage[]): MessageLayout {
+function computeMessageLayout(messages: ParsedMessage[], startY: number = MSG_START_Y): MessageLayout {
   const msgY: number[]              = new Array(messages.length);
   const altBlocks: AltBlockLayout[] = [];
-  let curY = MSG_START_Y;
+  let curY = startY;
 
   // Stack of currently-open fragments (outermost at index 0), tracked as we walk messages in
   // order. A message's `fragments` path tells us which fragments must be open around it: we close
@@ -626,9 +676,12 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
   }
 
   const activeSeq                    = sequenceDefs.find(s => s.node.id === selectedSeqId) ?? sequenceDefs[0];
-  const { participants, messages }    = activeSeq;
+  const { participants, messages, entries } = activeSeq;
   const { centers, widths, totalW }   = computeLayout(participants);
-  const { msgY, altBlocks, totalH }   = computeMessageLayout(messages);
+  // Reserve a band above the first message for the found-message entry markers.
+  const entryBandH                    = entries.length > 0 ? 30 : 0;
+  const entryY                        = MSG_START_Y + entryBandH - 18;
+  const { msgY, altBlocks, totalH }   = computeMessageLayout(messages, MSG_START_Y + entryBandH);
   const partIdx                       = new Map(participants.map((p, i) => [p.label, i]));
   const selGraphId                    = selection?.extra?.graphId;
 
@@ -797,6 +850,33 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
                 strokeWidth={1} rx={2}
                 style={{ pointerEvents: 'none' }}
               />
+            );
+          })}
+
+          {/* Found-message entry markers — a filled ball + arrow into the lifeline, marking a
+              root event that starts the interaction from outside (UML/SysML found message). */}
+          {entries.map((ep, ei) => {
+            const li = partIdx.get(ep.participant);
+            if (li === undefined) return null;
+            const cx = centers[li];
+            const r = 4;
+            const ballX = cx - 30;
+            const tipX  = cx;
+            return (
+              <g key={`entry-${ei}`} style={{ pointerEvents: 'none' }}>
+                <title>{`found message — interaction entry: ${ep.participant}.${ep.event}`}</title>
+                <text x={ballX} y={entryY - 7} textAnchor="start"
+                  fill="#7dd3fc" fontSize={9} fontStyle="italic">
+                  {ep.event}
+                </text>
+                <circle cx={ballX} cy={entryY} r={r} fill="#64748b" />
+                <line x1={ballX + r} y1={entryY} x2={tipX - ARROW_SIZE} y2={entryY}
+                  stroke="#64748b" strokeWidth={1.5} />
+                <polygon
+                  points={`${tipX},${entryY} ${tipX - ARROW_SIZE},${entryY - ARROW_SIZE / 2} ${tipX - ARROW_SIZE},${entryY + ARROW_SIZE / 2}`}
+                  fill="#64748b"
+                />
+              </g>
             );
           })}
 

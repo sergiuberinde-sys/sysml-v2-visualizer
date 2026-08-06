@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { orderMessagesByFirstThen } from './SysMLSequenceView';
+import { orderMessagesByFirstThen, findEntryEvents } from './SysMLSequenceView';
 
 type Msg = Parameters<typeof orderMessagesByFirstThen>[0][number];
 
@@ -42,5 +42,33 @@ describe('orderMessagesByFirstThen', () => {
     const ms = [msg('m1', 'x.a', 'y.b'), msg('m2', 'y.b', 'x.a')];
     const succ: Array<[string, string]> = [['x.a', 'y.b'], ['y.b', 'x.a']];
     expect(orderMessagesByFirstThen(ms, succ).map(m => m.label)).toEqual(['m1', 'm2']);
+  });
+});
+
+describe('findEntryEvents', () => {
+  it('finds the root event that starts the interaction', () => {
+    // smu.alarm → smu.send (first/then); smu.send → pes.recv (message).
+    const ms = [msg('m1', 'smu.send', 'pes.recv')];
+    const succ: Array<[string, string]> = [['smu.alarm', 'smu.send']];
+    expect(findEntryEvents(ms, succ)).toEqual([{ participant: 'smu', event: 'alarm' }]);
+  });
+
+  it('does not treat message-receive events or events with predecessors as entries', () => {
+    const ms = [msg('m1', 'smu.send', 'pes.recv')];
+    const succ: Array<[string, string]> = [['smu.alarm', 'smu.send']];
+    const keys = findEntryEvents(ms, succ).map(e => `${e.participant}.${e.event}`);
+    expect(keys).not.toContain('smu.send'); // has a first/then predecessor
+    expect(keys).not.toContain('pes.recv'); // receives a message
+  });
+
+  it('returns nothing when there are no successions', () => {
+    expect(findEntryEvents([msg('m', 'a.x', 'b.y')], [])).toEqual([]);
+  });
+
+  it('ignores direct-form lifelines that carry no event name', () => {
+    // Participant-only endpoints (event === '') must never become entry markers.
+    const ms = [msg('m', 'a', 'b')];
+    const succ: Array<[string, string]> = [['x', 'y']];
+    expect(findEntryEvents(ms, succ)).toEqual([]);
   });
 });
