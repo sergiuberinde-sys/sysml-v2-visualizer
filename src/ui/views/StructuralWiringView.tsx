@@ -1994,10 +1994,26 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     // the embedded boundary-port node on the part's inner frame, so the wire lands there.
     for (const [partId, emb] of expandedInternals) {
       const prefix = `wpart-${partId}::`;
+      // Where each port lives INSIDE this expanded frame — used for DEEP delegation endpoints: a
+      // port 2+ levels down that a parent scope wires DIRECTLY (skipping this part's own boundary,
+      // e.g. `uC1.farSgmii.sgmiiTxToHvmBridge`). Such a port is not a boundary port of this part, so
+      // it has no embedded wsport node; instead its square lives on the sub-part that owns it. Attach
+      // the wire there rather than to the now-frameless container (which has no handle for it → the
+      // wire would vanish). Collapsed sub-parts expose their ports here; expanded ones have none.
+      const innerNodeForPort = new Map<string, string>();
+      for (const cn of emb.childNodes) {
+        for (const p of ((cn.data as Record<string, unknown>)?.['ports'] as PortDisplay[] | undefined) ?? []) {
+          if (!innerNodeForPort.has(p.id)) innerNodeForPort.set(p.id, cn.id);
+          const c = canonicalPortId.get(p.id);
+          if (c && !innerNodeForPort.has(c)) innerNodeForPort.set(c, cn.id);
+        }
+      }
       for (const [pid, rf] of [...portToRfId]) {
         if (rf !== partRfId(partId)) continue;
         const canon = canonicalPortId.get(epPortOf(pid)) ?? epPortOf(pid);
-        if (emb.boundaryPortIds.has(canon)) portToRfId.set(pid, `${prefix}wsport-${canon}`);
+        if (emb.boundaryPortIds.has(canon)) { portToRfId.set(pid, `${prefix}wsport-${canon}`); continue; }
+        const inner = innerNodeForPort.get(canon) ?? innerNodeForPort.get(epPortOf(pid));
+        if (inner) portToRfId.set(pid, inner);
       }
     }
 
@@ -2412,6 +2428,15 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       : validElkPorts.has(`${nodeId}::${portId}`) ? `${nodeId}::${portId}`
       : nodeId; // port isn't a real ELK port on this node (e.g. delegated port on an expanded frame) → node-level
     const edgeToElk = (e: Edge): WiringElkEdge | null => {
+      // Both endpoints must be DIRECT children of the edge's frame for ELK to route it there.
+      // A deep-delegation wire (a port promoted into an expanded sub-frame and wired out to an
+      // ANCESTOR boundary, e.g. an expanded uC1's inner farSgmii port → the DrivingSafetyDomain
+      // boundary) crosses frame levels; ELK's per-container layout can't represent that and throws
+      // "Referenced shape does not exist". Skip it here so it channel-routes (following its two
+      // handles) while the rest of the scope still gets ELK's obstacle-avoiding routing.
+      const parentFrame = (id: string): string | null => { const c = frameChain(id); return c.length ? c[c.length - 1] : null; };
+      const f = commonFrame(e.source, e.target);
+      if (parentFrame(e.source) !== f || parentFrame(e.target) !== f) return null;
       const d  = e.data as Record<string, unknown> | undefined;
       const sp = elkPortFor(e.source, d?.['srcPortId']);
       const tp = elkPortFor(e.target, d?.['tgtPortId']);
