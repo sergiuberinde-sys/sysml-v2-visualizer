@@ -2098,7 +2098,16 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
         const tgtConsumer = isTgtPort ? consumerEnd(tgtCanon, tgtNode) : null;
         // markerEnd sits at the target; swap so the head lands on the consumer end and
         // stays off a known producer end.
+        //
+        // Exception — a leaf connector's OWN pass-through (both endpoints are ports of the SAME
+        // rendered box, srcRf === tgtRf, e.g. `flow from farMacTxIn to sgmiiTxToHvmBridge` inside
+        // FarSgmiiCommunicationHw): this is a directional FlowUsage whose source→target already
+        // states the wiring, and the scope-relative consumer heuristic doesn't apply to a block's
+        // own boundary ports (they aren't in scopePortIdSet), which otherwise flipped an in→out
+        // pass-through backwards. Trust the declared order here.
+        const sameBoxFlow = srcRf === tgtRf;
         const needsSwap =
+          sameBoxFlow           ? false :   // leaf pass-through → keep model's from→to
           srcConsumer === true  ? true  :   // source consumes → head at source
           tgtConsumer === true  ? false :   // target consumes → head at target (default)
           tgtConsumer === false ? true  :   // target produces, source unknown → head at source
