@@ -310,6 +310,12 @@ export async function layoutWiringElk(
   parts: WiringElkNode[],
   boundaryPorts: WiringElkPort[],
   edges: WiringElkEdge[],
+  // Cross-frame delegation wires (a port promoted into an expanded sub-frame, wired out to an
+  // ANCESTOR boundary): ELK's per-container layout can't represent an edge whose endpoints live
+  // in different frames (it throws "Referenced shape does not exist"), so these are NOT handed to
+  // ELK. They still get obstacle-avoiding routing: the un-routed→straight and detour passes below
+  // treat them like any dropped route and bend them around the boxes they'd otherwise cut through.
+  detourEdges: WiringElkEdge[] = [],
 ): Promise<WiringElkResult> {
   const nodePos     = new Map<string, { x: number; y: number }>();
   const nodeSize    = new Map<string, { w: number; h: number }>();
@@ -521,7 +527,7 @@ export async function layoutWiringElk(
     // and can drop long routes entirely (→ straight channel fallback). Detect any edge whose path
     // crosses a box that is neither its endpoint nor a container it runs inside, and re-route it
     // as an orthogonal detour over/under that box. All maths in absolute coords.
-    const CLEAR = 22;
+    const CLEAR = 40;
     // Absolute position of a node (accumulate parent offsets via the id's `::` chain) and of a
     // port (leaf part port → node edge + local Y; frame/boundary port → container edge + Y).
     const absCache = new Map<string, { x: number; y: number }>();
@@ -546,7 +552,7 @@ export async function layoutWiringElk(
     };
     const allRects = [...nodePos.keys()].map(id => {
       const p = absNodePos(id); const s = nodeSize.get(id) ?? { w: 0, h: 0 };
-      return { x: p.x, y: p.y, w: s.w, h: s.h };
+      return { id, x: p.x, y: p.y, w: s.w, h: s.h };
     });
     const onRect = (pt: { x: number; y: number }, r: { x: number; y: number; w: number; h: number }, m = 6) =>
       pt.x >= r.x - m && pt.x <= r.x + r.w + m && pt.y >= r.y - m && pt.y <= r.y + r.h + m;
@@ -561,40 +567,130 @@ export async function layoutWiringElk(
     // every route point sits within R (small tolerance).
     const routeInside = (pts: { x: number; y: number }[], r: { x: number; y: number; w: number; h: number }) =>
       pts.every(p => p.x >= r.x - 8 && p.x <= r.x + r.w + 8 && p.y >= r.y - 8 && p.y <= r.y + r.h + 8);
-    const obstaclesFor = (pts: { x: number; y: number }[]) => {
+    // Boxes a route crosses that aren't its own endpoints (default, geometry-based) or a frame it
+    // runs inside. `onRect` excludes whatever box each endpoint sits on — fine for part-to-part
+    // wires, but it also blinds the router to a box a DELEGATION wire must leave from when its port
+    // faces away (see obstaclesForEdge below).
+    const obstaclesDefault = (pts: { x: number; y: number }[]) => {
       const s = pts[0], e = pts[pts.length - 1];
       return allRects.filter(r =>
         !onRect(s, r) && !onRect(e, r) && !routeInside(pts, r) &&
         pts.some((p, i) => i > 0 && segHitsRect(pts[i - 1], p, r)));
     };
 
-    // Every edge in the tree (top + nested), for the un-routed fallback.
-    const allEdges: WiringElkEdge[] = [...edges];
+    // Every edge in the tree (top + nested), for the un-routed fallback. Cross-frame detour
+    // edges join here too: never given to ELK, they always start un-routed, so the straight-route
+    // + detour passes are their only source of geometry (they render as a channel line otherwise).
+    const allEdges: WiringElkEdge[] = [...edges, ...detourEdges];
     const collectEdges = (ns: WiringElkNode[]) => {
       for (const n of ns) { for (const ce of (n.childEdges ?? [])) allEdges.push(ce); collectEdges(n.children ?? []); }
     };
     collectEdges(parts);
+    const edgePorts = new Map(allEdges.map(e => [e.id, { s: e.sourcePort, t: e.targetPort }]));
 
-    // Un-routed edges (elkjs dropped the route → straight channel line) that would cut through a
-    // box: give them an explicit straight route so the detour pass below bends them around.
-    // Non-crossing un-routed edges keep their handle-based channel routing.
-    for (const edge of allEdges) {
-      if (routes.has(edge.id)) continue;
-      const s = absPortPos(edge.sourcePort), e = absPortPos(edge.targetPort);
-      if (!s || !e) continue;
-      if (obstaclesFor([s, e]).length) routes.set(edge.id, [s, e]);
-    }
+    // The box/frame a port belongs to — the shape a wire attaching to that port must not cut across.
+    // A leaf part port → its part box. An embedded frame boundary port (wpart-X::wsport-Y) → the
+    // frame X the port sits on: a wire reaching that boundary from OUTSIDE the frame (e.g. a peer
+    // part) has to go around X, not through it. A top-scope boundary port (no `::`) has no box.
+    const ownerBox = (pid: string): string | null => {
+      const i = pid.lastIndexOf('::');
+      return i < 0 ? null : pid.slice(0, i);
+    };
+    // A delegation wire: it crosses frame levels (a detour edge — a port promoted into an expanded
+    // part, wired out of its frame), or it touches a frame/boundary port. Both are "connections that
+    // leave or come into a part" — the case the rule governs.
+    const detourIds = new Set(detourEdges.map(e => e.id));
+    const isDelegation = (eid: string) => {
+      if (detourIds.has(eid)) return true;
+      const ep = edgePorts.get(eid);
+      return !!ep && (boundaryPos.has(ep.s) || boundaryPos.has(ep.t));
+    };
+    // Obstacles for one edge. Every wire avoids the same non-endpoint boxes (default rule). A
+    // DELEGATION wire additionally must not pass through the shape its wired port belongs to — its
+    // own part box, or the frame of a boundary port it enters from outside — when the port sits on
+    // the side facing away from the wire's other end (default excludes any box a wire attaches to,
+    // which is exactly what lets such a wire cut across the part). The `routeInside` guard keeps an
+    // INTERNAL delegation wire (running from inside the frame out to its own boundary port) from
+    // treating that frame as an obstacle; only a wire penetrating the box from outside is bent.
+    const obstaclesForEdge = (pts: { x: number; y: number }[], eid: string) => {
+      const def = obstaclesDefault(pts);
+      if (!isDelegation(eid)) return def;
+      const ep = edgePorts.get(eid); if (!ep) return def;
+      const own = [ownerBox(ep.s), ownerBox(ep.t)].filter((x): x is string => !!x);
+      if (!own.length) return def;
+      const extra = allRects.filter(r =>
+        own.includes(r.id) && !def.includes(r) && !routeInside(pts, r) &&
+        pts.some((p, i) => i > 0 && segHitsRect(pts[i - 1], p, r)));
+      return extra.length ? [...def, ...extra] : def;
+    };
 
-    // Detour any route (any level) that crosses a non-endpoint, non-container box. Try each
-    // side of the crossed boxes' bounding box — over/under for a mostly-horizontal edge,
-    // left/right for a mostly-vertical one (e.g. a deeply-nested wire running down a column) —
-    // and take the first that clears every box. Container exclusion keeps a nested detour inside
-    // its own frame.
-    for (const [eid, pts] of routes) {
-      if (pts.length < 2) continue;
+    // ── Port-stub rule ──────────────────────────────────────────────────────────
+    // A wire must leave/enter a port HORIZONTALLY and stay horizontal until it has cleared the
+    // shape by a reasonable amount, only then turning. STUB is that clearance.
+    const STUB = 26;
+    const sideOfPort = (pid: string): PortSide | null => portPos.get(pid)?.side ?? boundaryPos.get(pid)?.side ?? null;
+    // Which way the horizontal stub points off a port: OUTWARD from the box the port sits on (left
+    // port → left, right port → right). For a frame BOUNDARY port whose wire lies INSIDE the frame
+    // (an internal delegation), it points inward instead — the stub must head into the frame, not
+    // out of it. `otherPos` is the wire's far endpoint, used to tell inside from outside.
+    const stubDir = (pid: string, otherPos: { x: number; y: number }): number | null => {
+      const side = sideOfPort(pid);
+      if (side !== 'left' && side !== 'right') return null;
+      const owner = ownerBox(pid);
+      if (owner && nodeSize.has(owner)) {
+        const op = absNodePos(owner), os = nodeSize.get(owner)!;
+        const inside = otherPos.x > op.x + 4 && otherPos.x < op.x + os.w - 4 && otherPos.y > op.y + 4 && otherPos.y < op.y + os.h - 4;
+        if (inside) return side === 'left' ? 1 : -1;
+      }
+      return side === 'left' ? -1 : 1;
+    };
+    // An orthogonal path between two already-cleared stub points. Prefer a Z whose first & last
+    // segments are VERTICAL so they meet the horizontal port stubs at right angles; fall back to the
+    // other Z / L shapes. Returns the first candidate that clears every obstacle, else null.
+    const orthoBetween = (a: { x: number; y: number }, b: { x: number; y: number }, obstFn: (c: { x: number; y: number }[]) => unknown[]) => {
+      const midY = (a.y + b.y) / 2, midX = (a.x + b.x) / 2;
+      const cands = (Math.abs(a.y - b.y) < 1 || Math.abs(a.x - b.x) < 1)
+        ? [[a, b]]
+        : [
+            [a, { x: a.x, y: midY }, { x: b.x, y: midY }, b],
+            [a, { x: a.x, y: b.y }, b],
+            [a, { x: midX, y: a.y }, { x: midX, y: b.y }, b],
+            [a, { x: b.x, y: a.y }, b],
+          ];
+      return cands.find(c => obstFn(c).length === 0) ?? null;
+    };
+
+    // Route (or re-route) an edge that crosses a box it must avoid, honouring the port-stub rule.
+    // `clean` = already clears everything; `detoured` = an obstacle-free path that exits/enters both
+    // ports with a horizontal stub clearing the shape; `blocked` = best-effort bend when none clears.
+    const buildDetour = (pts: { x: number; y: number }[], eid: string):
+      { status: 'clean' | 'detoured' | 'blocked'; route: { x: number; y: number }[] } => {
+      const obst = obstaclesForEdge(pts, eid);
+      if (!obst.length) return { status: 'clean', route: pts };
       const s = pts[0], e = pts[pts.length - 1];
-      const obst = obstaclesFor(pts);
-      if (!obst.length) continue;
+      const ep = edgePorts.get(eid);
+      const sdir = ep ? stubDir(ep.s, e) : null;
+      const edir = ep ? stubDir(ep.t, s) : null;
+
+      if (sdir !== null && edir !== null) {
+        // Stub each port horizontally out past its shape, then connect the two stubs around the
+        // obstacles. The obstacle test runs on the WHOLE wire (stubs included).
+        const sStub = { x: s.x + sdir * STUB, y: s.y };
+        const eStub = { x: e.x + edir * STUB, y: e.y };
+        const full = (mid: { x: number; y: number }[]) => [s, ...mid, e];
+        const clearInner = orthoBetween(sStub, eStub, c => obstaclesForEdge(full(c), eid));
+        if (clearInner) return { status: 'detoured', route: full(clearInner) };
+        // No simple Z/L clears it — route the two stubs around the crossed boxes' bounding box.
+        const bx0 = Math.min(...obst.map(r => r.x)),       by0 = Math.min(...obst.map(r => r.y));
+        const bx1 = Math.max(...obst.map(r => r.x + r.w)), by1 = Math.max(...obst.map(r => r.y + r.h));
+        const overY = (y: number) => [sStub, { x: sStub.x, y }, { x: eStub.x, y }, eStub];
+        const overX = (x: number) => [sStub, { x, y: sStub.y }, { x, y: eStub.y }, eStub];
+        const cands = [overY(by0 - CLEAR), overY(by1 + CLEAR), overX(bx0 - CLEAR), overX(bx1 + CLEAR)];
+        const clear = cands.find(c => obstaclesForEdge(full(c), eid).length === 0);
+        return clear ? { status: 'detoured', route: full(clear) } : { status: 'blocked', route: full(cands[0]) };
+      }
+
+      // Port sides unknown (e.g. a message link) — fall back to the plain over/under detour.
       const bx0 = Math.min(...obst.map(r => r.x)),       by0 = Math.min(...obst.map(r => r.y));
       const bx1 = Math.max(...obst.map(r => r.x + r.w)), by1 = Math.max(...obst.map(r => r.y + r.h));
       const overY = (y: number) => [s, { x: s.x, y }, { x: e.x, y }, e];
@@ -604,8 +700,51 @@ export async function layoutWiringElk(
         ? [overX(bx0 - CLEAR), overX(bx1 + CLEAR), overY(by0 - CLEAR), overY(by1 + CLEAR)]
         : [overY(by0 - CLEAR), overY(by1 + CLEAR), overX(bx0 - CLEAR), overX(bx1 + CLEAR)]
       ).sort((a, b) => Math.hypot(a[1].x - cx, a[1].y - cy) - Math.hypot(b[1].x - cx, b[1].y - cy));
-      const clear = candidates.find(c => obstaclesFor(c).length === 0);
-      routes.set(eid, clear ?? candidates[0]);
+      const clear = candidates.find(c => obstaclesForEdge(c, eid).length === 0);
+      return clear ? { status: 'detoured', route: clear } : { status: 'blocked', route: candidates[0] };
+    };
+
+    // Build an explicit orthogonal route that honours the port-stub rule for an edge that DOESN'T
+    // need a detour (its straight run is already clear). Used to bring channel edges (elkjs dropped
+    // the route) under the same rule and into the de-overlap pass. Returns null when the ports'
+    // sides are unknown or no clean stubbed path exists — the caller then leaves it as a channel
+    // line, so this can never introduce a crossing (worst case = the previous behaviour).
+    const stubbedRoute = (s: { x: number; y: number }, e: { x: number; y: number }, eid: string) => {
+      const ep = edgePorts.get(eid); if (!ep) return null;
+      const sdir = stubDir(ep.s, e), edir = stubDir(ep.t, s);
+      if (sdir === null || edir === null) return null;
+      const sStub = { x: s.x + sdir * STUB, y: s.y };
+      const eStub = { x: e.x + edir * STUB, y: e.y };
+      const full = (mid: { x: number; y: number }[]) => [s, ...mid, e];
+      const inner = orthoBetween(sStub, eStub, c => obstaclesForEdge(full(c), eid));
+      return inner ? full(inner) : null;
+    };
+
+    // Un-routed edges (elkjs dropped the route → straight channel line). A crossing wire is detoured
+    // (with stubs). A wire whose straight run is clear now also gets an explicit stubbed orthogonal
+    // route so it obeys the port-stub rule and joins the de-overlap pass — but only if a clean
+    // stubbed path exists; otherwise it stays a plain channel line (never worse than before, so no
+    // new crossing can be introduced). A delegation wire that can't be cleanly bent stays a channel.
+    for (const edge of allEdges) {
+      if (routes.has(edge.id)) continue;
+      const s = absPortPos(edge.sourcePort), e = absPortPos(edge.targetPort);
+      if (!s || !e) continue;
+      const d = buildDetour([s, e], edge.id);
+      if (d.status === 'detoured') { routes.set(edge.id, d.route); continue; }
+      if (d.status === 'blocked') { if (!isDelegation(edge.id)) routes.set(edge.id, d.route); continue; }
+      const sr = stubbedRoute(s, e, edge.id);            // clean straight → stub it if we cleanly can
+      if (sr) routes.set(edge.id, sr);
+    }
+
+    // Detour any already-routed edge (ELK routes, at any level) that crosses a box it must avoid.
+    // For a delegation wire, only replace its route with a strictly CLEAN detour; if none exists,
+    // leave the ELK route untouched rather than swapping it for a crossing bend.
+    for (const [eid, pts] of routes) {
+      if (pts.length < 2) continue;
+      const d = buildDetour(pts, eid);
+      if (d.status === 'clean') continue;
+      if (d.status === 'detoured') { routes.set(eid, d.route); continue; }
+      if (!isDelegation(eid)) routes.set(eid, d.route);          // legacy best-effort bend
     }
 
     // ── De-overlap: separate COINCIDENT wire segments into parallel channels ─────
@@ -640,26 +779,30 @@ export async function layoutWiringElk(
     const spread = (horiz: boolean): void => {
       const segs = collect(horiz);
       segs.sort((p, q) => p.axis - q.axis || p.lo - q.lo);
-      // Group segments that share an axis line (within COINCIDENT).
       let g: Seg[] = [];
       const flush = () => {
         if (g.length < 2) { g = []; return; }
-        // Within the group, only segments that actually overlap need separating.
-        const used: Seg[] = [];
+        // Greedy first-fit channel assignment: place each segment in the nearest channel (stepping
+        // out by SEP) that no already-placed, y-overlapping segment occupies. Tracking the ACTUAL
+        // placed axis (not just a clash count) guarantees no two segments end up coincident, even in
+        // a dense bundle where many wires funnel through the same channel.
+        const placed: { axis: number; lo: number; hi: number }[] = [];
+        const yHit = (a: { lo: number; hi: number }, b: { lo: number; hi: number }) => Math.min(a.hi, b.hi) - Math.max(a.lo, b.lo) > MIN_OVERLAP;
         for (const s of g) {
-          const clash = used.filter(u => u.eid !== s.eid &&
-            Math.min(u.hi, s.hi) - Math.max(u.lo, s.lo) > MIN_OVERLAP);
-          if (clash.length) {
-            // Push to the first free channel (alternating out from the original line).
-            const k = clash.length;
-            const delta = (k % 2 === 1 ? 1 : -1) * Math.ceil(k / 2) * SEP;
+          let delta = 0;
+          for (let k = 0; k <= 80; k++) {
+            const cand = k === 0 ? 0 : (k % 2 === 1 ? 1 : -1) * Math.ceil(k / 2) * SEP;
+            const candAxis = s.axis + cand;
+            if (!placed.some(u => Math.abs(u.axis - candAxis) < SEP - 1 && yHit(u, s))) { delta = cand; break; }
+          }
+          if (delta !== 0) {
             const pts = routes.get(s.eid);
             if (pts) {
               if (horiz) { pts[s.i] = { ...pts[s.i], y: pts[s.i].y + delta }; pts[s.i + 1] = { ...pts[s.i + 1], y: pts[s.i + 1].y + delta }; }
               else       { pts[s.i] = { ...pts[s.i], x: pts[s.i].x + delta }; pts[s.i + 1] = { ...pts[s.i + 1], x: pts[s.i + 1].x + delta }; }
             }
           }
-          used.push(s);
+          placed.push({ axis: s.axis + delta, lo: s.lo, hi: s.hi });
         }
         g = [];
       };
@@ -672,6 +815,69 @@ export async function layoutWiringElk(
 
     // Two passes: separating one axis can expose coincidences on the other.
     for (let pass = 0; pass < 2; pass++) { spread(true); spread(false); }
+
+    // The passes above move only INTERIOR segments. A wire's first/last segment is pinned to a port
+    // handle, so several wires reaching adjacent ports on the same box edge can still share (and
+    // overlap along) that final approach channel. Separate them ORTHOGONALLY: offset the clashing
+    // approach onto its own channel and insert a short jog back to the port so the wire stays axis-
+    // aligned (no diagonal). Computed from the settled routes, then applied once — last segment
+    // before first so the splices never invalidate each other's indices.
+    {
+      type End = { eid: string; which: 'first' | 'last'; axis: number; lo: number; hi: number };
+      const collectEnds = (horiz: boolean): End[] => {
+        const out: End[] = [];
+        for (const [eid, pts] of routes) {
+          if (pts.length < 3) continue;                 // need a bend to jog against
+          const add = (i: number, which: 'first' | 'last') => {
+            const a = pts[i], b = pts[i + 1];
+            const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+            if (horiz && dy < 0.8 && dx > 3) out.push({ eid, which, axis: (a.y + b.y) / 2, lo: Math.min(a.x, b.x), hi: Math.max(a.x, b.x) });
+            if (!horiz && dx < 0.8 && dy > 3) out.push({ eid, which, axis: (a.x + b.x) / 2, lo: Math.min(a.y, b.y), hi: Math.max(a.y, b.y) });
+          };
+          add(0, 'first');
+          add(pts.length - 2, 'last');
+        }
+        return out;
+      };
+      // Per edge, the offset to apply to each end approach, and whether it's a vertical (x) approach.
+      const plan = new Map<string, { first?: { d: number; vert: boolean }; last?: { d: number; vert: boolean } }>();
+      const computeDeltas = (horiz: boolean) => {
+        const segs = collectEnds(horiz).sort((p, q) => p.axis - q.axis || p.lo - q.lo);
+        let g: End[] = [];
+        const flush = () => {
+          if (g.length < 2) { g = []; return; }
+          const used: End[] = [];
+          for (const s of g) {
+            const clash = used.filter(u => u.eid !== s.eid && Math.min(u.hi, s.hi) - Math.max(u.lo, s.lo) > MIN_OVERLAP);
+            if (clash.length) {
+              const k = clash.length;
+              const d = (k % 2 === 1 ? 1 : -1) * Math.ceil(k / 2) * SEP;
+              const rec = plan.get(s.eid) ?? {};
+              rec[s.which] = { d, vert: !horiz };
+              plan.set(s.eid, rec);
+            }
+            used.push(s);
+          }
+          g = [];
+        };
+        for (const s of segs) { if (g.length && Math.abs(s.axis - g[0].axis) > COINCIDENT) flush(); g.push(s); }
+        flush();
+      };
+      computeDeltas(true); computeDeltas(false);
+      for (const [eid, rec] of plan) {
+        const pts = routes.get(eid); if (!pts || pts.length < 3) continue;
+        if (rec.last) {
+          const n = pts.length, bend = pts[n - 2], port = pts[n - 1];
+          if (rec.last.vert) { const x = bend.x + rec.last.d; pts[n - 2] = { ...bend, x }; pts.splice(n - 1, 0, { x, y: port.y }); }
+          else               { const y = bend.y + rec.last.d; pts[n - 2] = { ...bend, y }; pts.splice(n - 1, 0, { x: port.x, y }); }
+        }
+        if (rec.first) {
+          const port = pts[0], bend = pts[1];
+          if (rec.first.vert) { const x = bend.x + rec.first.d; pts[1] = { ...bend, x }; pts.splice(1, 0, { x, y: port.y }); }
+          else                { const y = bend.y + rec.first.d; pts[1] = { ...bend, y }; pts.splice(1, 0, { x: port.x, y }); }
+        }
+      }
+    }
 
     // Preserve the INPUT (source/collapsed) vertical order of top parts when there are no edges
     // between them (e.g. EcuPlatform's two domains): ELK's order is then arbitrary and flips as a

@@ -2494,11 +2494,27 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       .map(n => ({ id: n.id, side: boundarySide(n) }));
     const elkEdges = edgesForFrame(null);
 
+    // Cross-frame delegation wires (endpoints in different frames — the ones edgeToElk drops so
+    // ELK doesn't throw). ELK never routes them, but their endpoints DO exist in the laid-out
+    // graph (a promoted inner port + an ancestor boundary), so hand them to layoutWiringElk's
+    // detour pass to route them AROUND the boxes they'd otherwise cut straight through.
+    const parentFrame = (id: string): string | null => { const c = frameChain(id); return c.length ? c[c.length - 1] : null; };
+    const detourEdges: WiringElkEdge[] = rfEdges
+      .map((e): WiringElkEdge | null => {
+        const f = commonFrame(e.source, e.target);
+        if (parentFrame(e.source) === f && parentFrame(e.target) === f) return null; // ELK routes it
+        const d  = e.data as Record<string, unknown> | undefined;
+        const sp = elkPortFor(e.source, d?.['srcPortId']);
+        const tp = elkPortFor(e.target, d?.['tgtPortId']);
+        return sp && tp ? { id: e.id, sourcePort: sp, targetPort: tp } : null;
+      })
+      .filter((e): e is WiringElkEdge => e != null);
+
     // Skip when only selection/styling changed — same structural inputs → same layout.
     // Record the signature only AFTER a layout actually completes (below), NOT here: if this
     // effect is cancelled/re-run while the async layout is in flight, recording eagerly would
     // let the next run's guard skip it — leaving elkLayout permanently null (no ELK applied).
-    const elkSig = JSON.stringify({ elkNodes, boundaryPorts, elkEdges });
+    const elkSig = JSON.stringify({ elkNodes, boundaryPorts, elkEdges, detourEdges });
     if (elkSig === elkSigRef.current) return;
 
     // Run ELK when there's something to lay out — ≥2 top boxes OR an expanded (compound) box —
@@ -2508,10 +2524,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     const treeHasEdges = (ns: WiringElkNode[]): boolean =>
       ns.some(n => (n.childEdges?.length ?? 0) > 0 || treeHasEdges(n.children ?? []));
     const worthLayingOut = elkNodes.length >= 2 || elkNodes.some(n => (n.children?.length ?? 0) > 0);
-    if (!worthLayingOut || (elkEdges.length === 0 && !treeHasEdges(elkNodes))) {
+    if (!worthLayingOut || (elkEdges.length === 0 && detourEdges.length === 0 && !treeHasEdges(elkNodes))) {
       setElkLayout(null); elkSigRef.current = elkSig; return;
     }
-    layoutWiringElk(elkNodes, boundaryPorts, elkEdges).then(res => {
+    layoutWiringElk(elkNodes, boundaryPorts, elkEdges, detourEdges).then(res => {
       if (cancelled) return;
       elkSigRef.current = elkSig;
       setElkLayout(res.nodePos.size ? res : null);
