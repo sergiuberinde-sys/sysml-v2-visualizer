@@ -19,6 +19,7 @@ java-parser-wrapper/target/generated-sources/**
 java-parser-wrapper/target/maven-archiver/**
 java-parser-wrapper/target/maven-status/**
 java-parser-wrapper/target/sysml-parse-cli-*-SNAPSHOT.jar
+java-parser-wrapper/target/original-*.jar
 
 # ── Dev/CI tooling ────────────────────────────────────────────────────────────
 .claude/**
