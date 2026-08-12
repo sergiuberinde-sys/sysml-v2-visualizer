@@ -628,6 +628,7 @@ export default function App() {
         parserServiceUrl?: string;
         graph?: SysMLV2ParseResult['graph'];
         behavior?: BehaviorData;
+        dependencies?: SysMLV2ParseResult['dependencies'];
         success?: boolean;
         diagnostics?: SysMLV2ParseResult['diagnostics'];
         trlcAnnotations?: RawAnnotation[];
@@ -695,6 +696,7 @@ export default function App() {
             error: undefined, // clear any stale SERVICE_UNAVAILABLE from the initial HTTP probe
             graph: msg.graph,
             behavior: msg.behavior ?? base.behavior,
+            dependencies: msg.dependencies ?? base.dependencies,
             // Extension parsed with full workspace context → its success/diagnostics
             // are more accurate than the webview's own standalone parse result.
             ...(msg.success !== undefined
@@ -1572,6 +1574,7 @@ export default function App() {
                 officialParseResult
                   ? <SysMLSequenceView
                       graph={officialParseResult.graph}
+                      dependencies={officialParseResult.dependencies}
                       selection={selection}
                       onSelect={setSelection}
                     />

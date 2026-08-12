@@ -13,7 +13,7 @@ import { ensureJava } from './javaInstaller';
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g54';
+const GRAPH_VERSION      = 'g56';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -84,6 +84,7 @@ async function diskCacheSet(key: string, result: SysMLV2ParseResult): Promise<vo
 }
 import { formatSysML } from '../src/core/language/formatter';
 import { scanRawAnnotations } from '../src/core/trlc/extractTraces';
+import { extractDependencyMappingsFromSources } from '../src/core/sysmlv2Official/messageInterfaceAsil';
 
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -242,10 +243,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (activePanel) {
       const graph    = result.graph    ?? { nodes: [], edges: [] };
       const behavior = result.behavior ?? null;
+      // Message→interface-port dependencies for sequence-view ASIL derivation
+      // (computed across all source files at parse time; see below).
+      const dependencies = result.dependencies ?? [];
       void activePanel.webview.postMessage({
         type: 'updateGraph',
         graph,
         behavior,
+        dependencies,
         success: result.success,
         diagnostics: result.diagnostics,
       });
@@ -288,6 +293,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (phase1.model && !phase1.graph) {
         phase1.graph    = buildGraphWithContext(phase1.model, phase1.contextModels ?? []);
         phase1.behavior = buildBehavior(phase1.model, phase1.contextModels ?? []);
+        // Primary-only (self-contained): a file's message dependencies reference its own ports.
+        phase1.dependencies = extractDependencyMappingsFromSources([{ text: primaryText, model: phase1.model }]);
       }
       phase1ForFallback = phase1;
 
@@ -333,6 +340,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (result.model && !result.graph) {
         result.graph    = buildGraphWithContext(result.model, result.contextModels ?? []);
         result.behavior = buildBehavior(result.model, result.contextModels ?? []);
+        // Dependencies across ALL files (primary + context), so message ASIL resolves
+        // for every file's sequences — not only the currently-active file's.
+        result.dependencies = extractDependencyMappingsFromSources([
+          { text: primaryText, model: result.model },
+          ...contextFiles.map((c, i) => ({ text: c.text, model: result.contextModels?.[i] })),
+        ]);
       }
 
       applyResult(document, result);

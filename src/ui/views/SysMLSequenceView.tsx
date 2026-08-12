@@ -1,6 +1,12 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
 import type { SelectionState } from '../../app/selection';
+import {
+  buildPortAsilIndex, indexDependenciesByClient, deriveMessageAsilFor,
+  describeMessageAsil, asilShort,
+  type DependencyMapping, type DerivedMessageAsil, type MessageDependencies, type PortAsilIndex,
+} from '../../core/sysmlv2Official/messageInterfaceAsil';
+import { asilColors } from '../layout/AsilBadge';
 
 // ── Zoom bounds ────────────────────────────────────────────────────────────────
 const ZOOM_MIN  = 0.25;
@@ -10,6 +16,8 @@ const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 
 interface Props {
   graph: ContainmentGraph | undefined;
+  /** Retained message→interface-port dependencies used to derive per-message ASIL. */
+  dependencies?: DependencyMapping[];
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
 }
@@ -40,17 +48,19 @@ const boxW = (label: string) =>
 
 // ── Graph helpers ──────────────────────────────────────────────────────────────
 
-function buildIndexes(graph: ContainmentGraph) {
+export function buildIndexes(graph: ContainmentGraph) {
   const nodeById   = new Map<string, GraphNode>();
   const childrenOf = new Map<string, string[]>();
+  const parentOf   = new Map<string, string>();
   for (const n of graph.nodes) nodeById.set(n.id, n);
   for (const e of graph.edges) {
     if (e.type !== 'contains') continue;
     const arr = childrenOf.get(e.source) ?? [];
     arr.push(e.target);
     childrenOf.set(e.source, arr);
+    parentOf.set(e.target, e.source);
   }
-  return { nodeById, childrenOf };
+  return { nodeById, childrenOf, parentOf };
 }
 
 function semanticChildren(
@@ -236,6 +246,8 @@ interface ParsedMessage {
   to:         Endpoint | null;
   line?:      number;
   fragments?: FragmentCtx[]; // enclosing combined fragments, outermost → innermost
+  payload?:   string;        // message payload/item type (`message X of Payload`)
+  asil?:      DerivedMessageAsil; // ASIL derived from the two interface-port dependencies
 }
 
 interface AltBranchLayout {
@@ -271,6 +283,7 @@ function resolveFlow(
     .map(id => nodeById.get(id))
     .filter((n): n is GraphNode => n?.type === 'ParameterMembership');
   const [m0, m1] = paramMembs;
+  const payload = messagePayload(flow.id, childrenOf, nodeById);
   return {
     id:    flow.id,
     label: flow.label,
@@ -278,7 +291,49 @@ function resolveFlow(
     to:    m1 ? resolveEndpoint(m1.id, childrenOf, nodeById) : null,
     line:  flow.startLine,
     ...(fragments && fragments.length ? { fragments } : {}),
+    ...(payload ? { payload } : {}),
   };
+}
+
+/** Payload/item type of a message (`message X of Payload`): the FeatureTyping under its PayloadFeature. */
+function messagePayload(
+  flowId: string,
+  childrenOf: Map<string, string[]>,
+  nodeById: Map<string, GraphNode>,
+): string | undefined {
+  for (const cid of childrenOf.get(flowId) ?? []) {
+    if (nodeById.get(cid)?.type !== 'PayloadFeature') continue;
+    for (const gid of childrenOf.get(cid) ?? []) {
+      const g = nodeById.get(gid);
+      if (g?.type === 'FeatureTyping' && g.label && g.label !== 'FeatureTyping') return g.label;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Qualified name of a node: `::`-joined labels of its Package/Definition ancestors
+ * (self included when it is one). Matches the parser's qualified-name form, so a
+ * sequence definition's qualified name + `::` + a message label equals the message's
+ * qualified name used as a dependency client — the basis for action-def-scoped lookup.
+ */
+const QNAME_OWNER_TYPES = new Set([
+  'Package', 'LibraryPackage', 'PartDefinition', 'ActionDefinition', 'ItemDefinition',
+  'PortDefinition', 'ConnectionDefinition', 'InterfaceDefinition', 'AttributeDefinition',
+]);
+function qualifiedNameOf(
+  id: string,
+  parentOf: Map<string, string>,
+  nodeById: Map<string, GraphNode>,
+): string {
+  const parts: string[] = [];
+  let cur: string | undefined = id;
+  while (cur) {
+    const n = nodeById.get(cur);
+    if (n && QNAME_OWNER_TYPES.has(n.type) && n.label && n.label !== n.type) parts.unshift(n.label);
+    cur = parentOf.get(cur);
+  }
+  return parts.join('::');
 }
 
 /**
@@ -483,10 +538,18 @@ export function findEntryEvents(
 
 // ── Parsing ────────────────────────────────────────────────────────────────────
 
-function parseSequenceDefs(
+/** Context used to derive each message's ASIL from its two interface-port dependencies. */
+export interface AsilDerivationCtx {
+  parentOf:     Map<string, string>;
+  depsByClient: Map<string, MessageDependencies>;
+  portIndex:    PortAsilIndex;
+}
+
+export function parseSequenceDefs(
   graph: ContainmentGraph,
   childrenOf: Map<string, string[]>,
   nodeById: Map<string, GraphNode>,
+  asilCtx?: AsilDerivationCtx,
 ): SequenceDef[] {
   const results: SequenceDef[] = [];
 
@@ -526,6 +589,18 @@ function parseSequenceDefs(
     }
     const ordered = orderMessagesByFirstThen(messages, successions);
     const entries = findEntryEvents(messages, successions);
+
+    // Derive each message's ASIL from its two interface-port dependencies, scoped to
+    // THIS action definition: the message's qualified name (defQName::messageName) is
+    // the dependency client, so lookups never cross action-definition scopes even when
+    // message names repeat across sequences (SysML message names are only locally unique).
+    if (asilCtx) {
+      const defQName = qualifiedNameOf(n.id, asilCtx.parentOf, nodeById);
+      for (const m of ordered) {
+        const derived = deriveMessageAsilFor(`${defQName}::${m.label}`, asilCtx.depsByClient, asilCtx.portIndex);
+        if (derived) m.asil = derived;
+      }
+    }
 
     results.push({ node: n, participants, messages: ordered, entries });
   }
@@ -618,7 +693,42 @@ const C_ALT_SEP    = '#475569';
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export default function SysMLSequenceView({ graph, selection, onSelect }: Props) {
+// ── ASIL badge (sequence message) ──────────────────────────────────────────────
+
+/** Pill text + colours for a derived ASIL. `unassigned` shows no badge. */
+function asilTagVisual(d: DerivedMessageAsil): { text: string; bg: string; fg: string } | null {
+  switch (d.status) {
+    case 'unassigned': return null;
+    case 'resolved':   { const c = asilColors(d.level ?? ''); return { text: `ASIL ${asilShort(d.level ?? '')}`, bg: c.bg, fg: c.fg }; }
+    case 'conflict':   return { text: 'ASIL ⚠', bg: '#7c2d12', fg: '#fed7aa' };
+    case 'partial':    return { text: 'ASIL ?', bg: '#422006', fg: '#fbbf24' };
+    case 'unresolved': return { text: 'ASIL ?', bg: '#27272a', fg: '#9ca3af' };
+  }
+}
+
+/**
+ * Compact ASIL badge drawn next to a message label, reusing the shared ASIL palette.
+ * A hover tooltip carries the full derivation details (payload, both endpoints, ASILs).
+ * `x` is the badge's LEFT edge; `cy` its vertical centre.
+ */
+function AsilTag({ d, x, cy, label, payload }: {
+  d: DerivedMessageAsil; x: number; cy: number; label: string; payload?: string;
+}) {
+  const v = asilTagVisual(d);
+  if (!v) return null;
+  const w = v.text.length * 5.4 + 8;
+  const h = 12;
+  return (
+    <g>
+      <title>{describeMessageAsil(d, { message: label, payload })}</title>
+      <rect x={x} y={cy - h / 2} width={w} height={h} rx={2.5} fill={v.bg} />
+      <text x={x + w / 2} y={cy + 3} textAnchor="middle" fontSize={8} fontWeight={700}
+        fontFamily="monospace" fill={v.fg}>{v.text}</text>
+    </g>
+  );
+}
+
+export default function SysMLSequenceView({ graph, dependencies, selection, onSelect }: Props) {
   const [selectedSeqId, setSelectedSeqId] = useState<string>('');
   const [fitMode, setFitMode]             = useState(false);
   const [zoom, setZoom]                   = useState(1);
@@ -626,15 +736,25 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
 
   const zoomBy = (factor: number) => { setFitMode(false); setZoom(z => clampZoom(z * factor)); };
 
-  const { nodeById, childrenOf } = useMemo(() => {
-    if (!graph) return { nodeById: new Map<string, GraphNode>(), childrenOf: new Map<string, string[]>() };
+  const { nodeById, childrenOf, parentOf } = useMemo(() => {
+    if (!graph) return { nodeById: new Map<string, GraphNode>(), childrenOf: new Map<string, string[]>(), parentOf: new Map<string, string>() };
     return buildIndexes(graph);
   }, [graph]);
 
+  // Context for deriving message ASIL from interface-port dependencies (see messageInterfaceAsil.ts).
+  const asilCtx = useMemo((): AsilDerivationCtx | undefined => {
+    if (!graph || !dependencies?.length) return undefined;
+    return {
+      parentOf,
+      depsByClient: indexDependenciesByClient(dependencies),
+      portIndex:    buildPortAsilIndex(graph),
+    };
+  }, [graph, dependencies, parentOf]);
+
   const sequenceDefs = useMemo((): SequenceDef[] => {
     if (!graph) return [];
-    return parseSequenceDefs(graph, childrenOf, nodeById);
-  }, [graph, childrenOf, nodeById]);
+    return parseSequenceDefs(graph, childrenOf, nodeById, asilCtx);
+  }, [graph, childrenOf, nodeById, asilCtx]);
 
   useEffect(() => {
     if (!selection || sequenceDefs.length === 0) return;
@@ -911,6 +1031,8 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
                     fill={labelFill} fontSize={10} fontWeight={isSel ? 600 : 400}>
                     {msg.label}
                   </text>
+                  {msg.asil && <AsilTag d={msg.asil} label={msg.label} payload={msg.payload}
+                    x={x1 + loopW + 6 + msg.label.length * 6 + 5} cy={startY - 5} />}
                   <path d={`M ${x1} ${startY} L ${x1+loopW} ${startY} L ${x1+loopW} ${endY} L ${tipX} ${endY}`}
                         fill="none" stroke={stroke} strokeWidth={sw} />
                   <polygon
@@ -929,6 +1051,8 @@ export default function SysMLSequenceView({ graph, selection, onSelect }: Props)
                   fill={labelFill} fontSize={10} fontWeight={isSel ? 600 : 400}>
                   {msg.label}
                 </text>
+                {msg.asil && <AsilTag d={msg.asil} label={msg.label} payload={msg.payload}
+                  x={(x1+x2)/2 + msg.label.length * 3 + 5} cy={y - 11} />}
                 <line x1={x1} y1={y} x2={x2} y2={y} stroke={stroke} strokeWidth={sw} />
                 <polygon points={`${x2},${y} ${aX},${y-ARROW_SIZE/2} ${aX},${y+ARROW_SIZE/2}`} fill={stroke} />
               </g>

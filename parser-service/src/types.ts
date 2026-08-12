@@ -134,6 +134,16 @@ export interface SysMLV2ParseResult {
   behavior?: BehaviorData;
   /** Identifier occurrence table for the primary file (IDE language features). */
   symbols?: SourceOccurrence[];
+  /**
+   * Message→interface-port `dependency` mappings across all parsed files, used to
+   * derive per-message ASIL in the sequence view (see messageInterfaceAsil.ts).
+   */
+  dependencies?: {
+    name: string;
+    clientQualifiedName: string;
+    supplierQualifiedName: string;
+    ownerQualifiedName: string;
+  }[];
   rawResponse?: unknown;
   error?: string;
 }

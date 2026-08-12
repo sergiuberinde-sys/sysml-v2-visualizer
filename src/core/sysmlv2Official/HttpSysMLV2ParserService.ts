@@ -2,6 +2,7 @@ import type { SysMLV2ParserService } from './SysMLV2ParserService';
 import type { SysMLV2ParseResult, BehaviorData } from './SysMLV2ParseResult';
 import type { ModelNode } from './ModelNode';
 import { buildContainmentGraph } from '../adapters/officialSysMLAdapter';
+import { extractDependencyMappingsFromSources } from './messageInterfaceAsil';
 
 /**
  * HTTP-based implementation of SysMLV2ParserService.
@@ -102,12 +103,24 @@ export class HttpSysMLV2ParserService implements SysMLV2ParserService {
 
       console.log('[HttpSysMLV2ParserService] parser response behavior:', behavior);
 
+      // Retain message→interface-port dependencies across ALL parsed files so the
+      // sequence view can derive per-message ASIL for every file's sequences, not
+      // just the primary's (see messageInterfaceAsil.ts).
+      const contextModels = Array.isArray(rawBody['contextModels'])
+        ? rawBody['contextModels'] as ModelNode[][]
+        : [];
+      const dependencies = extractDependencyMappingsFromSources([
+        { text, model },
+        ...(context ?? []).map((c, i) => ({ text: c.text, model: contextModels[i] })),
+      ]);
+
       return {
         success:     result.success,
         diagnostics: Array.isArray(result.diagnostics) ? result.diagnostics : [],
         model,
         graph,
         behavior,
+        dependencies,
         rawResponse,
         error:       result.error,
       };

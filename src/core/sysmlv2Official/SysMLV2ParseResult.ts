@@ -1,5 +1,6 @@
 import type { ModelNode } from './ModelNode';
 import type { ContainmentGraph } from './ContainmentGraph';
+import type { DependencyMapping } from './messageInterfaceAsil';
 
 // ── Behavior data ─────────────────────────────────────────────────────────────
 //
@@ -135,6 +136,13 @@ export interface SysMLV2ParseResult {
    * once the parser-service responds.
    */
   behavior?: BehaviorData;
+
+  /**
+   * Message→interface-port `dependency` mappings retained from the model, used to
+   * derive per-message ASIL in the sequence view (see messageInterfaceAsil.ts).
+   * Covers the primary parsed file's sequences.
+   */
+  dependencies?: DependencyMapping[];
 
   /** The raw HTTP/IPC response body, for debugging. */
   rawResponse?: unknown;
