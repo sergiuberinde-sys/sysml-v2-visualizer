@@ -676,18 +676,6 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
   );
 
   // Stable ordered list of part names → color.
-  const laneColors = useMemo<Map<string, string>>(() => {
-    const seen = new Map<string, string>();
-    let i = 0;
-    for (const partName of actionAllocMap.values()) {
-      if (!seen.has(partName)) {
-        seen.set(partName, LANE_COLORS[i % LANE_COLORS.length]);
-        i++;
-      }
-    }
-    return seen;
-  }, [actionAllocMap]);
-
   // ── Position state managed by ELK (async) ────────────────────────────────────
   const [displayNodes,   setDisplayNodes]   = useState<Node[]>([]);
   const [autoFitVersion, setAutoFitVersion] = useState(0);
@@ -1153,6 +1141,21 @@ export default function OfficialBehaviorView({ behavior, behaviorName, behaviorN
       rfEdges: [...flowEdges, ...itemFlowEdges, ...condBranchEdges],
     };
   }, [behavior, behaviorName]);
+
+  // One swimlane per part a node is allocated to, derived from the SAME `allocatedTo` the layout
+  // reads — so every lane a node lands in is guaranteed a column, in node (declaration) order. This
+  // is the single source of truth: it structurally can't drop a lane whose only action shares its
+  // name with another lane's (which the name-keyed allocation map would collapse), so two swimlanes
+  // can never end up column-less and overlapping.
+  const laneColors = useMemo<Map<string, string>>(() => {
+    const seen = new Map<string, string>();
+    let i = 0;
+    for (const n of rfNodes) {
+      const part = (n.data as Record<string, unknown>)?.['allocatedTo'] as string | undefined;
+      if (part && !seen.has(part)) { seen.set(part, LANE_COLORS[i % LANE_COLORS.length]); i++; }
+    }
+    return seen;
+  }, [rfNodes]);
 
   // ── ELK layout — runs when behavior or reset changes (NOT on selection) ───────
   useEffect(() => {
