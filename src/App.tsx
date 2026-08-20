@@ -366,6 +366,9 @@ export default function App() {
   const [validatorRunning,   setValidatorRunning]   = useState(false);
   const [validatorPanelOpen, setValidatorPanelOpen] = useState(true);
   const [validatorRanOnce,   setValidatorRanOnce]   = useState(false);
+  // >0 when the model checker last ran over a PARTIAL model (the parse itself had this
+  // many errors); its "no issues" result is then not a clean bill of health.
+  const [validatorParsePartial, setValidatorParsePartial] = useState(0);
   // Stable ref so the VS Code message handler can access the latest parse result
   const officialParseResultRef = useRef<SysMLV2ParseResult | null>(null);
   // True when running inside the VS Code extension — the extension manages all
@@ -505,14 +508,28 @@ export default function App() {
   // Derive trace links from trlc-satisfies annotations.
   // Extension path: use annotations sent by the extension (covers all workspace files).
   // Standalone fallback: scan source + context files directly.
+  const satisfiesTraces = officialParseResult?.satisfies;
   const trlcDataWithTraces = useMemo((): TrlcData | null => {
     if (!trlcData) return null;
     const numericToReqId = buildNumericToReqId(trlcData.requirements.map(r => r.id));
-    const traces = trlcAnnotations !== null
+    const annTraces = trlcAnnotations !== null
       ? mapAnnotationsToTraces(trlcAnnotations, numericToReqId)
       : extractTrlcTraces([{ text: source }, ...projectFiles], numericToReqId);
+    // @Satisfies metadata → traces, matched to requirements by EXACT name.
+    const reqIds = new Set(trlcData.requirements.map(r => r.id));
+    const satTraces = (satisfiesTraces ?? [])
+      .filter(s => reqIds.has(s.reqId))
+      .map(s => ({ requirementId: s.reqId, elementName: s.elementName }));
+    // Merge both sources, de-duplicating identical (requirement, element) pairs.
+    const seen = new Set<string>();
+    const traces = [...annTraces, ...satTraces].filter(t => {
+      const k = `${t.requirementId}::${t.elementName}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
     return { ...trlcData, traces };
-  }, [trlcData, trlcAnnotations, source, projectFiles]);
+  }, [trlcData, trlcAnnotations, source, projectFiles, satisfiesTraces]);
   trlcDataWithTracesRef.current = trlcDataWithTraces;
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -629,16 +646,22 @@ export default function App() {
         graph?: SysMLV2ParseResult['graph'];
         behavior?: BehaviorData;
         dependencies?: SysMLV2ParseResult['dependencies'];
+        timing?: SysMLV2ParseResult['timing'];
+        satisfies?: SysMLV2ParseResult['satisfies'];
         success?: boolean;
         diagnostics?: SysMLV2ParseResult['diagnostics'];
         trlcAnnotations?: RawAnnotation[];
+        requirements?: TrlcData['requirements'];
         numericId?: string;
         noGraph?: boolean;
+        parsePartial?: boolean;
+        parseErrorCount?: number;
       };
       if (msg.type === 'validatorResult') {
         setValidatorRunning(false);
         setValidatorRanOnce(true);
         setValidatorDiags((msg.diagnostics as ValidatorDiag[] | undefined) ?? []);
+        setValidatorParsePartial(msg.parsePartial ? (msg.parseErrorCount ?? 0) : 0);
       } else if (msg.type === 'loadModel' && typeof msg.text === 'string') {
         receivedFirstLoad.current = true;
         fromExtension.current = true;
@@ -651,6 +674,7 @@ export default function App() {
         setSelection(null);
         setValidatorDiags([]);
         setValidatorRanOnce(false);
+        setValidatorParsePartial(0);
       } else if (msg.type === 'updateModel' && typeof msg.text === 'string') {
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
@@ -667,6 +691,9 @@ export default function App() {
         setServiceEndpoint(msg.parserServiceUrl);
       } else if (msg.type === 'trlcAnnotations' && Array.isArray(msg.trlcAnnotations)) {
         setTrlcAnnotations(msg.trlcAnnotations);
+      } else if (msg.type === 'trlcRequirements' && Array.isArray(msg.requirements)) {
+        // Auto-loaded workspace .trlc requirements (traces are derived from @Satisfies below).
+        setTrlcData(msg.requirements.length ? { requirements: msg.requirements, traces: [] } : null);
       } else if (msg.type === 'revealTrlcReq' && typeof msg.numericId === 'string') {
         setTab('traceability');
         const data = trlcDataWithTracesRef.current;
@@ -697,6 +724,8 @@ export default function App() {
             graph: msg.graph,
             behavior: msg.behavior ?? base.behavior,
             dependencies: msg.dependencies ?? base.dependencies,
+            timing: msg.timing ?? base.timing,
+            satisfies: msg.satisfies ?? base.satisfies,
             // Extension parsed with full workspace context → its success/diagnostics
             // are more accurate than the webview's own standalone parse result.
             ...(msg.success !== undefined
@@ -1522,14 +1551,22 @@ export default function App() {
                   <span style={{ fontWeight: 600, color: '#475569' }}>Model Checker</span>
                   <span style={{
                     color: validatorErrCount  > 0 ? '#f87171'
-                         : validatorWarnCount > 0 ? '#facc15'
+                         : (validatorWarnCount > 0 || validatorParsePartial > 0) ? '#facc15'
                          : '#4ade80',
                   }}>
                     {validatorIssueCount === 0
-                      ? '✓ no issues'
+                      ? (validatorParsePartial > 0 ? 'no rule violations' : '✓ no issues')
                       : `${validatorErrCount > 0 ? `${validatorErrCount} error${validatorErrCount !== 1 ? 's' : ''}` : ''}${validatorErrCount > 0 && validatorWarnCount > 0 ? ', ' : ''}${validatorWarnCount > 0 ? `${validatorWarnCount} warning${validatorWarnCount !== 1 ? 's' : ''}` : ''}`
                     }
                   </span>
+                  {validatorParsePartial > 0 && (
+                    <span
+                      style={{ color: '#facc15' }}
+                      title="The parser reported errors, so the model checker ran over the partial model it could recover. These structural checks are not a clean bill of health — fix the parse errors first."
+                    >
+                      · ⚠ ran on a partial model — parse has {validatorParsePartial} error{validatorParsePartial !== 1 ? 's' : ''}
+                    </span>
+                  )}
                   <span style={{ marginLeft: 'auto', color: '#475569', fontSize: 9 }}>
                     {validatorPanelOpen ? '▲' : '▼'}
                   </span>
@@ -1575,6 +1612,7 @@ export default function App() {
                   ? <SysMLSequenceView
                       graph={officialParseResult.graph}
                       dependencies={officialParseResult.dependencies}
+                      timing={officialParseResult.timing}
                       selection={selection}
                       onSelect={setSelection}
                     />

@@ -5,6 +5,55 @@ export interface RawAnnotation {
   elementName: string;
 }
 
+/** One (element → requirement) trace recovered from an `@Satisfies` metadata element. */
+export interface SatisfiesTrace {
+  elementName: string;   // the definition/usage the `@Satisfies` annotates
+  reqId: string;         // a requirement name from its `reqId` tuple (matched to a .trlc requirement by exact name)
+}
+
+interface RawNodeLike { type: string; name?: string | null; children?: RawNodeLike[] }
+
+/**
+ * Extract `@Satisfies { reqId = ("Req_1", "Req_2", …); }` metadata from the raw model
+ * tree(s). A `@Satisfies` is a `MetadataUsage` whose `FeatureTyping` resolves to `Satisfies`;
+ * its `reqId` values are `LiteralString` descendants (the requirement names), and the
+ * annotated element is the nearest enclosing named definition/usage.
+ *
+ * Works purely on the parser's containment tree (no source text needed), so it runs the same
+ * for the extension and the standalone web adapter. Requirement matching (by exact name) is
+ * done downstream, once the .trlc requirements are known.
+ */
+export function extractSatisfiesTraces(models: (RawNodeLike[] | undefined)[]): SatisfiesTrace[] {
+  const out: SatisfiesTrace[] = [];
+  const literalsUnder = (n: RawNodeLike, acc: string[]): void => {
+    for (const c of n.children ?? []) {
+      if (c.type === 'LiteralString' && c.name) acc.push(c.name);
+      literalsUnder(c, acc);
+    }
+  };
+  const isHost = (n: RawNodeLike) =>
+    !!n.name && n.name !== n.type && n.type !== 'MetadataUsage' &&
+    (/Definition$/.test(n.type) || /Usage$/.test(n.type));
+
+  const visit = (nodes: RawNodeLike[], host: string | undefined): void => {
+    for (const n of nodes) {
+      if (n.type === 'MetadataUsage') {
+        const isSatisfies = (n.children ?? []).some(c => c.type === 'FeatureTyping' && c.name === 'Satisfies');
+        if (isSatisfies && host) {
+          const reqIds: string[] = [];
+          literalsUnder(n, reqIds);
+          for (const reqId of reqIds) out.push({ elementName: host, reqId });
+        }
+        continue; // don't descend metadata for host tracking
+      }
+      const nextHost = isHost(n) ? n.name! : host;
+      if (n.children) visit(n.children, nextHost);
+    }
+  };
+  for (const model of models) if (model) visit(model, undefined);
+  return out;
+}
+
 /**
  * Scan SysML v2 source text(s) for `// trlc-satisfies: NNNNN` annotations
  * and return raw (numericId, elementName) pairs — no TRLC requirement lookup.

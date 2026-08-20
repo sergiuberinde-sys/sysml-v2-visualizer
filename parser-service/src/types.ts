@@ -144,6 +144,20 @@ export interface SysMLV2ParseResult {
     supplierQualifiedName: string;
     ownerQualifiedName: string;
   }[];
+  /**
+   * Per-definition timing-evaluation data (elapsed measures, budget, contract) for
+   * sequence views. See src/core/sysmlv2Official/sequenceTiming.ts.
+   */
+  timing?: {
+    ownerQualifiedName: string;
+    constraintName?: string;
+    measures: { name: string; target: { participant?: string; event: string }; origin: { participant?: string; event: string } }[];
+    budgets: { name: string; ms: number; display: string }[];
+    contract?: string;
+    deadlines: { measureName: string; ms: number; display: string; target: { participant?: string; event: string } }[];
+  }[];
+  /** (element → requirement) traces recovered from `@Satisfies` metadata (see extractTraces.ts). */
+  satisfies?: { elementName: string; reqId: string }[];
   rawResponse?: unknown;
   error?: string;
 }

@@ -1,6 +1,8 @@
 import type { ModelNode } from './ModelNode';
 import type { ContainmentGraph } from './ContainmentGraph';
 import type { DependencyMapping } from './messageInterfaceAsil';
+import type { SequenceTiming } from './sequenceTiming';
+import type { SatisfiesTrace } from '../trlc/extractTraces';
 
 // ── Behavior data ─────────────────────────────────────────────────────────────
 //
@@ -143,6 +145,18 @@ export interface SysMLV2ParseResult {
    * Covers the primary parsed file's sequences.
    */
   dependencies?: DependencyMapping[];
+
+  /**
+   * Per-definition timing-evaluation data (elapsed measures, FTTI budget, asserted
+   * contract) surfaced on sequence views. See sequenceTiming.ts.
+   */
+  timing?: SequenceTiming[];
+
+  /**
+   * (element → requirement) traces recovered from `@Satisfies` metadata in the model,
+   * matched to TRLC requirements by exact name downstream. See trlc/extractTraces.ts.
+   */
+  satisfies?: SatisfiesTrace[];
 
   /** The raw HTTP/IPC response body, for debugging. */
   rawResponse?: unknown;

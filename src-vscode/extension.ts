@@ -13,7 +13,7 @@ import { ensureJava } from './javaInstaller';
 // ── In-memory parse cache ─────────────────────────────────────────────────────
 // Fast same-session cache. Keyed by SHA-256(GRAPH_VERSION + primary text + sorted context texts).
 // Bump GRAPH_VERSION whenever buildGraph or buildBehavior changes so stale disk entries are evicted.
-const GRAPH_VERSION      = 'g56';
+const GRAPH_VERSION      = 'g58';
 const PARSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PARSE_CACHE_MAX    = 20;
 interface ParseCacheEntry { result: SysMLV2ParseResult; ts: number }
@@ -83,8 +83,10 @@ async function diskCacheSet(key: string, result: SysMLV2ParseResult): Promise<vo
   }
 }
 import { formatSysML } from '../src/core/language/formatter';
-import { scanRawAnnotations } from '../src/core/trlc/extractTraces';
+import { scanRawAnnotations, extractSatisfiesTraces } from '../src/core/trlc/extractTraces';
+import { parseTrlcFile } from '../src/core/trlc/parseTrlcFile';
 import { extractDependencyMappingsFromSources } from '../src/core/sysmlv2Official/messageInterfaceAsil';
+import { extractSequenceTiming } from '../src/core/sysmlv2Official/sequenceTiming';
 
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -109,6 +111,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Most-recently built graph + owning document — used by on-demand validation.
   let lastGraph:    ContainmentGraph | null          = null;
   let lastDocument: vscode.TextDocument | null       = null;
+  // Summary of the parse that produced lastGraph — lets the on-demand validator warn
+  // when it ran over a partial model (the parse itself had errors).
+  let lastParse:    { success: boolean; errorCount: number } | null = null;
 
   // ── Java runtime — auto-install if missing or too old ────────────────────────
   // Runs before JavaWrapperClient is created so SYSML_JAVA_HOME is set first.
@@ -193,6 +198,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void activePanel.webview.postMessage({ type: 'trlcAnnotations', trlcAnnotations });
   }
 
+  // Auto-load every `.trlc` requirement file in the workspace and send the merged
+  // requirement set to the webview (so traceability populates without a manual import).
+  async function sendTrlcRequirements(): Promise<void> {
+    if (!activePanel) return;
+    const trlcFiles = await vscode.workspace.findFiles('**/*.trlc', '**/node_modules/**');
+    const requirements: ReturnType<typeof parseTrlcFile>['requirements'] = [];
+    const seen = new Set<string>();
+    await Promise.all(trlcFiles.map(async (u) => {
+      try {
+        const text = Buffer.from(await vscode.workspace.fs.readFile(u)).toString('utf8');
+        for (const r of parseTrlcFile(text).requirements) if (!seen.has(r.id)) { seen.add(r.id); requirements.push(r); }
+      } catch { /* skip unreadable files */ }
+    }));
+    console.log(`[sysml-visualizer] sendTrlcRequirements: ${requirements.length} requirements from ${trlcFiles.length} .trlc file(s)`);
+    void activePanel.webview.postMessage({ type: 'trlcRequirements', requirements });
+  }
+
   /** True when the parse result contains unresolved cross-file reference errors. */
   function hasResolveErrors(result: SysMLV2ParseResult): boolean {
     return result.diagnostics.some(
@@ -232,7 +254,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   /** Apply a parse result to VS Code squiggles and the webview. */
   function applyResult(document: vscode.TextDocument, result: SysMLV2ParseResult): void {
-    if (result.graph) { lastGraph = result.graph; lastDocument = document; }
+    if (result.graph) {
+      lastGraph = result.graph; lastDocument = document;
+      lastParse = { success: result.success, errorCount: result.diagnostics.filter(d => d.severity === 'error').length };
+    }
     const diags = result.diagnostics.map(d => {
       const vd = new vscode.Diagnostic(toVsCodeRange(document, d.line, d.column), d.message, mapSeverity(d));
       vd.source = 'SysML v2 (official)';
@@ -246,11 +271,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // Message→interface-port dependencies for sequence-view ASIL derivation
       // (computed across all source files at parse time; see below).
       const dependencies = result.dependencies ?? [];
+      const timing = result.timing ?? [];
+      const satisfies = result.satisfies ?? [];
       void activePanel.webview.postMessage({
         type: 'updateGraph',
         graph,
         behavior,
         dependencies,
+        timing,
+        satisfies,
         success: result.success,
         diagnostics: result.diagnostics,
       });
@@ -295,6 +324,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         phase1.behavior = buildBehavior(phase1.model, phase1.contextModels ?? []);
         // Primary-only (self-contained): a file's message dependencies reference its own ports.
         phase1.dependencies = extractDependencyMappingsFromSources([{ text: primaryText, model: phase1.model }]);
+        phase1.timing = extractSequenceTiming([{ text: primaryText, model: phase1.model }]);
+        phase1.satisfies = extractSatisfiesTraces([phase1.model]);
       }
       phase1ForFallback = phase1;
 
@@ -342,10 +373,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         result.behavior = buildBehavior(result.model, result.contextModels ?? []);
         // Dependencies across ALL files (primary + context), so message ASIL resolves
         // for every file's sequences — not only the currently-active file's.
-        result.dependencies = extractDependencyMappingsFromSources([
+        const sources = [
           { text: primaryText, model: result.model },
           ...contextFiles.map((c, i) => ({ text: c.text, model: result.contextModels?.[i] })),
-        ]);
+        ];
+        result.dependencies = extractDependencyMappingsFromSources(sources);
+        result.timing = extractSequenceTiming(sources);
+        result.satisfies = extractSatisfiesTraces([result.model, ...(result.contextModels ?? [])]);
       }
 
       applyResult(document, result);
@@ -559,6 +593,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Send trlc annotations immediately so the Trace view is ready
         // even before the parse completes.
         sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
+        sendTrlcRequirements().catch(err => console.error('[sysml-visualizer] trlcRequirements error:', err));
 
       } else if (msg.type === 'applyFullTextEdit') {
         if (!currentSysmlUri) {
@@ -705,7 +740,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           return;
         }
         const valDiags = validateModel(lastGraph);
-        void panel.webview.postMessage({ type: 'validatorResult', diagnostics: valDiags });
+        void panel.webview.postMessage({
+          type: 'validatorResult',
+          diagnostics: valDiags,
+          // So the webview can flag that these checks ran over a PARTIAL model when the
+          // parse itself failed (validateModel checks graph rules, not syntax/linking).
+          parsePartial: lastParse ? !lastParse.success : false,
+          parseErrorCount: lastParse?.errorCount ?? 0,
+        });
         // Persist as VS Code squiggles in a separate collection so they don't
         // mix with parser diagnostics and survive until the next explicit run.
         const vsValDiags = valDiags.map(d => {
@@ -850,6 +892,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
         // Resend trlc annotations so new file's traces appear immediately.
         sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
+        sendTrlcRequirements().catch(err => console.error('[sysml-visualizer] trlcRequirements error:', err));
       } else {
         console.log('[sysml-visualizer] non-sysml editor active — keeping current model');
       }

@@ -488,6 +488,302 @@ change. `prefers-reduced-motion` and a short-on-screen-hop check short-circuit t
 
 ---
 
+# Sequence-view features
+
+Features 8–9 apply to the **Sequence** view (`src/ui/views/SysMLSequenceView.tsx`), which renders a
+sequence action definition as a UML sequence diagram (lifelines, messages, combined fragments), **not**
+the Interconnect view of Features 1–7. Like those, they are **purely presentational and additive** —
+they derive extra annotations from the parsed model and never change message, lifeline, ordering, or
+fragment rendering. Both attach their data to the owning sequence **by qualified name** and, per the
+same primary-file rule the other views use, the selectable sequences are only the *message* sequences
+declared in the currently-open file (behaviour action definitions, which own `flow` item-flows but no
+lifeline messages, are not offered).
+
+---
+
+## Feature 8 — Message ASIL badges
+
+### 8.1 Rationale
+Safety reviews need each sequence message's ASIL visible at a glance. The model deliberately keeps
+`message`s free of `@ASIL` and instead maps each message — via an explicit `dependency` — to the
+**structural interface (or port pair)** it traverses, which carries the authoritative `@ASIL`. The
+view SHALL derive and display each message's ASIL from that mapping and SHALL **never guess** (no
+inference from lifelines, payload/item types, action ASIL, or names).
+
+### 8.2 Definitions
+- **Message interface dependency** — a `dependency` whose *client* is a message and whose *supplier*
+  is a `::`-qualified `interface`/`port`. Two model variants are supported:
+  - **Single concrete interface** — one `<msg>StructuralInterface` dependency → one `InterfaceUsage`
+    endpoint carrying the ASIL.
+  - **Sender/receiver pair** — `<msg>SenderInterface` + `<msg>ReceiverInterface` → two `PortUsage`
+    endpoints.
+- **Derived status** — one of: **resolved** (the endpoint(s) agree on a level), **conflict** (the pair
+  carry different levels), **partial** (pair, only one side has a level), **unassigned** (resolved
+  endpoint(s) carry no `@ASIL`), **unresolved** (a dependency/endpoint is missing or does not resolve).
+
+### 8.3 Functional requirements
+- **FR-AS-1** For each message the view SHALL find the dependency(ies) whose client is that message,
+  **scoped to the owning sequence** — message names are only locally unique, so a dependency declared
+  in another sequence MUST NOT match.
+- **FR-AS-2** Each supplier SHALL be resolved to the concrete `InterfaceUsage`/`PortUsage` by its
+  qualified name in **either** `Def::name` **or** `Package::…::Def::name` form, and its `@ASIL` read
+  off that element. A bare or dotted supplier SHALL NOT resolve.
+- **FR-AS-3** The derived status SHALL follow §8.2 exactly. The tool MUST NOT pick the higher ASIL on a
+  conflict and MUST NOT derive a single level for the partial/unresolved cases.
+- **FR-AS-4** A **resolved** message SHALL show a colour-coded ASIL badge (level palette QM→D);
+  **conflict**/**partial**/**unresolved** SHALL show a distinct non-committal marker; **unassigned**
+  SHALL show no badge. Hover SHALL reveal the full derivation (message, payload, each endpoint + ASIL).
+- **FR-AS-5** The dependency elements SHALL be used **only** to derive ASIL — they MUST NOT be rendered
+  as sequence messages, lifelines, control-flow arrows, or structural connectors.
+- **FR-AS-6** Resolution SHALL work across files (a message in the open file may reference an interface
+  declared in an imported structure file), while only the open file's sequences are selectable
+  (see the Sequence-view note above).
+- **FR-AS-7** ASIL surfacing SHALL be **purely presentational** — no change to the model, diagnostics,
+  message ordering, occurrences, `first`/`then` successions, fragments, or lifelines — and MUST compose
+  with the timing markers of Feature 9 on the same message.
+
+### 8.4 Acceptance criteria
+- Every message whose interface(s) carry ASIL D shows an `ASIL D` badge; a message whose sender
+  interface has no ASIL but whose receiver has D shows the partial/unresolved marker; a message with no
+  interface dependency shows no badge.
+- Two identically-named messages in different sequences resolve independently (correct scoping).
+- Dependencies never appear as arrows or lifelines; message order is unchanged; a model with no
+  interface dependencies renders exactly as before.
+
+### 8.5 Prototype reference
+`src/core/sysmlv2Official/messageInterfaceAsil.ts` — dependency extraction across all files
+(AST-position-anchored textual read, since a `Dependency`'s client/supplier are cross-references the
+raw AST does not flatten), endpoint resolution over `PortUsage` **and** `InterfaceUsage` indexed by
+both full and definition-local qualified names, the pure `deriveMessageAsil` / `deriveSingleInterfaceAsil`
+rule, and `indexDependenciesByClient`. Wired through both parse paths (extension `applyResult` →
+`updateGraph`; web `HttpSysMLV2ParserService`) as a `dependencies` field on `SysMLV2ParseResult`, keyed
+to the owning sequence by qualified name. `src/ui/views/SysMLSequenceView.tsx` — `AsilTag` badge +
+derivation tooltip. Tests: `__tests__/messageInterfaceAsil.test.ts`, `SysMLSequenceView.asil.test.ts`.
+Authoring guide for model authors: `docs/SEQUENCE_VIEW_AUTHORING.md`.
+
+---
+
+## Feature 9 — Timing constraints on sequences (FTTI / duration deadlines)
+
+### 9.1 Rationale
+A safety sequence often has a hard timing budget — e.g. a Fault-Tolerant-Time-Interval (FTTI): the
+reaction must complete within N ms of the fault. SysML v2 expresses this as a *timing-evaluation* layer
+on the sequence: event-occurrence milestones, elapsed-duration measurements taken from a common origin,
+a duration budget, and an asserted contract. Reviewers need that contract visible **on the sequence** —
+the budget, which milestone it bounds, and the ordering constraints — without reading the source. The
+view SHALL surface it and MUST NOT invent any quantity the model does not state.
+
+### 9.2 Definitions
+- **Milestone** — an `event occurrence` declared in the sequence (top-level or inside a `ref part`
+  lifeline). Some milestones are also message endpoints (`… to reset.resoutReceived`); others are pure
+  markers (`faultOccurred`, `communicationSilent`).
+- **Origin** — the milestone all elapsed measures are taken from (the fault-occurrence event,
+  conceptually t = 0).
+- **Elapsed measure** — an attribute `attribute <name> : DurationValue = TimeOf(<target>) - TimeOf(<origin>)`,
+  where `<target>`/`<origin>` are milestones. The value is **symbolic** — it carries no number.
+- **Budget** — an attribute holding a literal duration, `attribute <name> : DurationValue = <n> [<unit>]`
+  (e.g. `0.010 [s]`); the only quantitative value.
+- **Timing contract** — an `assert constraint <name> { … }` over the measures and budget: clauses
+  joined by `and`, giving the ordering plus a `measure <= budget` bound.
+- **Deadline** — a measure bounded by a budget in the contract (`resoutReceivedElapsed <= drivingFttiLimit`),
+  together with its target milestone; the quantitative limit that target must meet.
+
+### 9.3 Functional requirements
+- **FR-TC-1** For each sequence action definition the view SHALL extract its timing elements — elapsed
+  measures (target + origin), budgets (with unit), and the asserted contract — **scoped to that
+  definition** (timing declared in one sequence MUST NOT appear on another).
+- **FR-TC-2** Budgets SHALL be normalised to a common unit for display (understanding at least `s`,
+  `ms`, `us`/`µs`, `ns`, `min`); the displayed value MUST equal the model's (`0.010 [s]` → `10 ms`).
+- **FR-TC-3** The view SHALL derive each **deadline** from the contract by finding `<measure> (<=|<)
+  <budget>` clauses (budget by name or an inline literal) and associating the budget's duration with
+  that measure's target milestone. The tool MUST NOT infer a deadline the contract does not state, and
+  MUST NOT compute or estimate any elapsed value (times are symbolic).
+- **FR-TC-4** When a sequence has any timing, the view SHALL show a **timing-contract panel** listing
+  the elapsed measures (each in its `TimeOf(target) − TimeOf(origin)` form), the budget(s), the
+  deadline-bounded measure(s) marked `≤ <budget>`, and the asserted contract. The panel SHALL be
+  collapsible and collapsed by default so it never displaces the diagram unless opened.
+- **FR-TC-5** For a deadline whose **target milestone is the receive endpoint (`to`) of a rendered
+  message**, the view SHALL mark that message with a compact deadline badge (`⏱ ≤ <budget>`) whose
+  tooltip names the measure, budget, and target. A deadline whose target is not a message endpoint
+  SHALL appear in the panel only — never as a dangling on-diagram marker.
+- **FR-TC-6** Timing surfacing SHALL be **purely presentational** — no change to the model,
+  diagnostics, message ordering, occurrences, successions, fragments, or lifelines — and MUST compose
+  with the ASIL badges of Feature 8 on the same message.
+- **FR-TC-7** A sequence with no timing SHALL render exactly as before (no panel, no badges, no layout
+  change).
+
+### 9.4 Acceptance criteria
+- Opening a sequence with an FTTI timing block (e.g. `FarHwEpc2Sequence`) shows the ⏱ panel with the
+  three elapsed measures, a `FTTI ≤ 10 ms` budget chip, `resoutReceivedElapsed` marked `≤ 10 ms`, and
+  the asserted contract; the panel is collapsed until opened.
+- The `resoutSignal` message (arriving at `reset.resoutReceived`, the deadline's target) carries a
+  `⏱ ≤ 10 ms` badge; messages that don't arrive at a deadline milestone carry none.
+- The displayed budget equals the model's (`0.010 [s]` → `10 ms`); no elapsed value is shown as a number.
+- A sequence without timing is unchanged; message arrows, fragments, and ASIL badges are unaffected in
+  all cases.
+
+### 9.5 Prototype reference
+`src/core/sysmlv2Official/sequenceTiming.ts` — `extractSequenceTiming(sources)` reads each timing
+element from the exact source span the AST reports (`node.startLine..endLine`) — an isolated,
+position-anchored textual read, since the `TimeOf`/constraint expression trees are not flattened in the
+raw AST — yielding per-definition `SequenceTiming { measures, budgets, contract, deadlines }`; deadlines
+are derived by scanning the contract for `measure ≤ budget` clauses. Wired through both parse paths as a
+`timing` field on `SysMLV2ParseResult`, keyed to the owning sequence by qualified name — the same
+pipeline as the Feature 8 dependencies. `src/ui/views/SysMLSequenceView.tsx` — `TimingPanel`
+(collapsible contract summary) and `TimingTag` (the `⏱ ≤ <budget>` badge, matched to a message by its
+`to` endpoint). Test: `src/core/sysmlv2Official/__tests__/sequenceTiming.test.ts`. Authoring guide for
+model authors: `docs/SEQUENCE_VIEW_AUTHORING.md`.
+
+---
+
+# Traceability features
+
+Features 10–11 apply to the **Trace** and **Reqts** views (`src/ui/views/TraceabilityView.tsx`,
+`RequirementsView.tsx`), which link the model to external TRLC requirements. They are purely
+presentational and additive, and compose with the ASIL surfacing of Features 8–9. Feature 10
+covers `@Satisfies`-based requirement → element tracing; Feature 11 covers the
+**requirement-to-requirement derivation hierarchy** read from the same `.trlc` requirements.
+
+---
+
+## Feature 10 — TRLC requirement traceability via `@Satisfies`
+
+### 10.1 Rationale
+Safety work needs to see, at a glance, which model elements satisfy which requirements.
+Requirements live in native IPF **`.trlc`** files; the SysML model links to them with a
+**`@Satisfies`** metadata element carrying the requirement names. The view SHALL surface this as a
+requirement → element trace matrix **automatically**, without hand-wiring or a comment convention.
+
+### 10.2 Definitions
+- **`@Satisfies` metadata** — a `MetadataUsage` typed by `Satisfies`, applied to a definition/usage,
+  whose `reqId` value is a tuple of requirement-name string literals, e.g.
+  `@Satisfies { reqId = ("SafeFaultManagement_…_65181245", …); }`.
+- **TRLC requirement** — a record in a `.trlc` file. Native IPF form:
+  `IpfRMBase.SystemRequirement <Name_cbid> { description = ''' … ''' asil = IpfRMBase.ASIL.D … }`;
+  the **record name is the requirement id**.
+- **Trace** — a (requirement, element) pair where `element` carries an `@Satisfies` naming that
+  requirement.
+
+### 10.3 Functional requirements
+- **FR-RT-1** The view SHALL **auto-load every `.trlc` file in the workspace** and merge their
+  requirements — no manual import step required.
+- **FR-RT-2** The `.trlc` parser SHALL read the native IPF format: record name → requirement id,
+  triple-quoted `''' … '''` multi-line descriptions, and enum ASIL (`IpfRMBase.ASIL.D` → `D`). The
+  legacy double-quoted format (`description = "…"`, `asil = "X"`) MUST continue to parse unchanged.
+- **FR-RT-3** The view SHALL extract each `@Satisfies` `reqId` list from the model and attribute the
+  traces to the **nearest enclosing named element** (the definition/usage the metadata annotates).
+- **FR-RT-4** Traces SHALL be matched to requirements by **exact requirement name**; a `reqId` with
+  no matching requirement is **silently dropped** (never guessed or fuzzy-matched).
+- **FR-RT-5** The view SHALL render a **requirement → element trace matrix**: each requirement with
+  the elements that satisfy it, each element **clickable to jump to its source**. This SHALL
+  **coexist with and merge** (de-duplicated) any legacy `// trlc-satisfies: N` comment traces.
+- **FR-RT-6** Traceability SHALL be **purely presentational** — no change to the model or
+  diagnostics — and SHALL show the requirement's **ASIL** where present.
+- **FR-RT-7** A project with no `.trlc` files and/or no `@Satisfies` metadata SHALL show the empty
+  state, with **no regression** to any other view.
+
+### 10.4 Acceptance criteria
+- Opening a project that has a `.trlc` file and `@Satisfies` metadata populates the Trace matrix
+  **automatically** (no manual import): requirements listed with their satisfying elements.
+- A requirement named in an element's `@Satisfies` lists that element; clicking the element jumps to
+  its declaration in the editor.
+- IPF `.trlc` requirements display their id, **ASIL**, and description; a legacy double-quoted
+  `.trlc` still parses to the same result as before.
+- A model with no `.trlc`/`@Satisfies` shows the empty Trace state, and the Sequence/Interconnect/
+  Actions views are unaffected.
+
+### 10.5 Prototype reference
+`src/core/trlc/extractTraces.ts` — `extractSatisfiesTraces(models)` walks the containment tree for
+`MetadataUsage` nodes whose `FeatureTyping` is `Satisfies`, collects `LiteralString` `reqId`s, and
+attributes each to the nearest enclosing named def/usage. `parseTrlcFile.ts` — native-IPF record /
+triple-quoted description / enum-ASIL handling alongside the legacy path. Extension
+`sendTrlcRequirements()` auto-loads `**/*.trlc`. App `trlcDataWithTraces` matches `satisfies` reqIds
+to requirement ids by exact name and merges with the annotation traces. `TraceabilityView.tsx`
+renders the matrix. Both parse paths carry a `satisfies` field on `SysMLV2ParseResult`. Tests:
+`src/core/trlc/__tests__/extractSatisfies.test.ts`, `parseTrlcFile.ipf.test.ts`.
+
+---
+
+## Feature 11 — Requirement derivation hierarchy (collapsible tree)
+
+### 11.1 Rationale
+Requirements are not flat: system-level requirements are refined into hardware and software
+requirements, which are refined further. TRLC captures this with a **`derived_from_trlc`** field on
+each requirement naming its parent requirement(s). A flat list hides that structure, so reviewers
+cannot see how a low-level requirement traces up to the system requirement it satisfies, nor how many
+requirements hang off a given parent. The view SHALL render the requirements as a **collapsible
+derivation tree** so the refinement hierarchy is visible and navigable, and MUST derive the hierarchy
+only from what the model states (no guessed parent–child links).
+
+### 11.2 Definitions
+- **Parent link** — a requirement's `derived_from_trlc = [ <ReqId>, … ]` entry; each listed id is a
+  requirement this one is *derived from* (refines). The list MAY be empty/absent, single-line, or
+  multi-line.
+- **Resolvable parent** — a parent id that matches the id of another loaded requirement. A parent id
+  with no matching requirement is **unresolved**.
+- **Root requirement** — a requirement with no resolvable parent (the top of a derivation branch).
+- **Requirement category (`kind`)** — the short class derived from the `.trlc` record type:
+  `SystemRequirement → SYS`, `HardwareRequirement → HW`, `SoftwareRequirement → SW` (else the raw
+  type). It is display metadata only.
+- **Derivation forest** — the set of trees rooted at the root requirements, with each non-root
+  attached under a parent; a requirement with more than one resolvable parent is a **multi-parent
+  (DAG)** node.
+
+### 11.3 Functional requirements
+- **FR-RH-1** The `.trlc` parser SHALL read `derived_from_trlc` into a per-requirement parent-id list,
+  accepting both the single-line (`[ A, ]`) and multi-line (`[\n A,\n B,\n ]`) array forms, and SHALL
+  capture the record type as the short `kind` (SYS/HW/SW). This MUST NOT regress the existing
+  description/ASIL parsing (Feature 10 FR-RT-2) — a requirement with no `derived_from_trlc` is a root.
+- **FR-RH-2** The view SHALL build a **derivation forest** from the parent links: roots are the
+  requirements with no resolvable parent; every other requirement attaches under a parent. Unresolved
+  parent ids MUST be ignored (never invented, never fuzzy-matched); a requirement whose parents are
+  all unresolved becomes a root. A self-reference MUST NOT make a requirement its own parent.
+- **FR-RH-3** The view SHALL render the forest as an **indented, collapsible tree**: each requirement
+  with children SHALL have an independent expand/collapse control, and the view SHALL provide a single
+  **Expand all / Collapse all** control over the whole tree.
+- **FR-RH-4** Each tree row SHALL show the requirement's **category badge** (SYS/HW/SW), title, and —
+  where present — its **ASIL** and its **traced-element count** (the number of model elements that
+  satisfy it, per Feature 10). A collapsed parent SHALL indicate how many descendants it hides.
+- **FR-RH-5** A **multi-parent** requirement SHALL attach under its **first** resolvable parent (so the
+  rendering stays a strict tree), and its additional parents MUST be surfaced (a marker with the extra
+  parents available on hover) — the DAG MUST NOT be silently hidden, and the requirement MUST NOT be
+  duplicated under every parent.
+- **FR-RH-6** Selecting a requirement in the tree SHALL reveal its **description** and its
+  **traced-element chips** inline, each chip clickable to jump to that element's source (the same
+  navigation as the Feature 10 matrix). Selecting SHALL scroll the row into view. Tree state (which
+  nodes are collapsed) SHALL be independent of selection.
+- **FR-RH-7** The hierarchy SHALL be **purely presentational** — no change to the model, requirements,
+  or diagnostics — and SHALL compose with Feature 10 (same auto-loaded `.trlc` requirements and
+  `@Satisfies` traces). A requirement set that declares **no** `derived_from_trlc` SHALL render as a
+  flat forest (every requirement a root) with no regression.
+
+### 11.4 Acceptance criteria
+- Opening a project whose `.trlc` requirements use `derived_from_trlc` shows a tree: root
+  (system) requirements at the top, each expandable to its derived hardware/software requirements;
+  the header reports the counts (e.g. *156 reqts · 13 roots · 143 derived*).
+- Each row shows a SYS/HW/SW badge, ASIL, and a traced-element count; collapsing a parent shows an
+  "N descendants" hint; Expand all / Collapse all flips the whole tree.
+- A requirement listed under two parents appears once (under the first) with a marker exposing the
+  other parent; no requirement is duplicated and no parent link is lost.
+- Selecting a requirement expands its description and satisfying-element chips inline; clicking a chip
+  jumps to that element. A `.trlc` set with no `derived_from_trlc` renders every requirement as a
+  root (flat), with the Trace matrix otherwise unchanged.
+
+### 11.5 Prototype reference
+`src/core/trlc/parseTrlcFile.ts` — array-value parsing (`derived_from_trlc` single- and multi-line)
+into `TrlcRequirement.derivedFrom`, plus record-type → `kind` (SYS/HW/SW) via `reqKind()`.
+`src/core/trlc/types.ts` — `derivedFrom?: string[]` and `kind?: string` on `TrlcRequirement`.
+`src/ui/views/TraceabilityView.tsx` — builds the forest (`childrenOf` / `roots`, first-parent
+attachment, `resolvedParents` guard against self/unresolved), recursive `renderNode(req, depth)` with
+per-node collapse (`collapsedReqs` state), Expand-all / Collapse-all, category badges (`KIND_BADGE`),
+ASIL + `↳ N` trace count, `countDesc` descendant hint, a `⑂` multi-parent marker, and inline
+description + traced-element chips (`renderChips`) for the selected row. The requirement objects flow
+unchanged through the existing auto-load path (extension `sendTrlcRequirements()` → `trlcRequirements`
+message → App `trlcData`), so no parse-graph version bump is needed. Test:
+`src/core/trlc/__tests__/parseTrlcFile.ipf.test.ts` (derived_from + kind cases).
+
+---
+
 ## Cross-cutting notes for the dev team
 - **Purely presentational.** No feature edits the model; all are view state derived from the parsed
   containment graph. They MUST compose (e.g. hide unconnected ports *inside* an expanded white box,

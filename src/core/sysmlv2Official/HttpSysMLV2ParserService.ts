@@ -3,6 +3,8 @@ import type { SysMLV2ParseResult, BehaviorData } from './SysMLV2ParseResult';
 import type { ModelNode } from './ModelNode';
 import { buildContainmentGraph } from '../adapters/officialSysMLAdapter';
 import { extractDependencyMappingsFromSources } from './messageInterfaceAsil';
+import { extractSequenceTiming } from './sequenceTiming';
+import { extractSatisfiesTraces } from '../trlc/extractTraces';
 
 /**
  * HTTP-based implementation of SysMLV2ParserService.
@@ -109,10 +111,13 @@ export class HttpSysMLV2ParserService implements SysMLV2ParserService {
       const contextModels = Array.isArray(rawBody['contextModels'])
         ? rawBody['contextModels'] as ModelNode[][]
         : [];
-      const dependencies = extractDependencyMappingsFromSources([
+      const timingSources = [
         { text, model },
         ...(context ?? []).map((c, i) => ({ text: c.text, model: contextModels[i] })),
-      ]);
+      ];
+      const dependencies = extractDependencyMappingsFromSources(timingSources);
+      const timing = extractSequenceTiming(timingSources);
+      const satisfies = extractSatisfiesTraces([model, ...contextModels]);
 
       return {
         success:     result.success,
@@ -121,6 +126,8 @@ export class HttpSysMLV2ParserService implements SysMLV2ParserService {
         graph,
         behavior,
         dependencies,
+        timing,
+        satisfies,
         rawResponse,
         error:       result.error,
       };

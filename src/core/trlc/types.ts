@@ -11,6 +11,10 @@ export interface TrlcRequirement {
   title: string;
   text: string;
   asil?: string;
+  /** Short requirement category from the record type: SYS | HW | SW (else the raw type). */
+  kind?: string;
+  /** Parent requirement ids this one is derived from (`derived_from_trlc`). */
+  derivedFrom?: string[];
   source: 'trlc';
 }
 

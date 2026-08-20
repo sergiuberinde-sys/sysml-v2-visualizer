@@ -7,7 +7,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import type { VisualizerModel, VizNode } from '../../core/visualizerModel';
 import type { SelectionState } from '../../app/selection';
-import type { TrlcData } from '../../core/trlc/types';
+import type { TrlcData, TrlcRequirement } from '../../core/trlc/types';
 import type { ContainmentGraph, GraphNode } from '../../core/sysmlv2Official/ContainmentGraph';
 import { FitPanel } from '../layout/FitPanel';
 
@@ -168,6 +168,19 @@ const ASIL_COLOR: Record<string, string> = {
   D: '#f87171', C: '#fb923c', B: '#facc15', A: '#a3e635', QM: '#64748b',
 };
 
+// Short category badge colours for the hierarchy tree (System / Hardware / Software).
+const KIND_BADGE: Record<string, { bg: string; fg: string }> = {
+  SYS: { bg: '#14243a', fg: '#93c5fd' },
+  HW:  { bg: '#332614', fg: '#fcd34d' },
+  SW:  { bg: '#12301f', fg: '#6ee7b7' },
+};
+
+const treeBtnStyle: React.CSSProperties = {
+  fontSize: 10, color: '#94a3b8', background: '#0d1f2d',
+  border: '1px solid #1e3a5f', borderRadius: 4, padding: '2px 8px',
+  cursor: 'pointer', fontFamily: 'monospace',
+};
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -211,7 +224,10 @@ export default function TraceabilityView({ result, selection, onSelect, onShapeC
     return m;
   }, [graph]);
 
-  // Official mode: render TRLC trace matrix
+  // Collapse state for the requirement-hierarchy tree (set of collapsed requirement ids).
+  const [collapsedReqs, setCollapsedReqs] = useState<Set<string>>(new Set());
+
+  // Official mode: render TRLC requirement hierarchy + traces
   if (isOfficial) {
     if (!trlcData) {
       return (
@@ -224,111 +240,195 @@ export default function TraceabilityView({ result, selection, onSelect, onShapeC
       );
     }
 
-    // Group traces by requirement
+    // Group traces by requirement.
     const byReq = new Map<string, string[]>();
     for (const t of trlcData.traces) {
       if (!byReq.has(t.requirementId)) byReq.set(t.requirementId, []);
       byReq.get(t.requirementId)!.push(t.elementName);
     }
 
-    return (
-      <div style={{
-        height: '100%', overflowY: 'auto',
-        padding: '16px 24px',
-        background: '#0d1117',
-        fontFamily: 'monospace',
-      }}>
-        <div style={{
-          marginBottom: 16, fontSize: 10, color: '#475569',
-          textTransform: 'uppercase', letterSpacing: '0.08em',
-          borderBottom: '1px solid #1e2d3d', paddingBottom: 8,
-        }}>
-          Requirement Traces ({trlcData.requirements.length} reqts · {trlcData.traces.length} links)
+    // Build the derivation forest from `derived_from_trlc`. Each requirement attaches
+    // under its FIRST resolvable parent (keeps a strict tree); any further parents are
+    // surfaced as a small "also derives from" marker so the DAG isn't hidden.
+    const byId = new Map(trlcData.requirements.map(r => [r.id, r]));
+    const resolvedParents = (r: TrlcRequirement) =>
+      (r.derivedFrom ?? []).filter(p => byId.has(p) && p !== r.id);
+    const childrenOf = new Map<string, TrlcRequirement[]>();
+    const roots: TrlcRequirement[] = [];
+    for (const r of trlcData.requirements) {
+      const parents = resolvedParents(r);
+      if (parents.length === 0) { roots.push(r); continue; }
+      const primary = parents[0];
+      if (!childrenOf.has(primary)) childrenOf.set(primary, []);
+      childrenOf.get(primary)!.push(r);
+    }
+    const derivedCount = trlcData.requirements.length - roots.length;
+
+    // Total descendants under a node (shown as a hint on collapsed rows).
+    const descCache = new Map<string, number>();
+    const countDesc = (id: string, seen = new Set<string>()): number => {
+      const cached = descCache.get(id);
+      if (cached !== undefined) return cached;
+      if (seen.has(id)) return 0;
+      seen.add(id);
+      const kids = childrenOf.get(id) ?? [];
+      let n = kids.length;
+      for (const k of kids) n += countDesc(k.id, seen);
+      descCache.set(id, n);
+      return n;
+    };
+
+    const toggle = (id: string) => setCollapsedReqs(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    const expandAll   = () => setCollapsedReqs(new Set());
+    const collapseAll = () => setCollapsedReqs(new Set(childrenOf.keys()));
+
+    // Traced-element chips, shown inline for the selected requirement only.
+    const renderChips = (req: TrlcRequirement) => {
+      const elements = byReq.get(req.id) ?? [];
+      if (elements.length === 0) {
+        return <span style={{ fontSize: 10, color: '#334155', fontStyle: 'italic' }}>no traced elements</span>;
+      }
+      return (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {elements.map(el => {
+            const node = nodeByName.get(el);
+            const typeLabel = node ? (EMF_TYPE_LABEL[node.type] ?? node.type) : null;
+            const elSelId = `trlc-el-${req.id}-${el}`;
+            return (
+              <span
+                key={el}
+                title={`Jump to ${el} in editor`}
+                style={{
+                  fontSize: 10, padding: '2px 7px',
+                  background: '#0f172a', border: '1px solid #334155',
+                  borderRadius: 4, color: '#94a3b8', cursor: 'pointer',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+                onClick={e => {
+                  e.stopPropagation();
+                  onSelect({
+                    id: elSelId, type: 'part', name: el, line: node?.startLine,
+                    extra: node ? { graphId: node.id, emfType: node.type } : { lookupByName: 'true' },
+                  });
+                }}
+              >
+                {typeLabel && <span style={{ color: '#475569', fontSize: 9 }}>{typeLabel}</span>}
+                {el}
+              </span>
+            );
+          })}
         </div>
-        {trlcData.requirements.map(req => {
-          const elements = byReq.get(req.id) ?? [];
-          const selId = `trlc-req-${req.id}`;
-          const isSelected = selection?.id === selId;
-          return (
-            <div
-              key={req.id}
-              ref={el => { if (el) cardRefs.current.set(selId, el); else cardRefs.current.delete(selId); }}
+      );
+    };
+
+    const renderNode = (req: TrlcRequirement, depth: number): React.ReactNode => {
+      const kids = childrenOf.get(req.id) ?? [];
+      const hasKids = kids.length > 0;
+      const coll = collapsedReqs.has(req.id);
+      const selId = `trlc-req-${req.id}`;
+      const isSelected = selection?.id === selId;
+      const traceN = (byReq.get(req.id) ?? []).length;
+      const extraParents = resolvedParents(req).slice(1);
+      const badge = req.kind ? KIND_BADGE[req.kind] : undefined;
+
+      return (
+        <div key={req.id}>
+          <div
+            ref={el => { if (el) cardRefs.current.set(selId, el); else cardRefs.current.delete(selId); }}
+            title={req.id}
+            onClick={() => onSelect({
+              id: selId, type: 'requirement', name: req.id,
+              extra: { reqId: req.id, text: req.text, title: req.title, ...(req.asil ? { asil: req.asil } : {}) },
+            })}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '5px 8px', marginBottom: 2, marginLeft: depth * 18,
+              background: isSelected ? '#0f1f3a' : 'transparent',
+              border: `1px solid ${isSelected ? '#60a5fa' : 'transparent'}`,
+              borderLeft: `2px solid ${isSelected ? '#60a5fa' : (depth > 0 ? '#1e2d3d' : 'transparent')}`,
+              borderRadius: 6, cursor: 'pointer',
+            }}
+          >
+            <span
+              onClick={e => { if (hasKids) { e.stopPropagation(); toggle(req.id); } }}
               style={{
-                marginBottom: 12,
-                padding: '10px 14px',
-                background: isSelected ? '#0f1f3a' : '#0d1f2d',
-                border: `1px solid ${isSelected ? '#60a5fa' : '#1e3a5f'}`,
-                borderRadius: 7,
-                cursor: 'pointer',
+                width: 12, flexShrink: 0, textAlign: 'center', fontSize: 9, userSelect: 'none',
+                color: hasKids ? '#64748b' : '#334155', cursor: hasKids ? 'pointer' : 'default',
               }}
-              onClick={() => onSelect({
-                id: selId, type: 'requirement', name: req.id,
-                extra: { reqId: req.id, text: req.text, title: req.title, ...(req.asil ? { asil: req.asil } : {}) },
-              })}
             >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: req.text ? 4 : 6 }}>
-                <span style={{ fontSize: 11, color: '#60a5fa', fontWeight: 600 }}>{req.id}</span>
-                <span style={{ fontSize: 12, color: '#e2e8f0' }}>{req.title}</span>
-                {req.asil && (
-                  <span style={{ fontSize: 10, color: ASIL_COLOR[req.asil] ?? '#64748b', marginLeft: 'auto', flexShrink: 0 }}>
-                    ASIL-{req.asil}
-                  </span>
-                )}
-              </div>
+              {hasKids ? (coll ? '▶' : '▼') : '·'}
+            </span>
+            {badge && (
+              <span style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: '0.04em',
+                padding: '1px 5px', borderRadius: 3, flexShrink: 0,
+                background: badge.bg, color: badge.fg,
+              }}>
+                {req.kind}
+              </span>
+            )}
+            <span style={{
+              fontSize: 12, color: '#e2e8f0',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {req.title}
+            </span>
+            {extraParents.length > 0 && (
+              <span title={`also derived from: ${extraParents.join(', ')}`} style={{ fontSize: 9, color: '#a78bfa', flexShrink: 0 }}>
+                ⑂{extraParents.length + 1}
+              </span>
+            )}
+            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              {coll && hasKids && (
+                <span style={{ fontSize: 10, color: '#475569' }}>{countDesc(req.id)} descendants</span>
+              )}
+              {traceN > 0 && (
+                <span title={`${traceN} traced element(s)`} style={{ fontSize: 10, color: '#38bdf8' }}>↳ {traceN}</span>
+              )}
+              {req.asil && (
+                <span style={{ fontSize: 10, color: ASIL_COLOR[req.asil] ?? '#64748b' }}>ASIL-{req.asil}</span>
+              )}
+            </span>
+          </div>
+
+          {isSelected && (
+            <div style={{ marginLeft: depth * 18 + 22, marginTop: 2, marginBottom: 6 }}>
               {req.text && (
-                <div style={{
-                  fontSize: 11, color: '#94a3b8', lineHeight: 1.5,
-                  marginBottom: 8, fontFamily: 'sans-serif',
-                }}>
+                <div style={{ fontSize: 11, color: '#94a3b8', lineHeight: 1.5, marginBottom: 6, fontFamily: 'sans-serif' }}>
                   {req.text}
                 </div>
               )}
-              {elements.length > 0 ? (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {elements.map(el => {
-                    const node = nodeByName.get(el);
-                    const typeLabel = node ? (EMF_TYPE_LABEL[node.type] ?? node.type) : null;
-                    const elSelId = `trlc-el-${req.id}-${el}`;
-                    return (
-                      <span
-                        key={el}
-                        title={`Jump to ${el} in editor`}
-                        style={{
-                          fontSize: 10, padding: '2px 7px',
-                          background: '#0f172a',
-                          border: '1px solid #334155',
-                          borderRadius: 4,
-                          color: '#94a3b8',
-                          cursor: 'pointer',
-                          display: 'inline-flex', alignItems: 'center', gap: 4,
-                        }}
-                        onClick={e => {
-                          e.stopPropagation();
-                          onSelect({
-                            id: elSelId,
-                            type: 'part',
-                            name: el,
-                            line: node?.startLine,
-                            extra: node
-                              ? { graphId: node.id, emfType: node.type }
-                              : { lookupByName: 'true' },
-                          });
-                        }}
-                      >
-                        {typeLabel && (
-                          <span style={{ color: '#475569', fontSize: 9 }}>{typeLabel}</span>
-                        )}
-                        {el}
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : (
-                <span style={{ fontSize: 10, color: '#334155', fontStyle: 'italic' }}>no traced elements</span>
-              )}
+              {renderChips(req)}
             </div>
-          );
-        })}
+          )}
+
+          {hasKids && !coll && kids.map(k => renderNode(k, depth + 1))}
+        </div>
+      );
+    };
+
+    return (
+      <div style={{
+        height: '100%', overflowY: 'auto',
+        padding: '16px 24px', background: '#0d1117', fontFamily: 'monospace',
+      }}>
+        <div style={{
+          marginBottom: 12, paddingBottom: 8, borderBottom: '1px solid #1e2d3d',
+          display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <span style={{ fontSize: 10, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Requirement Hierarchy ({trlcData.requirements.length} reqts · {roots.length} roots · {derivedCount} derived · {trlcData.traces.length} links)
+          </span>
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            <button onClick={expandAll} style={treeBtnStyle}>Expand all</button>
+            <button onClick={collapseAll} style={treeBtnStyle}>Collapse all</button>
+          </span>
+        </div>
+        {roots.map(r => renderNode(r, 0))}
       </div>
     );
   }

@@ -7,6 +7,7 @@ import {
   type DependencyMapping, type DerivedMessageAsil, type MessageDependencies, type PortAsilIndex,
 } from '../../core/sysmlv2Official/messageInterfaceAsil';
 import { asilColors } from '../layout/AsilBadge';
+import type { SequenceTiming } from '../../core/sysmlv2Official/sequenceTiming';
 
 // ── Zoom bounds ────────────────────────────────────────────────────────────────
 const ZOOM_MIN  = 0.25;
@@ -18,6 +19,8 @@ interface Props {
   graph: ContainmentGraph | undefined;
   /** Retained message→interface-port dependencies used to derive per-message ASIL. */
   dependencies?: DependencyMapping[];
+  /** Per-definition timing-evaluation data (elapsed measures, budget, contract). */
+  timing?: SequenceTiming[];
   selection: SelectionState;
   onSelect: (s: SelectionState) => void;
 }
@@ -269,6 +272,7 @@ interface SequenceDef {
   participants: GraphNode[];
   messages:     ParsedMessage[];
   entries:      Endpoint[];   // root event occurrences that start the interaction (found messages)
+  successions:  Array<[string, string]>; // `first A then B` event pairs (keys `participant.event`), for timing placement
 }
 
 // ── Flow resolver (shared helper) ──────────────────────────────────────────────
@@ -554,6 +558,10 @@ export function parseSequenceDefs(
   const results: SequenceDef[] = [];
 
   for (const n of graph.nodes) {
+    // Only offer sequences declared in the currently-open file. `fromPrimary === false`
+    // marks context (imported) nodes, which are kept in the graph for cross-file
+    // resolution (ports, ASIL interfaces) but must not appear as selectable sequences.
+    if (n.fromPrimary === false) continue;
     // Accept both PartDefinition (plain sequences) and ActionDefinition (with if/else)
     if (n.type !== 'PartDefinition' && n.type !== 'ActionDefinition') continue;
 
@@ -590,6 +598,12 @@ export function parseSequenceDefs(
     const ordered = orderMessagesByFirstThen(messages, successions);
     const entries = findEntryEvents(messages, successions);
 
+    // Only a genuine message sequence is selectable. A *behaviour* action definition
+    // owns `flow` item-flows that also parse to FlowUsage but carry no lifeline
+    // endpoints (from/to resolve to null); those must not turn an action diagram into
+    // a "sequence". Require at least one real message between two lifelines.
+    if (!ordered.some(m => m.from && m.to)) continue;
+
     // Derive each message's ASIL from its two interface-port dependencies, scoped to
     // THIS action definition: the message's qualified name (defQName::messageName) is
     // the dependency client, so lookups never cross action-definition scopes even when
@@ -602,7 +616,7 @@ export function parseSequenceDefs(
       }
     }
 
-    results.push({ node: n, participants, messages: ordered, entries });
+    results.push({ node: n, participants, messages: ordered, entries, successions });
   }
 
   return results.sort((a, b) => (a.node.startLine ?? 0) - (b.node.startLine ?? 0));
@@ -728,10 +742,133 @@ function AsilTag({ d, x, cy, label, payload }: {
   );
 }
 
-export default function SysMLSequenceView({ graph, dependencies, selection, onSelect }: Props) {
+// ── Timing (UML duration constraints + contract panel) ────────────────────────
+
+const endpointLabel = (e: { participant?: string; event: string }): string =>
+  e.participant ? `${e.participant}.${e.event}` : e.event;
+
+/** One placed UML duration constraint: a vertical span from the origin (t=0) to a milestone,
+ *  drawn beside the milestone's lifeline. */
+interface TimingBar {
+  name:        string;
+  oy:          number;         // origin y (t = 0)
+  ty:          number;         // target-milestone y
+  deadline?:   string;         // budget label when this measure is deadline-bounded
+  anchorX?:    number;         // x of the lifeline to draw beside (undefined ⇒ not placeable)
+  labelY?:     number;         // collision-free y for the (vertical) label (undefined ⇒ no room)
+  targetLabel: string;
+  originLabel: string;
+}
+
+/**
+ * UML duration constraints drawn BESIDE the milestone's lifeline: each elapsed measure is a
+ * vertical line with end caps from t = 0 (fault occurrence) down to its milestone, sitting just
+ * left of the lifeline it ends on. Lines are semi-transparent and highlight on left-click (the
+ * deadline is red). The measure name (+ budget) is drawn vertically along the line at a y the
+ * parent computed to be free of every other label; clicking selects it, empty-space clears.
+ */
+function TimingDurations({ bars, selected, onSelect }: {
+  bars: TimingBar[]; selected: string | null; onSelect: (name: string | null) => void;
+}) {
+  if (bars.length === 0) return null;
+  const t0Y = Math.min(...bars.map(b => b.oy));
+  return (
+    <g fontFamily="monospace">
+      {bars.map(b => {
+        if (b.anchorX == null) return null;
+        const x     = b.anchorX - 9;                 // just left of the lifeline
+        const isSel = selected === b.name;
+        const col   = b.deadline ? '#f87171' : '#38bdf8';
+        const op    = isSel ? 0.95 : 0.3;
+        const sw    = isSel ? 2.5 : 1.5;
+        return (
+          <g key={b.name} style={{ cursor: 'pointer' }}
+             onClick={(e) => { e.stopPropagation(); onSelect(isSel ? null : b.name); }}>
+            <title>{`${b.name}${b.deadline ? ` ≤ ${b.deadline}` : ''}\nfrom ${b.originLabel} (t = 0) to ${b.targetLabel}`}</title>
+            {/* wide invisible hit area for easy clicking */}
+            <line x1={x} y1={t0Y} x2={x} y2={b.ty} stroke="transparent" strokeWidth={11} />
+            {/* duration line + end caps */}
+            <line x1={x} y1={t0Y} x2={x} y2={b.ty} stroke={col} strokeWidth={sw} opacity={op} />
+            <line x1={x - 4} y1={t0Y} x2={x + 4} y2={t0Y} stroke={col} strokeWidth={sw} opacity={op} />
+            <line x1={x - 4} y1={b.ty} x2={x + 4} y2={b.ty} stroke={col} strokeWidth={sw} opacity={op} />
+            {/* vertical label at a collision-free y (falls back to hover tooltip if none fits) */}
+            {b.labelY != null && (
+              <text x={x} y={b.labelY} textAnchor="middle" fontSize={8} fontWeight={b.deadline ? 700 : 400}
+                fill={col} opacity={isSel ? 1 : 0.7} transform={`rotate(-90 ${x} ${b.labelY})`}>
+                {b.name}{b.deadline ? ` ≤ ${b.deadline}` : ''}
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
+/** Collapsible summary of a sequence's timing-evaluation contract. */
+function TimingPanel({ t }: { t: SequenceTiming }) {
+  const [open, setOpen] = useState(false);
+  const budget = t.deadlines[0] ?? (t.budgets[0] ? { display: t.budgets[0].display } : undefined);
+  return (
+    <div style={{ flexShrink: 0, borderBottom: '1px solid #1e293b', background: '#0b1a24' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%', textAlign: 'left',
+        padding: '7px 14px', background: 'transparent', border: 'none', cursor: 'pointer', color: '#7dd3fc',
+      }}>
+        <span style={{ fontSize: 11, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .12s' }}>▶</span>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>⏱ Timing contract</span>
+        {t.constraintName && <span style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>{t.constraintName}</span>}
+        {budget && (
+          <span style={{
+            marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, fontFamily: 'monospace',
+            padding: '2px 7px', borderRadius: 4, background: '#0e3a4a', color: '#7dd3fc', border: '1px solid #0e7490',
+          }}>
+            FTTI ≤ {budget.display}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div style={{ padding: '2px 14px 12px 32px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {t.measures.length > 0 && (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#64748b', marginBottom: 4 }}>Elapsed measures</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {t.measures.map(m => {
+                  const dl = t.deadlines.find(d => d.measureName === m.name);
+                  return (
+                    <div key={m.name} style={{ fontSize: 12, fontFamily: 'monospace', color: '#cbd5e1' }}>
+                      <span style={{ color: '#94a3b8' }}>{m.name}</span>
+                      <span style={{ color: '#475569' }}> = TimeOf(</span><span style={{ color: '#7dd3fc' }}>{endpointLabel(m.target)}</span>
+                      <span style={{ color: '#475569' }}>) − TimeOf(</span><span style={{ color: '#7dd3fc' }}>{endpointLabel(m.origin)}</span><span style={{ color: '#475569' }}>)</span>
+                      {dl && <span style={{ marginLeft: 6, color: '#fca5a5', fontWeight: 700 }}>≤ {dl.display}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {t.contract && (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#64748b', marginBottom: 4 }}>Asserted contract</div>
+              <div style={{ fontSize: 11.5, fontFamily: 'monospace', color: '#94a3b8', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                {t.contract.replace(/\band\b/g, '\n  and ')}
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>
+            Symbolic times measured from the fault-occurrence origin (t = 0); only the budget is quantitative.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function SysMLSequenceView({ graph, dependencies, timing, selection, onSelect }: Props) {
   const [selectedSeqId, setSelectedSeqId] = useState<string>('');
   const [fitMode, setFitMode]             = useState(false);
   const [zoom, setZoom]                   = useState(1);
+  const [selectedTiming, setSelectedTiming] = useState<string | null>(null); // highlighted duration constraint
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const zoomBy = (factor: number) => { setFitMode(false); setZoom(z => clampZoom(z * factor)); };
@@ -755,6 +892,12 @@ export default function SysMLSequenceView({ graph, dependencies, selection, onSe
     if (!graph) return [];
     return parseSequenceDefs(graph, childrenOf, nodeById, asilCtx);
   }, [graph, childrenOf, nodeById, asilCtx]);
+
+  // Timing-evaluation data keyed by the owning sequence definition's qualified name.
+  const timingByOwner = useMemo(
+    () => new Map((timing ?? []).map(t => [t.ownerQualifiedName, t] as const)),
+    [timing],
+  );
 
   useEffect(() => {
     if (!selection || sequenceDefs.length === 0) return;
@@ -797,6 +940,11 @@ export default function SysMLSequenceView({ graph, dependencies, selection, onSe
 
   const activeSeq                    = sequenceDefs.find(s => s.node.id === selectedSeqId) ?? sequenceDefs[0];
   const { participants, messages, entries } = activeSeq;
+
+  // Timing contract for the active sequence (if any).
+  const activeTiming = timingByOwner.size
+    ? timingByOwner.get(qualifiedNameOf(activeSeq.node.id, parentOf, nodeById))
+    : undefined;
   const { centers, widths, totalW }   = computeLayout(participants);
   // Reserve a band above the first message for the found-message entry markers.
   const entryBandH                    = entries.length > 0 ? 30 : 0;
@@ -804,6 +952,120 @@ export default function SysMLSequenceView({ graph, dependencies, selection, onSe
   const { msgY, altBlocks, totalH }   = computeMessageLayout(messages, MSG_START_Y + entryBandH);
   const partIdx                       = new Map(participants.map((p, i) => [p.label, i]));
   const selGraphId                    = selection?.extra?.graphId;
+
+  // ── UML timing: place each milestone on the y-axis, then build duration-constraint bars ──
+  // Message send/receive events sit on their message row; the fault origin is t = 0 at the top;
+  // remaining milestones are resolved by relaxing over the `first/then` succession DAG.
+  const evK = (p: string | undefined, e: string) => (p ? `${p}.${e}` : e);
+  const timingBars: TimingBar[] = (() => {
+    if (!activeTiming || activeTiming.measures.length === 0) return [];
+    const eventY = new Map<string, number>();
+    messages.forEach((m, i) => {
+      if (m.from) { const k = evK(m.from.participant, m.from.event); if (!eventY.has(k)) eventY.set(k, msgY[i]); }
+      if (m.to)   eventY.set(evK(m.to.participant, m.to.event), msgY[i]);
+    });
+    const t0Y = (msgY.length ? Math.min(...msgY) : MSG_START_Y + entryBandH) - 18;
+    for (const m of activeTiming.measures) {
+      const ok = evK(m.origin.participant, m.origin.event);
+      if (!eventY.has(ok)) eventY.set(ok, t0Y);
+    }
+    const predOf = new Map<string, string[]>(), succOf = new Map<string, string[]>();
+    for (const [a, b] of activeSeq.successions) {
+      (succOf.get(a) ?? succOf.set(a, []).get(a)!).push(b);
+      (predOf.get(b) ?? predOf.set(b, []).get(b)!).push(a);
+    }
+    const keys = new Set<string>([...predOf.keys(), ...succOf.keys()]);
+    for (let iter = 0; iter <= keys.size; iter++) {
+      let changed = false;
+      for (const e of keys) {
+        if (eventY.has(e)) continue;
+        const preds = (predOf.get(e) ?? []).map(p => eventY.get(p)).filter((v): v is number => v != null);
+        const succs = (succOf.get(e) ?? []).map(s => eventY.get(s)).filter((v): v is number => v != null);
+        let y: number | undefined;
+        if (preds.length && succs.length) y = (Math.max(...preds) + Math.min(...succs)) / 2;
+        else if (preds.length) y = Math.max(...preds) + 14;
+        else if (succs.length) y = Math.min(...succs) - 14;
+        if (y != null) { eventY.set(e, y); changed = true; }
+      }
+      if (!changed) break;
+    }
+    const t = activeTiming;
+    const tys = t.measures.map(m => eventY.get(evK(m.target.participant, m.target.event)) ?? null);
+    const resolved = tys.filter((v): v is number => v != null);
+    if (resolved.length === 0) return [];
+    const maxTy = Math.max(...resolved);
+    // Some milestones (bare top-level events) are not reachable through the succession keys;
+    // place them by interpolating between their resolved neighbours. The measures are in source
+    // (= temporal) order and the contract asserts that order, so this respects it.
+    for (let i = 0; i < tys.length; i++) {
+      if (tys[i] != null) continue;
+      let p = -1, pY = t0Y; for (let j = i - 1; j >= 0; j--) if (tys[j] != null) { p = j; pY = tys[j]!; break; }
+      let n = tys.length, nY = maxTy + 30; for (let j = i + 1; j < tys.length; j++) if (tys[j] != null) { n = j; nY = tys[j]!; break; }
+      tys[i] = pY + (nY - pY) * (i - p) / (n - p);
+    }
+    // The lifeline to draw a measure beside: its target's lifeline, or — for a bare top-level
+    // milestone (no lifeline) — the lifeline of a succession neighbour (the event it leads into).
+    const centerOfPart = (p: string | undefined) => (p != null && partIdx.has(p) ? centers[partIdx.get(p)!] : undefined);
+    const anchorXof = (part: string | undefined, event: string): number | undefined => {
+      const direct = centerOfPart(part);
+      if (direct != null) return direct;
+      const tk = part ? `${part}.${event}` : event;
+      for (const nb of [...(succOf.get(tk) ?? []), ...(predOf.get(tk) ?? [])]) {
+        const dot = nb.indexOf('.');
+        if (dot > 0) { const c = centerOfPart(nb.slice(0, dot)); if (c != null) return c; }
+      }
+      return undefined;
+    };
+    return t.measures
+      .map((m, i): TimingBar => {
+        const oy = eventY.get(evK(m.origin.participant, m.origin.event)) ?? t0Y;
+        const dl = t.deadlines.find(d => d.measureName === m.name);
+        return {
+          name: m.name, oy, ty: tys[i]!, deadline: dl?.display,
+          anchorX: anchorXof(m.target.participant, m.target.event),
+          targetLabel: endpointLabel(m.target), originLabel: endpointLabel(m.origin),
+        };
+      })
+      .filter(b => b.anchorX != null);
+  })();
+
+  // Choose a collision-free y for each duration's vertical label so it never overlaps a
+  // message label, ASIL badge, lifeline name, entry marker, or another duration's label.
+  if (timingBars.length > 0) {
+    type Box = { x0: number; y0: number; x1: number; y1: number };
+    const hit = (a: Box, b: Box) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+    const avoid: Box[] = [];
+    participants.forEach((_, i) => { const cx = centers[i], bw = widths[i]; avoid.push({ x0: cx - bw / 2, y0: 0, x1: cx + bw / 2, y1: LBOX_H + 2 }); });
+    entries.forEach(ep => { const li = partIdx.get(ep.participant); if (li == null) return; avoid.push({ x0: centers[li] - 62, y0: entryY - 14, x1: centers[li] + 2, y1: entryY + 3 }); });
+    messages.forEach((m, i) => {
+      if (!m.from || !m.to) return;
+      const fi = partIdx.get(m.from.participant) ?? -1, tj = partIdx.get(m.to.participant) ?? -1;
+      if (fi < 0 || tj < 0) return;
+      const x1 = centers[fi], x2 = centers[tj], y = msgY[i], w = m.label.length * 6;
+      if (fi === tj) avoid.push({ x0: x1 + 34, y0: y - 18, x1: x1 + 40 + w, y1: y - 5 });
+      else          avoid.push({ x0: (x1 + x2) / 2 - w / 2, y0: y - 17, x1: (x1 + x2) / 2 + w / 2, y1: y - 5 });
+      if (m.asil)   { const bx = (x1 + x2) / 2 + m.label.length * 3 + 3; avoid.push({ x0: bx, y0: y - 18, x1: bx + 48, y1: y - 4 }); }
+    });
+    const placed: Box[] = [];
+    for (const b of timingBars) {
+      if (b.anchorX == null) continue;
+      const lx = b.anchorX - 9;
+      const len = (b.name.length + (b.deadline ? b.deadline.length + 3 : 0)) * 4.8;
+      const box = (cy: number): Box => ({ x0: lx - 5, y0: cy - len / 2, x1: lx + 4, y1: cy + len / 2 });
+      let found: number | undefined;
+      for (const [lo, hi] of [[b.oy + len / 2 + 2, b.ty - len / 2 - 2], [LBOX_H + len / 2 + 4, totalH - len / 2 - 6]]) {
+        if (lo > hi) continue;
+        for (let cy = lo; cy <= hi; cy += 5) {
+          const bx = box(cy);
+          if (avoid.some(a => hit(bx, a)) || placed.some(a => hit(bx, a))) continue;
+          found = cy; break;
+        }
+        if (found != null) break;
+      }
+      b.labelY = found;
+      if (found != null) placed.push(box(found));
+    }
+  }
 
   // Activation bars: span from first to last message y each participant appears in
   const actSpans = new Map<string, { topY: number; botY: number }>();
@@ -869,11 +1131,15 @@ export default function SysMLSequenceView({ graph, dependencies, selection, onSe
         </button>
       </div>
 
+      {/* ── Timing contract (when the active sequence declares timing) ───────── */}
+      {activeTiming && <TimingPanel t={activeTiming} />}
+
       {/* ── Diagram ─────────────────────────────────────────────────────────── */}
       <div ref={scrollRef} style={{ flex: 1, overflow: fitMode ? 'hidden' : 'auto', padding: fitMode ? 0 : 16 }}>
         <svg
           width={fitMode ? '100%' : totalW * zoom} height={fitMode ? '100%' : totalH * zoom}
           viewBox={`0 0 ${totalW} ${totalH}`}
+          onClick={() => setSelectedTiming(null)}
           preserveAspectRatio="xMidYMid meet"
           style={{ fontFamily: 'monospace', userSelect: 'none', display: 'block' }}
         >
@@ -1058,6 +1324,9 @@ export default function SysMLSequenceView({ graph, dependencies, selection, onSe
               </g>
             );
           })}
+
+          {/* UML duration constraints (timing), drawn beside each milestone's lifeline */}
+          <TimingDurations bars={timingBars} selected={selectedTiming} onSelect={setSelectedTiming} />
         </svg>
       </div>
     </div>
