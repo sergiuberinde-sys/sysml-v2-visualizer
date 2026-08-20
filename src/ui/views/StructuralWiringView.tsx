@@ -1313,6 +1313,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
     const expandedInternals = new Map<string, {
       childNodes: Node[]; childEdges: Edge[]; width: number; height: number; boundaryPortIds: Set<string>;
     }>();
+    // Original connection ids that we re-anchor and inject INTO an expanded part (as a `-in-` copy).
+    // The original must not also render at THIS scope — otherwise the deep-port remapping below would
+    // re-anchor its endpoints to the same sub-parts and draw the wire twice (see rfConnEdges filter).
+    const injectedOriginalIds = new Set<string>();
     for (const part of partUsages) {
       // Keyed on the full node-id path (`${pathPrefix}wpart-<id>`) so instances of the same
       // (inherited/reused) part expand independently across sibling containers.
@@ -1345,6 +1349,9 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
       // boundary port of `part` that we wire to — pass it so the child keeps them visible.
       const sub = computeInterconnect(td, new Set([...seen, scopeDef.id]), connectedPortIds, `${pathPrefix}wpart-${part.id}::`, injected);
       if (!sub.nodes.length) continue;
+      // The sub renders — so its injected `-in-` copies will draw. Suppress the originals at THIS
+      // scope (recover each from its `-in-<part.id>` id) so the flow isn't drawn twice.
+      for (const inj of injected) injectedOriginalIds.add(inj.id.slice(0, inj.id.length - `-in-${part.id}`.length));
       const prefix  = `wpart-${part.id}::`;
       const frameId = `wpart-${part.id}`;
       const pref = prefixDiagram(sub, prefix);
@@ -2024,6 +2031,10 @@ export default function StructuralWiringView({ graph, selection, onSelect, onSha
 
     const rfConnEdges: Edge[] = inScopeConns
       .filter(conn => {
+        // A composite part's internal flow that we injected into the expanded part renders there
+        // (the `-in-` copy); drop the original here so it isn't drawn a second time. The deep-port
+        // remapping would otherwise re-anchor its endpoints to those same sub-parts.
+        if (injectedOriginalIds.has(conn.id)) return false;
         const srcRf = portToRfId.get(conn.source);
         const tgtRf = portToRfId.get(conn.target);
         if (!srcRf || !tgtRf) return false;
