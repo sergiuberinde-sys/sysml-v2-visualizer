@@ -456,3 +456,36 @@ Both documents are freely available from the OMG website and the
 - [ ] The `port def` declares directional features with `in` / `out` / `inout`.
 - [ ] The file (or its imports) is inside the open VS Code workspace folder.
 - [ ] The **Interconnect** tab is selected in the visualizer panel.
+
+---
+
+## 17. Interactive features
+
+The Interconnect view is not a static IBD — it provides controls for navigating and reading
+large wiring diagrams. All are **purely presentational** (no model change) and compose with
+one another. Formal specs are in `../Extra_features_requirements.md` (Features 1–7).
+
+- **Show / hide unconnected ports** *(Feature 1)* — a view-level toggle that omits ports not
+  wired in the current scope (part ports **and** boundary ports), shrinking boxes so you can
+  focus on the actual wiring. Every rendered wire stays connected.
+- **Expand / collapse part internals (white-box)** *(Feature 2)* — a part whose type has
+  sub-parts shows an expand control; expanding embeds that part's own interconnect diagram
+  (internal parts, internal wiring, boundary ports) inside its box, one level at a time. The
+  outer wires stay routed to the part's boundary ports across expand/collapse.
+- **Expand all / collapse all** *(Feature 4)* — one toolbar control flips the whole scope
+  between black-box and white-box.
+- **Automatic layout & viewport fit** *(Feature 3)* — boxes are auto-placed with **no
+  overlap**, wires **never pass through a box** (they route around obstacles) and **never
+  overlap** each other, and the viewport **auto-fits** the whole diagram after every change
+  (scope switch, expand/collapse, hide/show ports, drag).
+- **Pan-by-default & move mode** *(Feature 5)* — a left-drag pans the canvas by default;
+  **double-click a part** to enter *move mode* and rearrange that frame's parts (wires follow);
+  click empty space to exit.
+- **Data-kind colour-coding & legend** *(Feature 6)* — when the model classifies its carried
+  items (e.g. Matter / Energy / LogicalInformation base `item def`s), each connection is
+  coloured + dashed by the **kind of data it carries**, with an on-canvas legend. Toggleable;
+  hidden for models that don't classify items.
+- **Trace a connection** *(Feature 7)* — **double-click a wire** to fly the camera from its
+  source to its destination along the routed path, so you can follow a cross-canvas connection
+  end to end. Interruptible by any user camera input; respects reduced-motion.
+- **Export to PNG** — raster-export the diagram (including the data-kind legend when shown).

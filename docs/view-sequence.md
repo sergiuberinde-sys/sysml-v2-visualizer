@@ -340,3 +340,35 @@ Both documents are freely available from the OMG website and the
       use in `if` conditions.
 - [ ] The container is an `action def` if conditional branches are needed.
 - [ ] The **Sequence** tab is selected in the visualizer panel.
+
+---
+
+## 9. Message ordering & combined fragments
+
+Beyond plain messages, the Sequence view renders:
+
+- **`first` / `then` ordering** — messages are ordered by the event-succession chain, not by
+  source order, so the diagram matches the modelled control flow.
+- **Combined fragments** — a single guarded branch renders as a UML **`opt`** fragment; a
+  two-way guarded branch as **`alt`** (see §4); repetition as **`loop`** — each with its guard
+  text.
+- **Found-message markers** — interaction entry points are drawn as found-message arrows.
+
+## 10. Message ASIL badges
+
+The view derives each message's **ASIL** and shows it as a colour-coded badge (QM → D). The
+ASIL is **never guessed**: it comes from an explicit `dependency` mapping the message to the
+**structural interface (or port pair)** it traverses, which carries the authoritative `@ASIL`.
+A conflict/partial/unresolved mapping shows a non-committal marker instead of a level; hover
+reveals the full derivation. See `SEQUENCE_VIEW_AUTHORING.md` §1 for how to author this, and
+`../Extra_features_requirements.md` Feature 8 for the specification.
+
+## 11. Timing contracts (FTTI / duration deadlines)
+
+When a sequence declares timing in official SysML v2 syntax — elapsed measures
+(`TimeOf(target) − TimeOf(origin)`), a duration budget, and an `assert constraint` — the view
+shows a **collapsible timing-contract panel** (measures, budget, asserted contract) and marks
+the message that arrives at a deadline milestone with a compact **`⏱ ≤ <budget>`** badge
+(e.g. `⏱ ≤ 10 ms` for an FTTI). Budgets are normalised for display (`0.010 [s]` → `10 ms`);
+elapsed values stay symbolic (no invented numbers). See `SEQUENCE_VIEW_AUTHORING.md` §2 and
+`../Extra_features_requirements.md` Feature 9.

@@ -610,3 +610,26 @@ Both documents are freely available from the OMG website and the
 - [ ] The **Actions** tab is selected in the visualizer panel.
 - [ ] If multiple `action def` blocks exist, select the desired one from the
       dropdown.
+
+---
+
+## 9. Allocation swimlanes
+
+When actions are **allocated to parts** (via `allocate` / allocation definitions), the Actions
+view lays the flow out in **swimlanes** — one lane per part an action is allocated to, colour-
+coded, with each action placed in its owner's lane. This shows *which component performs which
+step* at a glance. Lanes are derived from the same allocation the layout reads, so every lane a
+node lands in is guaranteed its own column (no two lanes collapse or overlap).
+
+```
+allocation def PerformsOn { end action; end part; }
+allocate detectFault to SafetyExceptionHandler;   // detectFault → SafetyExceptionHandler lane
+allocate reactToFault to SmuManager;              // reactToFault → SmuManager lane
+```
+
+## 10. Signal-named data flows
+
+Item flows (data flows) between actions are **labelled by the name of the signal / item they
+carry**, rather than drawn as anonymous arrows, so the data crossing each edge is readable
+directly on the diagram. Edges also route clear of their own endpoint shapes and around other
+boxes.
