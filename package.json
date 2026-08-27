@@ -72,6 +72,13 @@
           "markdownDescription": "Absolute path to a Java 17+ home directory — the folder that contains `bin/java` (or `bin\\java.exe` on Windows). Set this when the automatic Temurin download is blocked by your network **and** you cannot set the `SYSML_JAVA_HOME` environment variable. This is a normal user setting (stored in your `settings.json`) — **no admin rights and no OS environment variable needed**. Takes priority over auto-detection. After changing it, run **Developer: Reload Window**.",
           "scope": "window",
           "order": 2
+        },
+        "sysmlVisualizer.fullContextVisualization": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When **off** (default), the visualizer parses only the active file plus its **transitive import closure** — much faster on large multi-file projects, and complete because SysML requires explicit imports. Turn **on** to always parse the whole workspace as context (slower) — use only if a diagram looks under-resolved (e.g. an element referenced without importing it).",
+          "scope": "window",
+          "order": 3
         }
       }
     }

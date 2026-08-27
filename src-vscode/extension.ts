@@ -334,6 +334,55 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return contextFiles;
   }
 
+  // Scoped context for visualization: the active file plus only its TRANSITIVE import
+  // closure (the project files it actually depends on). SysML requires explicit imports
+  // to reference anything cross-file, so this closure fully resolves the active file's
+  // diagram (ports via type defs, cross-file refs) while parsing far fewer files.
+  // Stdlib is always available via SYSML_STDLIB_PATH, so stdlib imports need no file.
+  async function collectScopedContextFiles(
+    primaryUri: vscode.Uri, primaryText: string,
+  ): Promise<{ name: string; text: string; uri: string }[]> {
+    const all = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+    const openByUri = new Map(vscode.workspace.textDocuments.map(d => [d.uri.toString(), d]));
+    const primaryKey = primaryUri.toString();
+    const byUri = new Map<string, { name: string; text: string; uri: string }>();
+    await Promise.all(all.map(async (u) => {
+      const key = u.toString();
+      if (key === primaryKey) return;
+      const name = u.path.split('/').pop() ?? u.path;
+      const od = openByUri.get(key);
+      let text: string;
+      if (od) text = od.getText();
+      else { try { text = Buffer.from(await vscode.workspace.fs.readFile(u)).toString('utf8'); } catch { return; } }
+      byUri.set(key, { name, text, uri: key });
+    }));
+    // package name → declaring file (first wins).
+    const pkgToUri = new Map<string, string>();
+    const addPkgs = (text: string, uri: string): void => {
+      for (const m of text.matchAll(/^\s*(?:library\s+)?package\s+([A-Za-z0-9_]+)/gm)) {
+        if (!pkgToUri.has(m[1])) pkgToUri.set(m[1], uri);
+      }
+    };
+    addPkgs(primaryText, primaryKey);
+    for (const f of byUri.values()) addPkgs(f.text, f.uri);
+    const importedPkgs = (text: string): string[] =>
+      [...text.matchAll(/^\s*(?:private\s+|public\s+)?import\s+([A-Za-z0-9_]+)/gm)].map(m => m[1]);
+    const textOf = (uri: string): string | undefined =>
+      uri === primaryKey ? primaryText : byUri.get(uri)?.text;
+    // BFS over project imports.
+    const seen = new Set<string>([primaryKey]);
+    const queue = [primaryKey];
+    while (queue.length) {
+      const t = textOf(queue.shift()!);
+      if (!t) continue;
+      for (const pkg of importedPkgs(t)) {
+        const tgt = pkgToUri.get(pkg);
+        if (tgt && !seen.has(tgt)) { seen.add(tgt); queue.push(tgt); }
+      }
+    }
+    return [...seen].filter(u => u !== primaryKey).map(u => byUri.get(u)!).filter(Boolean);
+  }
+
   /** Apply a parse result to VS Code squiggles and the webview. */
   function applyResult(document: vscode.TextDocument, result: SysMLV2ParseResult): void {
     if (result.graph) {
@@ -419,9 +468,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // (portless / wireless) render mid-parse. The JVM parser silently accepts
       // unresolved imports in Phase 1, so 0 diagnostics does not mean self-contained
       // when `import` statements are present.
-      // On an explicit Visualize we ALWAYS do the full cross-file parse, so the shown
-      // diagram is guaranteed fully resolved (port names via type defs, cross-file
-      // references, interfaces) rather than a fast phase-1 approximation.
+      // On an explicit Visualize we always do the cross-file (phase-2) pass so the shown
+      // diagram is fully resolved (ports via type defs, cross-file refs) rather than a
+      // fast phase-1 approximation. The context is scoped to the import closure below.
       const needsPhase2 = forceFullContext || hasResolveErrors(phase1) || hasImports(primaryText);
       if (!needsPhase2) {
         applyResult(document, phase1); // self-contained → this is the final result
@@ -435,7 +484,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       // ── Phase 2: re-parse with context (file has cross-file references) ──────
-      const contextFiles   = await collectContextFiles(uri);
+      // Scoped by default: active file + its transitive import closure — far fewer files
+      // than the whole workspace, yet complete for the active file's diagram. Full context
+      // is an opt-in escape hatch (sysmlVisualizer.fullContextVisualization).
+      const useFullContext = vscode.workspace.getConfiguration('sysmlVisualizer').get<boolean>('fullContextVisualization') === true;
+      const contextFiles = useFullContext
+        ? await collectContextFiles(uri)
+        : await collectScopedContextFiles(uri, primaryText);
+      console.log(`[sysml-visualizer] context: ${useFullContext ? 'FULL' : 'scoped (import closure)'} — ${contextFiles.length} file(s)`);
       if (contextFiles.length === 0) {
         // No other workspace files — Phase 1 is the best we can do; publish it.
         applyResult(document, phase1);
@@ -526,8 +582,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // it → red. Marker = red while any file differs (or the active file isn't visualized).
       const u = e.document.uri.toString();
       const vh = visualizedHashes.get(u);
-      if (vh !== undefined && contentHash(e.document.getText()) === vh) dirtyFiles.delete(u);
-      else dirtyFiles.add(u);
+      if (vh === undefined) {
+        // Edited file is outside the visualized file's import closure → it can't affect
+        // the current diagram, so it does not make it stale.
+      } else if (contentHash(e.document.getText()) === vh) {
+        dirtyFiles.delete(u); // reverted to the visualized content
+      } else {
+        dirtyFiles.add(u);
+      }
       postStaleMarker();
       // Manual mode: do NOT trigger the (potentially slow) re-parse — the user clicks
       // "Visualize" when ready. Auto mode: re-parse as before.
