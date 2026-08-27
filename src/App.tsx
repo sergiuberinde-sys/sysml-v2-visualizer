@@ -359,6 +359,10 @@ export default function App() {
   );
   const [officialParseResult, setOfficialParseResult] = useState<SysMLV2ParseResult | null>(null);
   const [officialParseLoading, setOfficialParseLoading] = useState(false);
+  // On-demand visualization (VS Code mode): red marker when the model changed since the
+  // last render; `autoViz` toggles whether edits auto-refresh or wait for the button.
+  const [vizStale, setVizStale] = useState(false);
+  const [autoViz,  setAutoViz]  = useState(false); // default: manual (on-demand Visualize)
 
   // ── Model checker state ────────────────────────────────────────────────────
   type ValidatorDiag = { message: string; severity: string; code?: string; line?: number };
@@ -656,7 +660,13 @@ export default function App() {
         noGraph?: boolean;
         parsePartial?: boolean;
         parseErrorCount?: number;
+        stale?: boolean;
+        parsing?: boolean;
       };
+      if (msg.type === 'staleState') {
+        setVizStale(!!msg.stale);
+        return;
+      }
       if (msg.type === 'validatorResult') {
         setValidatorRunning(false);
         setValidatorRanOnce(true);
@@ -667,8 +677,12 @@ export default function App() {
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
         setIsVSCodeMode(true);
-        setOfficialParseLoading(true);
-        setOfficialParseResult(null); // clear stale result while new file parses
+        // A NEW active file always resets the visualizer to the General view. Only show
+        // the parsing overlay when a parse is actually coming (auto mode); in manual mode
+        // the file is active + General but not visualized until the user clicks Visualize.
+        setTab('structure');
+        if (msg.parsing !== false) setOfficialParseLoading(true);
+        setOfficialParseResult(null); // clear the previous file's result
         setNoFileOpen(false);
         setSource(msg.text);
         setSelection(null);
@@ -679,7 +693,9 @@ export default function App() {
         fromExtension.current = true;
         isVSCodeModeRef.current = true;
         setIsVSCodeMode(true);
-        setOfficialParseLoading(true);
+        // Only show the "parsing" overlay when a parse is actually coming (auto mode).
+        // In manual mode this is just a text sync — don't flip into a stuck "parsing" state.
+        if (msg.parsing !== false) setOfficialParseLoading(true);
         setSource(msg.text);
       } else if (msg.type === 'noModel') {
         setNoFileOpen(true);
@@ -716,6 +732,7 @@ export default function App() {
       } else if (msg.type === 'updateGraph' && msg.graph) {
         console.log('[App] received updateGraph, behavior:', msg.behavior);
         setOfficialParseLoading(false);
+        setVizStale(false); // a fresh render means the diagram matches the parsed content
         setOfficialParseResult(prev => {
           const base = prev ?? { success: true, diagnostics: [] };
           return {
@@ -747,8 +764,10 @@ export default function App() {
         if (found.id !== selectionRef.current?.id) {
           suppressRevealSource.current = true;
           setSelection(found);
-          if (suggestBehavior) setSelectedBehavior(suggestBehavior);
-          if (suggestTab) setTab(suggestTab as ViewTab);
+          // No auto view-switch on cursor movement — clicking around the active file must
+          // NOT "jump" the visualizer between tabs/behaviours. Only opening a NEW file
+          // resets the view (to General). We still highlight the element in the current view.
+          void suggestBehavior; void suggestTab;
         }
       }
     };
@@ -1273,6 +1292,47 @@ export default function App() {
                 </button>
               ))}
             </div>
+            {/* ── On-demand Visualize (VS Code mode) ─────────────────── */}
+            {APP_MODE === 'vscode' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 8 }}>
+                <button
+                  type="button"
+                  disabled={officialParseLoading}
+                  onClick={() => { setOfficialParseLoading(true); getVsCodeApi()?.postMessage({ type: 'requestVisualize' }); }}
+                  title={officialParseLoading ? 'Visualizing…' : (vizStale ? 'Model changed since last render — click to re-parse and refresh' : 'Diagram is up to date — click to re-parse anyway')}
+                  style={{
+                    fontSize: 11, fontWeight: 600,
+                    background: officialParseLoading ? '#1e293b' : (vizStale ? '#3a1e1e' : '#1e3a5f'),
+                    color:      officialParseLoading ? '#93c5fd' : (vizStale ? '#fca5a5' : '#7dd3fc'),
+                    border:     `1px solid ${officialParseLoading ? '#475569' : (vizStale ? '#f87171' : '#38bdf8')}`,
+                    borderRadius: 3, padding: '2px 10px',
+                    cursor: officialParseLoading ? 'progress' : 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  <span
+                    title={officialParseLoading ? 'Visualizing…' : (vizStale ? 'Unvisualized edits' : 'In sync')}
+                    style={{
+                      width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                      background: officialParseLoading ? '#facc15' : (vizStale ? '#f87171' : '#4ade80'),
+                      boxShadow: `0 0 5px ${officialParseLoading ? '#facc15' : (vizStale ? '#f87171' : '#4ade80')}`,
+                    }}
+                  />
+                  {officialParseLoading ? 'Visualizing…' : '⟳ Visualize'}
+                </button>
+                <label
+                  style={{ fontSize: 11, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  title="When off, edits don't auto-refresh the diagram — click Visualize to update. Recommended for large multi-file projects (slow re-parse)."
+                >
+                  <input
+                    type="checkbox"
+                    checked={autoViz}
+                    onChange={e => { setAutoViz(e.target.checked); getVsCodeApi()?.postMessage({ type: 'setAutoRefresh', enabled: e.target.checked }); }}
+                  />
+                  Auto
+                </label>
+              </div>
+            )}
             {/* ── Role switch ───────────────────────────────────────── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 8 }}>
               <label style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>Role:</label>

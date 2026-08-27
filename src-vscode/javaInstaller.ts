@@ -155,6 +155,17 @@ async function extractJdk(archivePath: string, extractDir: string, ext: 'tar.gz'
 export async function ensureJava(globalStoragePath: string): Promise<boolean> {
   const managedDir = path.join(globalStoragePath, `java-${JAVA_VERSION}`);
 
+  // 0. Explicit override already set (bundled JRE, or user-set SYSML_JAVA_HOME):
+  //    trust it and skip both the system scan and the network download.
+  const overrideHome = process.env['SYSML_JAVA_HOME'];
+  if (overrideHome) {
+    const exe = process.platform === 'win32' ? 'java.exe' : 'java';
+    if (fs.existsSync(path.join(overrideHome, 'bin', exe))) {
+      console.log(`[sysml] Using Java from SYSML_JAVA_HOME: ${overrideHome}`);
+      return false;
+    }
+  }
+
   // 1. Already-managed Java downloaded by a previous session
   const managedExe = findJavaExe(managedDir);
   if (managedExe) {

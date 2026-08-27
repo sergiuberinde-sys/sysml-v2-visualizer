@@ -1,8 +1,8 @@
 import { spawn } from 'child_process';
-import { existsSync, promises as fsPromises } from 'fs';
+import { existsSync, rmSync, promises as fsPromises } from 'fs';
 import { join, basename } from 'path';
 import { tmpdir } from 'os';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 
 // When compiled, this file lives at parser-service/dist/javaWrapperClient.js.
 // One level up is parser-service/; the bundled SysML standard library lives there.
@@ -12,6 +12,23 @@ import type { OfficialBackendClient } from './officialBackendClient';
 import type { SysMLV2ParseResult } from './types';
 
 interface ContextFile { name: string; text: string }
+
+// Temp dirs are kept alive for the whole session (never deleted per-parse) so the
+// long-lived JVM never dereferences a file that was removed out from under it — the
+// cause of Windows `FileNotFoundException: …\primary.sysml`. They are removed once,
+// synchronously, when the extension-host process exits.
+const tempDirsToClean = new Set<string>();
+let exitCleanupInstalled = false;
+function registerTempCleanup(dir: string): void {
+  tempDirsToClean.add(dir);
+  if (exitCleanupInstalled) return;
+  exitCleanupInstalled = true;
+  process.once('exit', () => {
+    for (const d of tempDirsToClean) {
+      try { rmSync(d, { recursive: true, force: true }); } catch { /* best-effort */ }
+    }
+  });
+}
 
 // When compiled, this file lives at parser-service/dist/javaWrapperClient.js.
 // Two levels up is the project root; from there the Java module is predictable.
@@ -385,6 +402,27 @@ export class JavaWrapperClient implements OfficialBackendClient {
   private readonly jarPath: string;
   private readonly javaExe: string;
 
+  // One stable temp dir reused for every parse in this session (see registerTempCleanup).
+  private sessionDir: string | null = null;
+  // Serialises the write-primary + send critical section: the primary file path is
+  // stable/shared, so two overlapping parses must not clobber each other's content.
+  private opMutex: Promise<void> = Promise.resolve();
+
+  /** Lazily create (once) the per-session temp dir, reused across all parses. */
+  private async ensureSessionDir(): Promise<string> {
+    if (this.sessionDir && existsSync(this.sessionDir)) return this.sessionDir;
+    this.sessionDir = await fsPromises.mkdtemp(join(tmpdir(), 'sysml-session-'));
+    registerTempCleanup(this.sessionDir);
+    return this.sessionDir;
+  }
+
+  /** Run `fn` exclusively, chaining on the previous op regardless of its outcome. */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.opMutex.then(fn, fn);
+    this.opMutex = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
   constructor(jarPath: string) {
     this.jarPath = jarPath;
     this.javaExe = resolveJavaExe();
@@ -419,43 +457,50 @@ export class JavaWrapperClient implements OfficialBackendClient {
       );
     }
 
-    const tmpDir  = await fsPromises.mkdtemp(join(tmpdir(), 'sysml-'));
-    const tmpFile = join(tmpDir, 'primary.sysml');
-
-    try {
-      await fsPromises.writeFile(tmpFile, text, 'utf8');
-
-      const contextPaths: string[] = [];
-      for (const ctx of context) {
-        const safeName = basename(ctx.name).replace(/[^a-zA-Z0-9_\-.]/g, '_');
-        const ctxPath  = join(tmpDir, safeName);
-        await fsPromises.writeFile(ctxPath, ctx.text, 'utf8');
-        contextPaths.push(ctxPath);
-      }
-
-      const jvm = getPersistentJVM(this.jarPath, this.javaExe);
-      await jvm.ensureStarted();
-
-      const reqId = randomBytes(8).toString('hex');
-      const requestLine = JSON.stringify({ id: reqId, primaryPath: tmpFile, contextPaths });
-      const responseLine = await jvm.sendRequest(requestLine);
-
+    return this.runExclusive(async (): Promise<SysMLV2ParseResult> => {
       try {
-        const raw = JSON.parse(responseLine) as Record<string, unknown>;
-        delete raw['id'];
-        return raw as unknown as SysMLV2ParseResult;
-      } catch {
-        return wrapperError(
-          `Official SysML parser wrapper failed: non-JSON response: ${responseLine.slice(0, 300)}`
-        );
-      }
+        const dir = await this.ensureSessionDir();
 
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return wrapperError(`Official SysML parser wrapper failed: ${msg}`);
-    } finally {
-      try { await fsPromises.rm(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
-    }
+        // Stable primary path: the same URI every parse, so the JVM unloads+reloads
+        // it in place (SysmlParseCli's unload-by-URI) instead of accumulating a dead
+        // resource per parse — and, because it is never deleted mid-session, the JVM
+        // never dereferences a missing file (the Windows FileNotFoundException).
+        const primaryPath = join(dir, 'primary.sysml');
+        await fsPromises.writeFile(primaryPath, text, 'utf8');
+
+        // Content-addressed context: unchanged files keep the same path (JVM cache
+        // hit), changed files get a new path (fresh load). Never deleted mid-session,
+        // so no dead references either.
+        const contextPaths: string[] = [];
+        for (const ctx of context) {
+          const safeName = basename(ctx.name).replace(/[^a-zA-Z0-9_\-.]/g, '_');
+          const hash     = createHash('sha1').update(ctx.text).digest('hex').slice(0, 16);
+          const ctxPath  = join(dir, `ctx_${hash}_${safeName}`);
+          if (!existsSync(ctxPath)) await fsPromises.writeFile(ctxPath, ctx.text, 'utf8');
+          contextPaths.push(ctxPath);
+        }
+
+        const jvm = getPersistentJVM(this.jarPath, this.javaExe);
+        await jvm.ensureStarted();
+
+        const reqId = randomBytes(8).toString('hex');
+        const requestLine = JSON.stringify({ id: reqId, primaryPath, contextPaths });
+        const responseLine = await jvm.sendRequest(requestLine);
+
+        try {
+          const raw = JSON.parse(responseLine) as Record<string, unknown>;
+          delete raw['id'];
+          return raw as unknown as SysMLV2ParseResult;
+        } catch {
+          return wrapperError(
+            `Official SysML parser wrapper failed: non-JSON response: ${responseLine.slice(0, 300)}`
+          );
+        }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return wrapperError(`Official SysML parser wrapper failed: ${msg}`);
+      }
+    });
   }
 }
 

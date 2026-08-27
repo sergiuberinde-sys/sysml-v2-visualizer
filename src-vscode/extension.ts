@@ -37,6 +37,9 @@ function parseCacheGet(key: string): SysMLV2ParseResult | null {
 }
 
 function parseCacheSet(key: string, result: SysMLV2ParseResult): void {
+  // Never cache a failed parse (no model/graph, e.g. the JVM couldn't start). Otherwise
+  // a transient failure gets replayed on every reopen even after the cause is fixed.
+  if (!result.model && !result.graph) return;
   if (parseCache.size >= PARSE_CACHE_MAX) {
     let oldestKey = ''; let oldestTs = Infinity;
     for (const [k, v] of parseCache) { if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; } }
@@ -63,6 +66,9 @@ async function diskCacheGet(key: string): Promise<SysMLV2ParseResult | null> {
 
 async function diskCacheSet(key: string, result: SysMLV2ParseResult): Promise<void> {
   if (!diskCacheDir) return;
+  // Never persist a failed parse (see parseCacheSet) — a poisoned entry would survive
+  // restarts and keep replaying the failure after the real cause is resolved.
+  if (!result.model && !result.graph) return;
   try {
     await fsAsync.mkdir(diskCacheDir, { recursive: true });
     await fsAsync.writeFile(path.join(diskCacheDir, `${key}.json`), JSON.stringify(result), 'utf8');
@@ -108,6 +114,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const validatorDiagCollection       = vscode.languages.createDiagnosticCollection('sysml-v2-checker');
   context.subscriptions.push(diagnosticCollection, validatorDiagCollection);
 
+  // On-demand visualization: when auto-refresh is OFF, a `.sysml` edit (or opening a
+  // file) marks the diagram stale (a red marker in the webview) instead of triggering
+  // the slow full re-parse; the user clicks "Visualize" to refresh. Default: OFF
+  // (manual) — best for large multi-file projects where a full parse is slow.
+  let autoRefresh = false;
+  // Staleness is a real content diff, not just "an edit happened": snapshot the content
+  // that was last visualized (primary + context, keyed by URI) and compare hashes — so
+  // editing then reverting to the visualized content turns the marker green again.
+  let visualizedPrimaryUri: string | null = null;
+  const visualizedHashes = new Map<string, string>(); // uri → content hash at last visualize
+  const dirtyFiles = new Set<string>();               // uris whose content now differs
+  const contentHash = (text: string): string => createHash('sha256').update(text).digest('hex');
+  // Stale when the active file isn't the one currently visualized, or any file differs.
+  const isStale = (): boolean =>
+    (currentSysmlUri?.toString() ?? null) !== visualizedPrimaryUri || dirtyFiles.size > 0;
+  const postStaleMarker = (): void => {
+    void activePanel?.webview.postMessage({ type: 'staleState', stale: isStale() });
+  };
+  const snapshotVisualized = (primaryUri: string, primaryText: string, ctx: { uri: string; text: string }[]): void => {
+    visualizedPrimaryUri = primaryUri;
+    visualizedHashes.clear();
+    visualizedHashes.set(primaryUri, contentHash(primaryText));
+    for (const c of ctx) visualizedHashes.set(c.uri, contentHash(c.text));
+    dirtyFiles.clear();
+    postStaleMarker();
+  };
+
   // Most-recently built graph + owning document — used by on-demand validation.
   let lastGraph:    ContainmentGraph | null          = null;
   let lastDocument: vscode.TextDocument | null       = null;
@@ -115,9 +148,45 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // when it ran over a partial model (the parse itself had errors).
   let lastParse:    { success: boolean; errorCount: number } | null = null;
 
-  // ── Java runtime — auto-install if missing or too old ────────────────────────
+  // ── Java runtime — resolve automatically, out of the box ─────────────────────
+  // Order: (0) the `sysmlVisualizer.javaHome` setting — a user-level escape hatch
+  // needing no admin rights and no OS environment variable; then (1) an optional
+  // JRE bundled inside the extension (usually NOT shipped — keeps the VSIX small);
+  // then (2) ensureJava, which reuses a previously-downloaded copy / a system JDK,
+  // or downloads Temurin and sets SYSML_JAVA_HOME. Either way the parser client
+  // (resolveJavaExe) reads SYSML_JAVA_HOME first, so no manual setup is needed.
+  const cfgJavaHome = (vscode.workspace.getConfiguration('sysmlVisualizer').get<string>('javaHome') ?? '').trim();
+  if (cfgJavaHome) {
+    const exe = process.platform === 'win32' ? 'java.exe' : 'java';
+    if (fs.existsSync(path.join(cfgJavaHome, 'bin', exe))) {
+      process.env['SYSML_JAVA_HOME'] = cfgJavaHome;
+      console.log(`[sysml-visualizer] Using Java from setting sysmlVisualizer.javaHome: ${cfgJavaHome}`);
+    } else {
+      console.warn(`[sysml-visualizer] sysmlVisualizer.javaHome is set to "${cfgJavaHome}" but no ${exe} was found under its bin/ — ignoring.`);
+    }
+  }
+
+  const bundledJreHome = path.join(context.extensionUri.fsPath, 'jre', `${process.platform}-${process.arch}`);
+  const bundledJavaExe = path.join(bundledJreHome, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+  if (!process.env['SYSML_JAVA_HOME']) {
+    const bundledExists = fs.existsSync(bundledJavaExe);
+    console.log(`[sysml-visualizer] Bundled JRE check: ${bundledJavaExe} → exists=${bundledExists}`);
+    if (bundledExists) {
+      process.env['SYSML_JAVA_HOME'] = bundledJreHome;
+      console.log(`[sysml-visualizer] Using bundled JRE.`);
+    }
+  }
+
   // Runs before JavaWrapperClient is created so SYSML_JAVA_HOME is set first.
   const javaJustInstalled = await ensureJava(context.globalStorageUri.fsPath);
+
+  // Diagnostic: make the resolved Java visible in the Dev Tools console so a
+  // "spawn java.exe ENOENT" is immediately explainable (unset = no Java was found
+  // and the download did not succeed).
+  console.log(
+    `[sysml-visualizer] Java resolved: SYSML_JAVA_HOME=${process.env['SYSML_JAVA_HOME'] ?? '(unset)'} · ` +
+    `JAVA_HOME=${process.env['JAVA_HOME'] ?? '(unset)'} · downloadedThisRun=${javaJustInstalled}`,
+  );
 
   // ── Direct Java parser client (no HTTP) ──────────────────────────────────────
   // Paths resolved from the extension installation directory so they work
@@ -174,6 +243,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       pendingDiagnosticTimers.delete(key);
       void publishDiagnosticsOfficial(document);
     }, 500));
+  }
+
+  // On-demand visualize: re-parse the tracked file NOW (no debounce) and refresh the
+  // diagram. applyResult clears the stale marker on success.
+  async function doVisualize(): Promise<void> {
+    const target = currentSysmlUri;
+    if (!target) return;
+    try {
+      const doc = await vscode.workspace.openTextDocument(target);
+      await publishDiagnosticsOfficial(doc, /* forceFullContext */ true);
+    } catch (err) {
+      console.error('[sysml-visualizer] visualize failed:', err);
+    }
   }
 
   // ── TRLC annotation scanner ───────────────────────────────────────────────────
@@ -235,18 +317,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   /** Read all .sysml files in the workspace except primaryUri.
    *  Prefers the in-memory text of open documents so unsaved edits (including
    *  programmatic cross-file edits) are reflected in the parse. */
-  async function collectContextFiles(primaryUri: vscode.Uri): Promise<{ name: string; text: string }[]> {
+  async function collectContextFiles(primaryUri: vscode.Uri): Promise<{ name: string; text: string; uri: string }[]> {
     const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
     const openByUri = new Map(vscode.workspace.textDocuments.map(d => [d.uri.toString(), d]));
-    const contextFiles: { name: string; text: string }[] = [];
+    const contextFiles: { name: string; text: string; uri: string }[] = [];
     await Promise.all(allSysml.map(async (u) => {
       if (u.toString() === primaryUri.toString()) return;
       const name = u.path.split('/').pop() ?? u.path;
       const openDoc = openByUri.get(u.toString());
-      if (openDoc) { contextFiles.push({ name, text: openDoc.getText() }); return; }
+      if (openDoc) { contextFiles.push({ name, text: openDoc.getText(), uri: u.toString() }); return; }
       try {
         const bytes = await vscode.workspace.fs.readFile(u);
-        contextFiles.push({ name, text: Buffer.from(bytes).toString('utf8') });
+        contextFiles.push({ name, text: Buffer.from(bytes).toString('utf8'), uri: u.toString() });
       } catch { /* skip unreadable files */ }
     }));
     return contextFiles;
@@ -292,10 +374,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
       }
       console.log(`[sysml-visualizer] updateGraph: ${gNodes.length} nodes, rangeIndex=${nodeIdToRange.size}`);
+      // The stale marker is driven by snapshotVisualized() (called by the parse paths),
+      // which records exactly what content this render reflects.
     }
   }
 
-  async function publishDiagnosticsOfficial(document: vscode.TextDocument): Promise<void> {
+  async function publishDiagnosticsOfficial(document: vscode.TextDocument, forceFullContext = false): Promise<void> {
     const uri         = document.uri;
     const primaryText = document.getText();
     console.log(`[sysml-visualizer] START parse: ${path.basename(uri.fsPath)}`);
@@ -335,9 +419,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // (portless / wireless) render mid-parse. The JVM parser silently accepts
       // unresolved imports in Phase 1, so 0 diagnostics does not mean self-contained
       // when `import` statements are present.
-      const needsPhase2 = hasResolveErrors(phase1) || hasImports(primaryText);
+      // On an explicit Visualize we ALWAYS do the full cross-file parse, so the shown
+      // diagram is guaranteed fully resolved (port names via type defs, cross-file
+      // references, interfaces) rather than a fast phase-1 approximation.
+      const needsPhase2 = forceFullContext || hasResolveErrors(phase1) || hasImports(primaryText);
       if (!needsPhase2) {
         applyResult(document, phase1); // self-contained → this is the final result
+        snapshotVisualized(uri.toString(), primaryText, []);
         if (!phase1FromCache) {
           parseCacheSet(primaryOnlyKey, phase1);
           void diskCacheSet(primaryOnlyKey, phase1);
@@ -351,6 +439,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (contextFiles.length === 0) {
         // No other workspace files — Phase 1 is the best we can do; publish it.
         applyResult(document, phase1);
+        snapshotVisualized(uri.toString(), primaryText, []);
         if (!phase1FromCache) {
           parseCacheSet(primaryOnlyKey, phase1);
           void diskCacheSet(primaryOnlyKey, phase1);
@@ -383,6 +472,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
 
       applyResult(document, result);
+      snapshotVisualized(uri.toString(), primaryText, contextFiles);
 
       if (!fromCache) {
         parseCacheSet(fullKey, result);
@@ -397,6 +487,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       // we have (primary-only), or an empty graph if we never got that far.
       if (phase1ForFallback) {
         applyResult(document, phase1ForFallback);
+        snapshotVisualized(uri.toString(), primaryText, []);
       } else if (activePanel) {
         void activePanel.webview.postMessage({
           type: 'updateGraph', graph: { nodes: [], edges: [] }, behavior: null,
@@ -405,8 +496,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
       if (msg.includes('ENOENT') || msg.includes('spawn')) {
         void vscode.window.showErrorMessage(
-          'SysML v2 Visualizer: Java runtime not found. ' +
-          'Restart VS Code to retry auto-installation, or install Java 17+ manually from https://adoptium.net',
+          'SysML v2 Visualizer: no Java runtime could be started. The automatic ' +
+          'Temurin download may be blocked by your network/firewall. Fix: install ' +
+          'Java 17+ (e.g. Temurin 21 from https://adoptium.net) and fully restart ' +
+          'VS Code, or set SYSML_JAVA_HOME to an existing JDK. See the Dev Tools ' +
+          'console (Help → Toggle Developer Tools) for the resolved Java path.',
         );
       }
     }
@@ -427,6 +521,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // switching it to whichever file was edited.
     vscode.workspace.onDidChangeTextDocument(e => {
       if (!e.document.fileName.endsWith('.sysml')) return;
+      // Compare the edited file's content to what was last visualized: if it now matches
+      // (e.g. the user typed then reverted), clear its dirty flag → green; otherwise mark
+      // it → red. Marker = red while any file differs (or the active file isn't visualized).
+      const u = e.document.uri.toString();
+      const vh = visualizedHashes.get(u);
+      if (vh !== undefined && contentHash(e.document.getText()) === vh) dirtyFiles.delete(u);
+      else dirtyFiles.add(u);
+      postStaleMarker();
+      // Manual mode: do NOT trigger the (potentially slow) re-parse — the user clicks
+      // "Visualize" when ready. Auto mode: re-parse as before.
+      if (!autoRefresh) return;
       if (currentSysmlUri && currentSysmlUri.toString() !== e.document.uri.toString()) {
         void vscode.workspace.openTextDocument(currentSysmlUri).then(
           doc => publishDiagnosticsForDocument(doc),
@@ -556,6 +661,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
           type: 'loadModel',
           text: currentSysmlText,
           fileName: path.basename(currentSysmlUri.fsPath),
+          parsing: autoRefresh,
         });
       } else {
         panel.webview.postMessage({ type: 'noModel' });
@@ -579,6 +685,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       name?: string;
       defName?: string;
       memberText?: string;
+      enabled?: boolean;
     }) => {
       console.log(`[sysml-visualizer] received webview message: ${msg.type}`);
 
@@ -587,13 +694,27 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // document) and publish fresh diagnostics before sending the model.
         if (currentSysmlUri) {
           const doc = await vscode.workspace.openTextDocument(currentSysmlUri);
-          publishDiagnosticsForDocument(doc);
+          // Only auto-visualize on open in auto mode. In manual mode (the default) the
+          // panel shows the General view with a red marker and waits for Visualize.
+          if (autoRefresh) {
+            publishDiagnosticsForDocument(doc);
+          } else {
+            postStaleMarker(); // nothing visualized yet → red
+          }
         }
         sendCurrentModelToWebview();
         // Send trlc annotations immediately so the Trace view is ready
         // even before the parse completes.
         sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
         sendTrlcRequirements().catch(err => console.error('[sysml-visualizer] trlcRequirements error:', err));
+
+      } else if (msg.type === 'requestVisualize') {
+        await doVisualize();
+
+      } else if (msg.type === 'setAutoRefresh') {
+        autoRefresh = msg.enabled !== false;
+        console.log(`[sysml-visualizer] auto-refresh set to ${autoRefresh}`);
+        if (autoRefresh && isStale()) await doVisualize();
 
       } else if (msg.type === 'applyFullTextEdit') {
         if (!currentSysmlUri) {
@@ -799,7 +920,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (currentSysmlUri && e.document.uri.toString() === currentSysmlUri.toString()) {
         currentSysmlText = e.document.getText();
         console.log('[sysml-visualizer] document changed — sending updateModel to webview');
-        panel.webview.postMessage({ type: 'updateModel', text: currentSysmlText });
+        // `parsing` tells the webview whether a graph refresh follows this text sync.
+        // In manual mode (autoRefresh off) no parse runs, so the webview must NOT show
+        // a "parsing" overlay — it just updates its source copy.
+        panel.webview.postMessage({ type: 'updateModel', text: currentSysmlText, parsing: autoRefresh });
       }
     }, undefined, disposables);
 
@@ -881,12 +1005,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             type: 'loadModel',
             text: currentSysmlText,
             fileName: path.basename(editor.document.fileName),
+            parsing: autoRefresh,
           });
-          // Re-scope the views to the newly focused file: parse it as the new primary
-          // (others as context) and post a fresh updateGraph. Without this, switching
-          // between two already-open files leaves the previous file's graph — and its
-          // per-file provenance — in the webview.
-          publishDiagnosticsForDocument(editor.document);
+          if (autoRefresh) {
+            // Auto mode: re-scope the views to the newly focused file — parse it as the
+            // new primary (others as context) and post a fresh updateGraph.
+            publishDiagnosticsForDocument(editor.document);
+          } else {
+            // Manual mode: the new file becomes active and the view resets to General,
+            // but we do NOT auto-visualize it — the marker goes red because the active
+            // file no longer matches the visualized one. Wait for Visualize.
+            postStaleMarker();
+          }
         } else {
           console.log(`[sysml-visualizer] same sysml file refocused — skipping loadModel`);
         }

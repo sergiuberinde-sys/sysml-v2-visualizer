@@ -5,6 +5,36 @@ steps as boxes, sequencing arrows between them, guarded decision branches,
 parallel fork/join paths, and — when data flows are present — port pins and
 item-flow arrows connecting them.
 
+> ### Quick start — how to get swimlanes
+> The view draws **one swimlane per part that an action is assigned to**. To put an
+> action in a lane, tie it to a performing part in **either** of these ways (§9 has the
+> full detail). Actions with no assignment just sit in a plain flow with no lane.
+>
+> **A. `perform action` inside a `ref part`** (idiomatic; what the demo uses) — the
+> enclosing `ref part` *is* the lane:
+> ```sysml
+> part def System {
+>     ref part counter : Architecture {
+>         perform action readCounter;
+>         perform action incrementCounter;
+>     }
+>     ref part enforcer : Architecture {
+>         perform action enforceUpperLimit;
+>     }
+> }
+> ```
+> → lanes **counter** (readCounter, incrementCounter) and **enforcer** (enforceUpperLimit).
+>
+> **B. Explicit `allocate … to …`** (SysML v2 §16.3) — assign each action to its part;
+> these may live in a separate file (resolved across the workspace):
+> ```sysml
+> allocate incrementCounter to counter;
+> allocate enforceUpperLimit  to enforcer;
+> ```
+>
+> The part name (the `ref part` name, or the `allocate … to` target) labels the lane and
+> must resolve to a real part.
+
 ---
 
 ## 1. SysML v2 elements used

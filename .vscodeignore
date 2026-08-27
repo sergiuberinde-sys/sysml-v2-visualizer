@@ -44,3 +44,6 @@ index.html
 !out-extension/**
 !java-parser-wrapper/target/sysml-parse-cli.jar
 !parser-service/sysml-stdlib/**
+# Bundled JRE (Windows x64) so the extension works with no download / no admin /
+# no proxy — used automatically before ensureJava's download fallback.
+!jre/**

@@ -32,3 +32,6 @@ java-parser-wrapper/target/
 # Claude Code tool data (memory, conversation state, agent git worktrees)
 .claude/projects/
 .claude/worktrees/
+
+# Bundled JRE build artifact (never committed; not shipped by default)
+jre/

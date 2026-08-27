@@ -65,6 +65,13 @@
           "markdownDescription": "URL of the SysML v2 parser service. The service must implement `POST /parse` and `GET /health`. See `parser-service/README.md` for setup instructions.",
           "scope": "window",
           "order": 1
+        },
+        "sysmlVisualizer.javaHome": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to a Java 17+ home directory — the folder that contains `bin/java` (or `bin\\java.exe` on Windows). Set this when the automatic Temurin download is blocked by your network **and** you cannot set the `SYSML_JAVA_HOME` environment variable. This is a normal user setting (stored in your `settings.json`) — **no admin rights and no OS environment variable needed**. Takes priority over auto-detection. After changing it, run **Developer: Reload Window**.",
+          "scope": "window",
+          "order": 2
         }
       }
     }
