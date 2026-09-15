@@ -141,12 +141,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     postStaleMarker();
   };
 
-  // Most-recently built graph + owning document — used by on-demand validation.
+  // Most-recently built graph — a fallback for the on-demand validator if its own
+  // full-context parse yields no model.
   let lastGraph:    ContainmentGraph | null          = null;
-  let lastDocument: vscode.TextDocument | null       = null;
-  // Summary of the parse that produced lastGraph — lets the on-demand validator warn
-  // when it ran over a partial model (the parse itself had errors).
-  let lastParse:    { success: boolean; errorCount: number } | null = null;
 
   // ── Java runtime — resolve automatically, out of the box ─────────────────────
   // Order: (0) the `sysmlVisualizer.javaHome` setting — a user-level escape hatch
@@ -386,8 +383,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   /** Apply a parse result to VS Code squiggles and the webview. */
   function applyResult(document: vscode.TextDocument, result: SysMLV2ParseResult): void {
     if (result.graph) {
-      lastGraph = result.graph; lastDocument = document;
-      lastParse = { success: result.success, errorCount: result.diagnostics.filter(d => d.severity === 'error').length };
+      lastGraph = result.graph;
     }
     const diags = result.diagnostics.map(d => {
       const vd = new vscode.Diagnostic(toVsCodeRange(document, d.line, d.column), d.message, mapSeverity(d));
@@ -918,33 +914,52 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
 
       } else if (msg.type === 'runValidator') {
-        if (!lastGraph || !lastDocument) {
+        // Full semantic validation (on-demand): unlike the fast visualization parse (which
+        // skips cross-reference linking), Validate does a FULL-CONTEXT, force-resolve parse so
+        // genuinely unresolved references surface, then runs the structural model-checker rules.
+        const target = currentSysmlUri;
+        if (!target) {
           void panel.webview.postMessage({ type: 'validatorResult', diagnostics: [], noGraph: true });
           return;
         }
-        const valDiags = validateModel(lastGraph);
-        void panel.webview.postMessage({
-          type: 'validatorResult',
-          diagnostics: valDiags,
-          // So the webview can flag that these checks ran over a PARTIAL model when the
-          // parse itself failed (validateModel checks graph rules, not syntax/linking).
-          parsePartial: lastParse ? !lastParse.success : false,
-          parseErrorCount: lastParse?.errorCount ?? 0,
-        });
-        // Persist as VS Code squiggles in a separate collection so they don't
-        // mix with parser diagnostics and survive until the next explicit run.
-        const vsValDiags = valDiags.map(d => {
-          const vd = new vscode.Diagnostic(
-            toVsCodeRange(lastDocument!, d.line, d.column),
-            d.message,
-            mapSeverity(d),
-          );
-          vd.source = 'SysML v2 Model Checker';
-          if (d.code) vd.code = d.code;
-          return vd;
-        });
-        validatorDiagCollection.set(lastDocument.uri, vsValDiags);
-        console.log(`[sysml-visualizer] validator: ${valDiags.length} issue(s)`);
+        try {
+          const doc = await vscode.workspace.openTextDocument(target);
+          const primaryText = doc.getText();
+          const contextFiles = await collectContextFiles(target); // FULL workspace context
+          const result = await javaClient.parse(primaryText, contextFiles, { forceResolve: true });
+          const graph = result.model
+            ? (result.graph ?? buildGraphWithContext(result.model, result.contextModels ?? []))
+            : lastGraph;
+
+          // Parser diagnostics (syntax + unresolved-reference/linking errors) → checker shape.
+          const parseDiags = (result.diagnostics ?? []).map(d => ({
+            line: d.line ?? 0, column: d.column, message: d.message,
+            severity: d.severity, code: 'SML-PARSE',
+          }));
+          // Structural model-checker rules over the fully-resolved graph.
+          const ruleDiags = graph ? validateModel(graph) : [];
+          const allDiags = [...parseDiags, ...ruleDiags];
+
+          void panel.webview.postMessage({
+            type: 'validatorResult',
+            diagnostics: allDiags,
+            // Full parse ran with complete context, so results are authoritative (not partial).
+            parsePartial: false,
+            parseErrorCount: parseDiags.filter(d => d.severity === 'error').length,
+          });
+          // Persist as VS Code squiggles in the checker collection.
+          const vsValDiags = allDiags.map(d => {
+            const vd = new vscode.Diagnostic(toVsCodeRange(doc, d.line, d.column), d.message, mapSeverity(d));
+            vd.source = 'SysML v2 Model Checker';
+            if (d.code) vd.code = d.code;
+            return vd;
+          });
+          validatorDiagCollection.set(target, vsValDiags);
+          console.log(`[sysml-visualizer] validator (full resolve): ${parseDiags.length} parse + ${ruleDiags.length} rule issue(s)`);
+        } catch (err) {
+          console.error('[sysml-visualizer] validator failed:', err);
+          void panel.webview.postMessage({ type: 'validatorResult', diagnostics: [], noGraph: true });
+        }
 
       } else if (msg.type === 'revealSemanticElement') {
         const semanticId = msg.semanticId;

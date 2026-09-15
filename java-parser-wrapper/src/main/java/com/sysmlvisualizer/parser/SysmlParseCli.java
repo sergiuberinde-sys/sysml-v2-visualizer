@@ -230,10 +230,14 @@ public class SysmlParseCli {
                     reqId = extractJsonString(line, "id");
                     String primaryPath = extractJsonString(line, "primaryPath");
                     List<String> ctxPaths = extractJsonStringArray(line, "contextPaths");
+                    // Per-request force-resolve: the on-demand Validate action sets this to
+                    // run full cross-reference linking and surface unresolved-reference errors.
+                    // Default (visualization) leaves it false → fast, no resolveAll.
+                    boolean forceResolve = line.contains("\"forceResolve\":true");
 
                     if (primaryPath == null) throw new IllegalArgumentException("Missing primaryPath");
 
-                    String result  = executeForServer(sysml, primaryPath, ctxPaths);
+                    String result  = executeForServer(sysml, primaryPath, ctxPaths, forceResolve);
                     String compact = compactJson(result);
                     // Prepend the request id into the response JSON object
                     String response = "{\"id\":" + jsonStr(reqId) + "," + compact.substring(1);
@@ -265,7 +269,8 @@ public class SysmlParseCli {
      */
     private static String executeForServer(SysMLInteractive sysml,
                                            String primaryPath,
-                                           List<String> contextPaths) {
+                                           List<String> contextPaths,
+                                           boolean forceResolve) {
         File primaryFile = new File(primaryPath);
         if (!primaryFile.exists()) return errorJson("File not found: " + primaryPath);
 
@@ -302,13 +307,14 @@ public class SysmlParseCli {
                     .getResource(URI.createFileURI(primaryFile.getAbsolutePath()), true);
 
             // Resolve cross-references in the primary resource only.
-            // resolveAll is SKIPPED by default. Eagerly resolving every cross-reference in
-            // the primary resource costs ~36 s for a 120-part file, and the visualizer does
-            // not need it: buildNode/collectOccurrences read reference NAMES from the source
-            // text (crossRefName, resolve=false) and the graph is byte-identical either way
-            // (verified). Cross-ref errors are suppressed anyway (see below). Set
-            // SYSML_FORCE_RESOLVE=1 to restore eager resolution for debugging.
-            if ("1".equals(System.getenv("SYSML_FORCE_RESOLVE"))) {
+            // resolveAll is SKIPPED for visualization. Eagerly resolving every cross-reference
+            // in the primary resource costs ~36 s for a 120-part file, and the diagram does not
+            // need it: buildNode/collectOccurrences read reference NAMES from source text
+            // (crossRefName, resolve=false) and the graph is byte-identical either way (verified).
+            // The on-demand Validate action sends forceResolve=true to run full linking and
+            // surface unresolved-reference errors (SYSML_FORCE_RESOLVE=1 forces it globally).
+            boolean doResolve = forceResolve || "1".equals(System.getenv("SYSML_FORCE_RESOLVE"));
+            if (doResolve) {
                 try {
                     EcoreUtil.resolveAll(resource);
                 } catch (Exception ignored) { /* proxies handled via text fallback */ }
@@ -337,7 +343,11 @@ public class SysmlParseCli {
             }
 
             boolean hasStdlib = (System.getenv("SYSML_STDLIB_PATH") != null);
-            boolean suppress  = hasStdlib || hasContext;
+            // Suppress "couldn't resolve reference" noise during visualization (limited context
+            // means external refs legitimately don't resolve). On the Validate path (forceResolve)
+            // we DON'T suppress: the caller supplies full workspace context, so a still-unresolved
+            // reference is a genuine semantic error worth reporting.
+            boolean suppress  = (hasStdlib || hasContext) && !forceResolve;
             List<Diag> diags = new ArrayList<>();
             List<Resource.Diagnostic> trueErrors = new ArrayList<>();
             for (Resource.Diagnostic d : resource.getErrors()) {

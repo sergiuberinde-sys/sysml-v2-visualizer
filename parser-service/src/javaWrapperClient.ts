@@ -449,7 +449,7 @@ export class JavaWrapperClient implements OfficialBackendClient {
     return existsSync(this.jarPath);
   }
 
-  async parse(text: string, context: ContextFile[] = []): Promise<SysMLV2ParseResult> {
+  async parse(text: string, context: ContextFile[] = [], opts: { forceResolve?: boolean } = {}): Promise<SysMLV2ParseResult> {
     if (!existsSync(this.jarPath)) {
       return wrapperError(
         `Official SysML parser wrapper failed: JAR not found at ${this.jarPath}. ` +
@@ -484,7 +484,7 @@ export class JavaWrapperClient implements OfficialBackendClient {
         await jvm.ensureStarted();
 
         const reqId = randomBytes(8).toString('hex');
-        const requestLine = JSON.stringify({ id: reqId, primaryPath, contextPaths });
+        const requestLine = JSON.stringify({ id: reqId, primaryPath, contextPaths, forceResolve: opts.forceResolve === true });
         const responseLine = await jvm.sendRequest(requestLine);
 
         try {
