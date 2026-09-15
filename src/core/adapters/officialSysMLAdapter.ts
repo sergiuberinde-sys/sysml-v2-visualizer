@@ -1,3 +1,9 @@
+// Debug logging is OFF by default: these fire per-node (hundreds of calls per
+// convertGraph run) and, with the webview DevTools open, object serialization makes
+// them pathologically slow on large models. Flip to true only when debugging.
+const DEBUG = false;
+const dbg = (...args: unknown[]): void => { if (DEBUG) console.log(...args); };
+
 /**
  * Adapter: official SysML v2 parser results → visualizer data structures.
  *
@@ -768,8 +774,8 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
     const defNode = nodeIndex.get(e.target);
     if (defNode && defNode.label !== defNode.type) typedByLabel.set(e.source, defNode.label);
   }
-  console.log('[convertGraph] typedBy edges:', graph.edges.filter(e => e.type === 'typedBy').length);
-  console.log('[convertGraph] typedByLabel:', Object.fromEntries(
+  dbg('[convertGraph] typedBy edges:', graph.edges.filter(e => e.type === 'typedBy').length);
+  dbg('[convertGraph] typedByLabel:', Object.fromEntries(
     [...typedByLabel.entries()].map(([k, v]) => {
       const n = nodeIndex.get(k);
       return [`${n?.type ?? '?'}[${n?.label ?? k}]`, v];
@@ -818,7 +824,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
       });
     }
   }
-  console.log('[convertGraph] portDefFlowInfo:', Object.fromEntries(portDefFlowInfo));
+  dbg('[convertGraph] portDefFlowInfo:', Object.fromEntries(portDefFlowInfo));
 
   // PortUsage name → [id, ...] index; used to infer flow item type for connection edges.
   const portUsagesByName = new Map<string, string[]>();
@@ -1148,7 +1154,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
       // Carry file provenance so vizModel-based views can depict only primary-file elements.
       finalNode.fromPrimary = gNode.fromPrimary;
 
-      console.log(`[convertGraph] ${gNode.type}[${gNode.label}] → kind:${finalNode.kind}` +
+      dbg(`[convertGraph] ${gNode.type}[${gNode.label}] → kind:${finalNode.kind}` +
         (typeName ? ` typeName:${typeName}` : ''));
 
       if (finalNode.kind === 'packageDef') {
@@ -1217,7 +1223,7 @@ export function convertGraph(parseResult: SysMLV2ParseResult): VisualizerModel {
     }
   }
 
-  console.log('[convertGraph] nodes[]:', nodes.map(n => {
+  dbg('[convertGraph] nodes[]:', nodes.map(n => {
     const any = n as Record<string, unknown>;
     return `${n.kind}:${String(any['name'] ?? '?')}${any['type'] ? `:${any['type']}` : ''}`;
   }));

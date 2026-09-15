@@ -53,6 +53,12 @@ import './App.css';
 
 // ── Official-mode cursor sync ──────────────────────────────────────────────────
 
+// Debug logging OFF by default. Several of these fire on every cursor move / selection /
+// hover; with the webview DevTools open they serialize objects and can dominate render
+// time on large models. Flip to true only when debugging.
+const DEBUG = false;
+const dbg = (...args: unknown[]): void => { if (DEBUG) console.log(...args); };
+
 // Types that represent named, semantic model elements worth selecting
 const CURSOR_SYNC_TYPES = new Set([
   'Package', 'Namespace',
@@ -140,10 +146,10 @@ function resolveGraphNodeId(
     const withRange = candidates.find(n => n.startLine != null && n.startLine > 0);
     const found = withRange ?? candidates[0];
     if (found) {
-      console.log('[resolveGraphNodeId] name-lookup hit:', sel.type, sel.name, '→', found.id);
+      dbg('[resolveGraphNodeId] name-lookup hit:', sel.type, sel.name, '→', found.id);
       return found.id;
     }
-    console.log('[resolveGraphNodeId] name-lookup miss:', sel.type, sel.name, 'emfTypes:', emfTypes);
+    dbg('[resolveGraphNodeId] name-lookup miss:', sel.type, sel.name, 'emfTypes:', emfTypes);
   }
 
   // 4. Behavior actions lookup — richer matching for qualified ActionDefinition names
@@ -232,7 +238,7 @@ function findElementAtLineOfficial(
     suggestTab = 'structure';
   }
 
-  console.log('[CursorSync] editor→visualizer line', line, '→', best.type, best.label,
+  dbg('[CursorSync] editor→visualizer line', line, '→', best.type, best.label,
     'graphId:', best.id, 'suggestTab:', suggestTab);
 
   const sel: SelectionState = {
@@ -487,7 +493,7 @@ export default function App() {
       selection.type,
       selection.extra,
     );
-    console.log('[ImpactTrace] selection:', selection.type, selection.name,
+    dbg('[ImpactTrace] selection:', selection.type, selection.name,
       '→ owned:', trace.ownedElements.length,
       'behaviors:', trace.relatedBehaviors.length,
       'flows:', trace.relatedFlows.length,
@@ -730,7 +736,7 @@ export default function App() {
           }
         }
       } else if (msg.type === 'updateGraph' && msg.graph) {
-        console.log('[App] received updateGraph, behavior:', msg.behavior);
+        dbg('[App] received updateGraph, behavior:', msg.behavior);
         setOfficialParseLoading(false);
         setVizStale(false); // a fresh render means the diagram matches the parsed content
         setOfficialParseResult(prev => {
@@ -786,7 +792,7 @@ export default function App() {
   // Log selection changes for pipeline diagnostics
   useEffect(() => {
     if (selection) {
-      console.log('[Selection] type:', selection.type, 'name:', selection.name,
+      dbg('[Selection] type:', selection.type, 'name:', selection.name,
         'id:', selection.id, 'extra:', selection.extra);
     }
   }, [selection]);

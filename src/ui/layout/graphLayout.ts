@@ -306,6 +306,58 @@ const WIRING_LAYERED_OPTIONS: Record<string, string> = {
   'elk.padding':                               '[top=48,left=48,bottom=48,right=48]',
 };
 
+// Fast deterministic grid layout — used only by the size guard above for scopes too
+// large for ELK. Positions parts in a grid, places ports along their node's left/right
+// faces, boundary ports on the frame's left edge, and leaves edges as straight routes
+// (React Flow draws a direct line when a route has no waypoints). Produces the same
+// WiringElkResult shape so the caller is unchanged.
+function gridFallbackLayout(
+  parts: WiringElkNode[],
+  boundaryPorts: WiringElkPort[],
+  edges: WiringElkEdge[],
+): WiringElkResult {
+  const nodePos     = new Map<string, { x: number; y: number }>();
+  const nodeSize    = new Map<string, { w: number; h: number }>();
+  const portPos     = new Map<string, { x: number; y: number; side: PortSide }>();
+  const boundaryPos = new Map<string, { x: number; y: number; side: PortSide; containerW: number }>();
+  const routes: ElkRouteMap = new Map();
+
+  const GAP_X = 80, GAP_Y = 60, FRAME_L = 140;
+  const cols = Math.max(1, Math.ceil(Math.sqrt(parts.length)));
+  const colW: number[] = [], rowH: number[] = [];
+  parts.forEach((p, i) => {
+    const c = i % cols, r = Math.floor(i / cols);
+    colW[c] = Math.max(colW[c] ?? 0, p.width);
+    rowH[r] = Math.max(rowH[r] ?? 0, p.height);
+  });
+  const colX: number[] = []; let x = FRAME_L;
+  for (let c = 0; c < cols; c++) { colX[c] = x; x += (colW[c] ?? 0) + GAP_X; }
+  const rowY: number[] = []; let y = GAP_Y;
+  const rows = Math.ceil(parts.length / cols);
+  for (let r = 0; r < rows; r++) { rowY[r] = y; y += (rowH[r] ?? 0) + GAP_Y; }
+
+  parts.forEach((p, i) => {
+    const c = i % cols, r = Math.floor(i / cols);
+    nodePos.set(p.id, { x: colX[c], y: rowY[r] });
+    nodeSize.set(p.id, { w: p.width, h: p.height });
+    // Ports evenly along the node's left/right faces (node-local coords).
+    const left  = p.ports.filter(pt => pt.side === 'left');
+    const right = p.ports.filter(pt => pt.side !== 'left');
+    left.forEach((pt, k)  => portPos.set(pt.id, { x: 0,       y: (p.height * (k + 1)) / (left.length + 1),  side: 'left'  }));
+    right.forEach((pt, k) => portPos.set(pt.id, { x: p.width, y: (p.height * (k + 1)) / (right.length + 1), side: 'right' }));
+  });
+
+  boundaryPorts.forEach((bp, k) => {
+    boundaryPos.set(bp.id, { x: 0, y: GAP_Y + k * 26, side: 'left', containerW: FRAME_L });
+  });
+  // Straight routes (no waypoints → direct line).
+  for (const e of edges) routes.set(e.id, []);
+
+  const width  = (colX[cols - 1] ?? FRAME_L) + (colW[cols - 1] ?? 0) + GAP_X;
+  const height = (rowY[rows - 1] ?? GAP_Y) + (rowH[rows - 1] ?? 0) + GAP_Y;
+  return { nodePos, nodeSize, portPos, boundaryPos, routes, width, height };
+}
+
 export async function layoutWiringElk(
   parts: WiringElkNode[],
   boundaryPorts: WiringElkPort[],
@@ -329,6 +381,22 @@ export async function layoutWiringElk(
   // Only `parts` is required: a scope may have no top-level edges yet still need layout for its
   // parts' positions and for edges nested inside expanded (compound) parts.
   if (!parts.length) return empty;
+
+  // ── Size guard ────────────────────────────────────────────────────────────────
+  // Normal scopes are tiny (a handful of parts, tens of ports) and ELK lays them out
+  // in well under a second. This guard is a safety net: if a scope is pathologically
+  // large (e.g. an accidental mega-part, or a future model), fall back to a fast
+  // deterministic grid instead of ELK's layered + orthogonal-routing passes, so the
+  // view can never hang. The threshold is far above any real scope, so this never
+  // triggers for normal diagrams (no regression).
+  const countNodes = (ns: WiringElkNode[]): number =>
+    ns.reduce((s, n) => s + 1 + (n.children ? countNodes(n.children) : 0), 0);
+  const totalNodes = countNodes(parts);
+  const ELK_NODE_CAP = 600;
+  if (totalNodes > ELK_NODE_CAP) {
+    console.warn(`[graphLayout] scope has ${totalNodes} nodes (> ${ELK_NODE_CAP}) — using fast grid layout instead of ELK to avoid a hang.`);
+    return gridFallbackLayout(parts, boundaryPorts, edges);
+  }
 
   // WEST ports straddle the left edge (ELK returns x ≈ -portWidth); classify by the node's
   // half so a slightly-negative WEST x is still 'left' (not mis-tagged → no rendered square).
