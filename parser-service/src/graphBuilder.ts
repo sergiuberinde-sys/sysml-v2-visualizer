@@ -518,14 +518,21 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     // The last chain element (`signal`) is then not a port name, so trim trailing non-port
     // segments and anchor the wire to the enclosing PORT (`pesSignal`). Without this the whole
     // flow is dropped and the boundary port shows unconnected on the inside (delegation gap).
-    // Trim a trailing SUB-FEATURE of a port. When the element BEFORE the last names a port, the
-    // last element is a feature living inside that port — e.g. `pesSignal.signal` (the `signal`
-    // payload inside the pesSignal boundary port) or `portEmergencyStop.safeOutputControl.signal`.
-    // Anchor the wire to the PORT itself so it lands on a rendered port square, instead of
-    // resolving the (frequently ambiguous) sub-feature name to some unrelated port and dropping
-    // the delegation. A normal `part.port` is unaffected: the element before `port` is a PART,
-    // not a port, so no trimming happens.
-    while (chain.length >= 2 && portUsagesByName.get(chain[chain.length - 2])?.length) {
+    // Trim a trailing SUB-FEATURE of a port. When the element BEFORE the last names a port that is
+    // NOT also a part, the last element is a feature living inside that port — e.g. `pesSignal.signal`
+    // (the `signal` payload inside the pesSignal boundary port) or
+    // `portEmergencyStop.safeOutputControl.signal`. Anchor the wire to the PORT itself so it lands
+    // on a rendered port square, instead of resolving the (frequently ambiguous) sub-feature name
+    // to some unrelated port and dropping the delegation.
+    //   • A normal `part.port` is unaffected: the element before `port` is a PART.
+    //   • The `!partUsagesByName` guard keeps names used as BOTH a part and a port (e.g.
+    //     `configuration`, `timeBase`) treated as the PART in a `part.port` chain — so a genuine
+    //     `configuration.somePort` flow is not wrongly collapsed onto the `configuration` port.
+    while (
+      chain.length >= 2 &&
+      portUsagesByName.get(chain[chain.length - 2])?.length &&
+      !partUsagesByName.get(chain[chain.length - 2])?.length
+    ) {
       chain = chain.slice(0, -1);
     }
     const portName = chain[chain.length - 1];

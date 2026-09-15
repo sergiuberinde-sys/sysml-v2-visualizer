@@ -97,3 +97,37 @@ describe('flow endpoint that names a port sub-feature anchors to the enclosing p
     expect(conn[0].target).not.toBe('0.2');
   });
 });
+
+// ── The sub-feature trim must NOT collapse a genuine `part.port` when the part
+//    name also exists as a port name elsewhere (a real collision in the demo, e.g.
+//    `configuration`, `timeBase`). Such a flow must still resolve to part.port. ─────
+
+describe('sub-feature trim does not misfire on a part whose name is also a port', () => {
+  const flowEnd = (partName: string, portName: string) =>
+    efm([ n('FlowEnd', null, [
+      refSubsetting(partName),
+      n('FeatureMembership', null, [ n('ReferenceUsage', portName, []) ]),
+    ]) ]);
+  const flowUsage = (endA: [string, string], endB: [string, string]) =>
+    n('FlowUsage', null, [ flowEnd(...endA), flowEnd(...endB) ]);
+
+  // `timeBase` is used BOTH as a port (in Provider) and as a part (in Ctrl).
+  const roots = [
+    partDef('Provider', [ port('timeBase') ]),          // 0.0 — a PORT named timeBase
+    partDef('Ctrl', [
+      n('PartUsage', 'timeBase', [ port('clk') ]),      // 1.0 part timeBase; 1.0.0 its port clk
+      port('sink'),                                      // 1.1
+      flowUsage(['timeBase', 'clk'], ['sink', 'sink']),  // flow from timeBase.clk to sink
+    ]),
+  ];
+  const { edges } = buildGraph(roots);
+  const conn = edges.filter(e => e.type === 'connection');
+
+  it('resolves timeBase.clk to the part port (not the collided timeBase port)', () => {
+    expect(conn).toHaveLength(1);
+    // Source must resolve to the `clk` port of the `timeBase` PART (1.0.0), qualified by the
+    // part usage — NOT collapsed onto the `timeBase` PORT in Provider (0.0).
+    expect(conn[0].source).toContain('1.0.0');
+    expect(conn[0].source).not.toBe('0.0');
+  });
+});
