@@ -513,6 +513,21 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
   // direct semantic child of that PartDef (boundary-port disambiguation).
   function resolveFlowChain(chain: string[], scopeDefId?: string | null): string | null {
     if (chain.length === 0) return null;
+    // A flow endpoint may name a SUB-FEATURE of a port rather than the port itself, e.g.
+    // `flow ... to pesSignal.signal` (the `signal` payload feature inside the pesSignal port).
+    // The last chain element (`signal`) is then not a port name, so trim trailing non-port
+    // segments and anchor the wire to the enclosing PORT (`pesSignal`). Without this the whole
+    // flow is dropped and the boundary port shows unconnected on the inside (delegation gap).
+    // Trim a trailing SUB-FEATURE of a port. When the element BEFORE the last names a port, the
+    // last element is a feature living inside that port — e.g. `pesSignal.signal` (the `signal`
+    // payload inside the pesSignal boundary port) or `portEmergencyStop.safeOutputControl.signal`.
+    // Anchor the wire to the PORT itself so it lands on a rendered port square, instead of
+    // resolving the (frequently ambiguous) sub-feature name to some unrelated port and dropping
+    // the delegation. A normal `part.port` is unaffected: the element before `port` is a PART,
+    // not a port, so no trimming happens.
+    while (chain.length >= 2 && portUsagesByName.get(chain[chain.length - 2])?.length) {
+      chain = chain.slice(0, -1);
+    }
     const portName = chain[chain.length - 1];
     const candidates = portUsagesByName.get(portName);
     if (!candidates?.length) return null;

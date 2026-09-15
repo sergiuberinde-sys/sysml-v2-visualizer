@@ -59,3 +59,41 @@ describe('flow boundary-port resolution is scoped to the enclosing PartDef', () 
     expect(conn[0].source).not.toBe('0.0');
   });
 });
+
+// ── A flow endpoint naming a PORT SUB-FEATURE anchors to the port ───────────────
+//
+// `flow from a.signal to b.signal` names the `signal` payload feature INSIDE ports
+// a and b (a common delegation pattern). The last chain segment (`signal`) is not the
+// port — and when some other element is genuinely named `signal`, the pre-fix resolver
+// mis-anchored the wire to that unrelated port (or dropped it), so a boundary port
+// showed unconnected. The wire must anchor to the enclosing PORT (a → b).
+
+describe('flow endpoint that names a port sub-feature anchors to the enclosing port', () => {
+  // FlowUsage end `<port>.<subfeature>`: ReferenceSubsetting(port) + FeatureMembership→ReferenceUsage(subfeature).
+  const flowEnd = (portName: string, subName: string) =>
+    efm([ n('FlowEnd', null, [
+      refSubsetting(portName),
+      n('FeatureMembership', null, [ n('ReferenceUsage', subName, []) ]),
+    ]) ]);
+  const flowUsage = (endA: [string, string], endB: [string, string]) =>
+    n('FlowUsage', null, [ flowEnd(...endA), flowEnd(...endB) ]);
+
+  const roots = [
+    partDef('Ctrl', [
+      port('a'),                        // 0.0
+      port('b'),                        // 0.1
+      port('signal'),                   // 0.2 — decoy port; makes `signal` a resolvable name
+      flowUsage(['a', 'signal'], ['b', 'signal']), // flow from a.signal to b.signal
+    ]),
+  ];
+  const { edges } = buildGraph(roots);
+  const conn = edges.filter(e => e.type === 'connection');
+
+  it('emits one edge anchored to the ports (a → b), not the sub-feature decoy', () => {
+    expect(conn).toHaveLength(1);
+    expect(conn[0]).toMatchObject({ source: '0.0', target: '0.1' });
+    // Pre-fix: both ends resolved to the decoy `signal` port (0.2).
+    expect(conn[0].source).not.toBe('0.2');
+    expect(conn[0].target).not.toBe('0.2');
+  });
+});
