@@ -52,3 +52,34 @@ describe('extractSatisfiesTraces', () => {
     expect(extractSatisfiesTraces([nested])).toEqual([{ elementName: 'inner', reqId: 'R_9' }]);
   });
 });
+
+import { scanSatisfiesText } from '../extractTraces';
+
+describe('scanSatisfiesText (whole-workspace textual @Satisfies scan)', () => {
+  it('attributes a multi-line reqId tuple to the enclosing named element', () => {
+    const src = `package P {
+    action def HvmTrapReactionAction {
+        @Satisfies {
+            reqId = (
+                "SafeFaultManagement_MaintainHVMSS2Containment_SW_64789225",
+                "SafeFaultManagement_PreserveUnaffectedHVMResourcesInSS2_SW_64789233"
+            );
+        }
+        @ASIL { level = ASILLevel::ASIL_D; }
+        action step1;
+    }
+}`;
+    expect(scanSatisfiesText([{ text: src }])).toEqual([
+      { elementName: 'HvmTrapReactionAction', reqId: 'SafeFaultManagement_MaintainHVMSS2Containment_SW_64789225' },
+      { elementName: 'HvmTrapReactionAction', reqId: 'SafeFaultManagement_PreserveUnaffectedHVMResourcesInSS2_SW_64789233' },
+    ]);
+  });
+
+  it('handles a single-line @Satisfies and a part-usage host, and dedupes across files', () => {
+    const a = `part def Sys { part sensor : SensorDef { @Satisfies { reqId = ("R_1"); } } }`;
+    const b = `part def Sys2 { part sensor : SensorDef { @Satisfies { reqId = ("R_1"); } } }`;
+    const traces = scanSatisfiesText([{ text: a }, { text: b }]);
+    // Both attribute to `sensor`; same (host,reqId) is de-duplicated.
+    expect(traces).toEqual([{ elementName: 'sensor', reqId: 'R_1' }]);
+  });
+});

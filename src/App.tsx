@@ -48,7 +48,7 @@ import type { TrlcData } from './core/trlc/types';
 import { parseTrlcJson } from './core/trlc/types';
 import { parseTrlcFile } from './core/trlc/parseTrlcFile';
 import { extractTrlcTraces, mapAnnotationsToTraces, buildNumericToReqId } from './core/trlc/extractTraces';
-import type { RawAnnotation } from './core/trlc/extractTraces';
+import type { RawAnnotation, SatisfiesTrace } from './core/trlc/extractTraces';
 import './App.css';
 
 // ── Official-mode cursor sync ──────────────────────────────────────────────────
@@ -398,6 +398,9 @@ export default function App() {
   const [trlcImportError, setTrlcImportError] = useState<string | null>(null);
   // Raw trlc-satisfies annotations sent by the extension (covers all workspace files)
   const [trlcAnnotations, setTrlcAnnotations] = useState<RawAnnotation[] | null>(null);
+  // Whole-workspace @Satisfies traces (extension scans every .sysml file; the scoped parse only
+  // covers the active file's import closure, so this is the complete source for the Trace matrix).
+  const [wholeSatisfies, setWholeSatisfies] = useState<SatisfiesTrace[] | null>(null);
 
   // ── Monaco refs ────────────────────────────────────────────────────────────
   const editorRef = useRef<MonacoEditorNS.IStandaloneCodeEditor | null>(null);
@@ -518,7 +521,9 @@ export default function App() {
   // Derive trace links from trlc-satisfies annotations.
   // Extension path: use annotations sent by the extension (covers all workspace files).
   // Standalone fallback: scan source + context files directly.
-  const satisfiesTraces = officialParseResult?.satisfies;
+  // Prefer the whole-workspace @Satisfies scan from the extension (complete); fall back to the
+  // scoped parse result's `satisfies` (standalone web mode, or before the scan arrives).
+  const satisfiesTraces = wholeSatisfies ?? officialParseResult?.satisfies;
   const trlcDataWithTraces = useMemo((): TrlcData | null => {
     if (!trlcData) return null;
     const numericToReqId = buildNumericToReqId(trlcData.requirements.map(r => r.id));
@@ -539,7 +544,7 @@ export default function App() {
       return true;
     });
     return { ...trlcData, traces };
-  }, [trlcData, trlcAnnotations, source, projectFiles, satisfiesTraces]);
+  }, [trlcData, trlcAnnotations, source, projectFiles, satisfiesTraces]); // eslint-disable-line react-hooks/exhaustive-deps
   trlcDataWithTracesRef.current = trlcDataWithTraces;
 
   // ── Effects ────────────────────────────────────────────────────────────────
@@ -713,6 +718,9 @@ export default function App() {
         setServiceEndpoint(msg.parserServiceUrl);
       } else if (msg.type === 'trlcAnnotations' && Array.isArray(msg.trlcAnnotations)) {
         setTrlcAnnotations(msg.trlcAnnotations);
+      } else if (msg.type === 'satisfiesTraces' && Array.isArray(msg.satisfies)) {
+        // Whole-workspace @Satisfies traces (complete, unlike the scoped parse's satisfies).
+        setWholeSatisfies(msg.satisfies);
       } else if (msg.type === 'trlcRequirements' && Array.isArray(msg.requirements)) {
         // Auto-loaded workspace .trlc requirements (traces are derived from @Satisfies below).
         setTrlcData(msg.requirements.length ? { requirements: msg.requirements, traces: [] } : null);

@@ -54,6 +54,76 @@ export function extractSatisfiesTraces(models: (RawNodeLike[] | undefined)[]): S
   return out;
 }
 
+// Element-declaration keywords that can carry an `@Satisfies` (the annotated host).
+const SATISFIES_HOST_DECL =
+  /^\s*(?:abstract\s+|variation\s+|ref\s+|individual\s+)*(?:part|action|item|port|connection|interface|attribute|calc|constraint|state|occurrence|requirement|flow|analysis|verification|use\s+case|view|enum|package)\s+(?:def\s+)?([A-Za-z_]\w*)/;
+// Non-anchored, global variant to find the LAST declaration on the same line before `@Satisfies`.
+const HOST_DECL_INLINE =
+  /\b(?:part|action|item|port|connection|interface|attribute|calc|constraint|state|occurrence|requirement|flow|enum|package)\s+(?:def\s+)?([A-Za-z_]\w*)/g;
+
+/**
+ * Whole-workspace `@Satisfies` extraction from SOURCE TEXT — a textual counterpart to
+ * extractSatisfiesTraces (which needs the parsed model tree). The visualization parse is
+ * scoped to the active file's import closure for speed, so the parsed `satisfies` misses
+ * elements in other files; the Trace matrix is a whole-workspace aggregate, so it must scan
+ * every `.sysml` file. This reads each `@Satisfies { reqId = ("A", "B", …); }` block, attributes
+ * it to the nearest ENCLOSING named element (the declaration at a shallower indent), and emits
+ * one (elementName, reqId) trace per requirement name. Requirement matching (exact name) is
+ * done downstream, once the .trlc requirements are known.
+ */
+export function scanSatisfiesText(sources: { text: string }[]): SatisfiesTrace[] {
+  const out: SatisfiesTrace[] = [];
+  const seen = new Set<string>();
+  const indentOf = (s: string) => s.length - s.trimStart().length;
+
+  for (const { text } of sources) {
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const satCol = lines[i].indexOf('@Satisfies');
+      if (satCol < 0) continue;
+      const satIndent = indentOf(lines[i]);
+
+      // Enclosing element: prefer a declaration on the SAME line before `@Satisfies`
+      // (inline `part x : T { @Satisfies … }`); else the nearest preceding declaration
+      // line at a SHALLOWER indent (the normal multi-line, indented model).
+      let host: string | null = null;
+      const inline = [...lines[i].slice(0, satCol).matchAll(HOST_DECL_INLINE)];
+      if (inline.length) host = inline[inline.length - 1][1];
+      if (!host) {
+        for (let j = i - 1; j >= 0; j--) {
+          const t = lines[j].trim();
+          if (t === '' || t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) continue;
+          if (indentOf(lines[j]) < satIndent) {
+            const m = SATISFIES_HOST_DECL.exec(lines[j]);
+            if (m) { host = m[1]; break; }
+            // shallower non-declaration line (e.g. another `@…` metadata) — keep walking up.
+          }
+        }
+      }
+      if (!host) continue;
+
+      // Accumulate from the @Satisfies line until the reqId tuple's closing ')'.
+      let buf = '';
+      for (let k = i; k < lines.length && k < i + 500; k++) {
+        buf += lines[k] + '\n';
+        const idx = buf.indexOf('reqId');
+        if (idx >= 0 && buf.indexOf(')', idx) >= 0) break;
+        if (idx < 0 && /\}/.test(lines[k]) && k > i) break; // @Satisfies with no reqId — stop
+      }
+      const start = buf.indexOf('reqId');
+      if (start < 0) continue;
+      const close = buf.indexOf(')', start);
+      const tuple = close >= 0 ? buf.slice(start, close) : buf.slice(start);
+      for (const m of tuple.matchAll(/"([^"]+)"/g)) {
+        const reqId = m[1];
+        const key = `${host}:${reqId}`;
+        if (!seen.has(key)) { seen.add(key); out.push({ elementName: host, reqId }); }
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Scan SysML v2 source text(s) for `// trlc-satisfies: NNNNN` annotations
  * and return raw (numericId, elementName) pairs — no TRLC requirement lookup.

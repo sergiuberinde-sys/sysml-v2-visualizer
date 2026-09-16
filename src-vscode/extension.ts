@@ -89,7 +89,7 @@ async function diskCacheSet(key: string, result: SysMLV2ParseResult): Promise<vo
   }
 }
 import { formatSysML } from '../src/core/language/formatter';
-import { scanRawAnnotations, extractSatisfiesTraces } from '../src/core/trlc/extractTraces';
+import { scanRawAnnotations, extractSatisfiesTraces, scanSatisfiesText } from '../src/core/trlc/extractTraces';
 import { parseTrlcFile } from '../src/core/trlc/parseTrlcFile';
 import { extractDependencyMappingsFromSources } from '../src/core/sysmlv2Official/messageInterfaceAsil';
 import { extractSequenceTiming } from '../src/core/sysmlv2Official/sequenceTiming';
@@ -275,6 +275,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const trlcAnnotations = scanRawAnnotations(sources);
     console.log(`[sysml-visualizer] sendTrlcAnnotations: ${trlcAnnotations.length} annotations from ${sources.length} files`);
     void activePanel.webview.postMessage({ type: 'trlcAnnotations', trlcAnnotations });
+  }
+
+  // Whole-workspace `@Satisfies` traces for the Trace matrix. The visualization parse is scoped
+  // to the active file's import closure, so the parsed `satisfies` misses elements in other
+  // files; the Trace matrix is a workspace aggregate, so scan every .sysml file textually.
+  async function sendSatisfies(): Promise<void> {
+    if (!activePanel) return;
+    const allSysml = await vscode.workspace.findFiles('**/*.sysml', '**/node_modules/**');
+    const sources: { text: string }[] = [];
+    if (currentSysmlText) sources.push({ text: currentSysmlText });
+    await Promise.all(allSysml.map(async (u) => {
+      if (currentSysmlUri && u.toString() === currentSysmlUri.toString()) return;
+      try {
+        const bytes = await vscode.workspace.fs.readFile(u);
+        sources.push({ text: Buffer.from(bytes).toString('utf8') });
+      } catch { /* skip */ }
+    }));
+    const satisfies = scanSatisfiesText(sources);
+    console.log(`[sysml-visualizer] sendSatisfies: ${satisfies.length} @Satisfies traces from ${sources.length} files`);
+    void activePanel.webview.postMessage({ type: 'satisfiesTraces', satisfies });
   }
 
   // Auto-load every `.trlc` requirement file in the workspace and send the merged
@@ -765,6 +785,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // even before the parse completes.
         sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
         sendTrlcRequirements().catch(err => console.error('[sysml-visualizer] trlcRequirements error:', err));
+        sendSatisfies().catch(err => console.error('[sysml-visualizer] satisfies error:', err));
 
       } else if (msg.type === 'requestVisualize') {
         await doVisualize();
@@ -1100,6 +1121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Resend trlc annotations so new file's traces appear immediately.
         sendTrlcAnnotations().catch(err => console.error('[sysml-visualizer] trlcAnnotations error:', err));
         sendTrlcRequirements().catch(err => console.error('[sysml-visualizer] trlcRequirements error:', err));
+        sendSatisfies().catch(err => console.error('[sysml-visualizer] satisfies error:', err));
       } else {
         console.log('[sysml-visualizer] non-sysml editor active — keeping current model');
       }
