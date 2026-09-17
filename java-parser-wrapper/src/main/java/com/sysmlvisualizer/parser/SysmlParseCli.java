@@ -705,7 +705,7 @@ public class SysmlParseCli {
      */
     private static Node buildNode(EObject obj, Set<EObject> visited) {
         if (!visited.add(obj)) {
-            return new Node(obj.eClass().getName(), nameOf(obj), null, List.of(), 0, 0, null);
+            return new Node(obj.eClass().getName(), nameOf(obj), null, List.of(), 0, 0, null, null);
         }
 
         String emfType = obj.eClass().getName();
@@ -837,7 +837,17 @@ public class SysmlParseCli {
             } catch (Exception ignored) {}
         }
 
-        return new Node(emfType, name, direction, children, startLine, endLine, isComposite);
+        // Type.isAbstract — `abstract part def X`, `abstract action def Y`, etc.
+        Boolean isAbstract = null;
+        EStructuralFeature abstractFeature = obj.eClass().getEStructuralFeature("isAbstract");
+        if (abstractFeature != null) {
+            try {
+                Object val = obj.eGet(abstractFeature, false);
+                if (val instanceof Boolean b && b) isAbstract = true; // only emit when true
+            } catch (Exception ignored) {}
+        }
+
+        return new Node(emfType, name, direction, children, startLine, endLine, isComposite, isAbstract);
     }
 
     private static String nameOf(EObject obj) {
@@ -1130,6 +1140,9 @@ public class SysmlParseCli {
         if (node.isComposite() != null && !node.isComposite()) {
             sb.append("\n").append(pad1).append("\"isComposite\": false,");
         }
+        if (node.isAbstract() != null && node.isAbstract()) {
+            sb.append("\n").append(pad1).append("\"isAbstract\": true,");
+        }
         sb.append("\n").append(pad1).append("\"children\": [");
         List<Node> children = node.children();
         for (int i = 0; i < children.size(); i++) {
@@ -1160,7 +1173,7 @@ public class SysmlParseCli {
     }
 
     private record Diag(String severity, String message, int line, int column) {}
-    private record Node(String type, String name, String direction, List<Node> children, int startLine, int endLine, Boolean isComposite) {}
+    private record Node(String type, String name, String direction, List<Node> children, int startLine, int endLine, Boolean isComposite, Boolean isAbstract) {}
     private record DebugEntry(String path, String eClass,
                               java.util.Map<String, Object> features) {}
 }

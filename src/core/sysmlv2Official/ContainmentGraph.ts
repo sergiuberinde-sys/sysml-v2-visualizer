@@ -24,6 +24,8 @@ export interface GraphNode {
   type: string;
   direction?: string;
   isComposite?: boolean;
+  /** `abstract part def` / `abstract action def` etc. — rendered with an italic name (SysML v2). */
+  isAbstract?: boolean;
   isConjugated?: boolean;
   /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
   asil?: string;

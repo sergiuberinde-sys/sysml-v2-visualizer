@@ -22,6 +22,7 @@ export interface GraphNode {
   type: string;
   direction?: string;
   isComposite?: boolean;
+  isAbstract?: boolean;
   isConjugated?: boolean;
   /** ASIL safety level (e.g. 'ASIL_D', 'QM') from an applied `@ASIL` metadata usage. */
   asil?: string;
@@ -85,6 +86,7 @@ export function buildGraph(roots: ModelNode[]): ContainmentGraph {
     const n: GraphNode = { id: path, label, type: node.type };
     if (node.direction != null) n.direction = node.direction;
     if (node.isComposite === false) n.isComposite = false;
+    if (node.isAbstract === true) n.isAbstract = true;
     if (node.startLine != null && node.startLine > 0) {
       n.startLine = node.startLine;
       n.endLine   = node.endLine;

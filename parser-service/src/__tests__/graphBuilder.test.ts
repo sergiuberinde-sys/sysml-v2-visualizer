@@ -131,3 +131,20 @@ describe('sub-feature trim does not misfire on a part whose name is also a port'
     expect(conn[0].source).not.toBe('0.0');
   });
 });
+
+// ── Abstract flag propagates from the parsed node to the graph node ─────────────
+
+describe('isAbstract flows through to the graph node', () => {
+  const roots: ModelNode[] = [
+    { type: 'PartDefinition', name: 'AbstractBase', children: [], isAbstract: true },
+    { type: 'PartDefinition', name: 'Concrete',     children: [] },
+  ];
+  const { nodes } = buildGraph(roots);
+
+  it('marks only the abstract definition', () => {
+    const base = nodes.find(n => n.label === 'AbstractBase');
+    const conc = nodes.find(n => n.label === 'Concrete');
+    expect(base?.isAbstract).toBe(true);
+    expect(conc?.isAbstract).toBeUndefined();
+  });
+});

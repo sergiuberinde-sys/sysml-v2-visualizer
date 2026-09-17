@@ -11,6 +11,7 @@ export interface ModelNode {
   name: string | null;
   direction?: string | null;
   isComposite?: boolean;
+  isAbstract?: boolean;
   startLine?: number;
   endLine?: number;
   children: ModelNode[];

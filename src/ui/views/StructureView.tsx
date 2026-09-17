@@ -271,13 +271,15 @@ type AttrUsageLike = Extract<VizNode, { kind: 'attributeUsage' }>;
 // partLabel renders the header + separator + attribute rows.
 // Port rows are intentionally omitted — they are rendered by PortHandles as
 // absolutely-positioned boundary labels so they align with the handle squares.
-function partLabel(stereotype: string, name: string, _ports: PortLike[], p: Palette, attrs: AttrUsageLike[] = []) {
+function partLabel(stereotype: string, name: string, _ports: PortLike[], p: Palette, attrs: AttrUsageLike[] = [], isAbstract = false) {
   const hasItems = attrs.length > 0;
   return (
     <div style={{ lineHeight: 1.4 }}>
       <div style={{ textAlign: 'center', paddingBottom: hasItems ? 2 : 0 }}>
+        {/* SysML v2: an abstract definition is shown with an «abstract» keyword and an italic name. */}
+        {isAbstract && <div style={{ fontSize: 8.5, color: p.stereo, opacity: 0.85, letterSpacing: '0.3px' }}>«abstract»</div>}
         <div style={{ fontSize: 9.5, color: p.stereo, letterSpacing: '0.35px' }}>{stereotype}</div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: p.name }}>{name}</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: p.name, fontStyle: isAbstract ? 'italic' : 'normal' }}>{name}</div>
       </div>
       {hasItems && (
         <div style={{ height: 1, background: p.sep, margin: '2px -10px 4px', opacity: 0.4 }} />
@@ -309,6 +311,10 @@ function nodeWidth(stereotype: string, name: string, attrs: AttrUsageLike[], for
 
 // shape: 'definition' = square corners (official SysML v2 notation for defs)
 //        'usage'      = rounded corners (official SysML v2 notation for usages)
+// Names of definitions declared `abstract` — repopulated from the graph on each build (see the
+// main memo). makePartNode reads it so abstract def boxes render with an italic name.
+let ABSTRACT_DEF_NAMES = new Set<string>();
+
 function makePartNode(
   id: string,
   pos: { x: number; y: number },
@@ -325,12 +331,15 @@ function makePartNode(
   const w = nodeWidth(stereotype, name, attrs, forceWidth);
   const h = (ports.length > 0 || attrs.length > 0) ? partH(ports.length, attrs.length) : PART_BASE_H;
   const radius = shape === 'usage' ? 12 : 0;
+  // Abstract definitions render with «abstract» + an italic name (SysML v2). Detected from the
+  // graph-derived set the view populates each build, so no call site needs threading.
+  const isAbstract = shape === 'definition' && ABSTRACT_DEF_NAMES.has(name);
   return {
     id,
     type: 'sysmlPart',
     position: pos,
     data: {
-      label: partLabel(stereotype, name, ports, p, attrs),
+      label: partLabel(stereotype, name, ports, p, attrs, isAbstract),
       ports,
       attrs,
       nodeH: h,
@@ -454,6 +463,12 @@ export default function StructureView({ result, graph, selection, onSelect, onSh
   const { baseNodes, baseEdges, graphIdToRfId, nestedNodes, nestedEdges } = useMemo(() => {
     const baseNodes: Node[] = [];
     const baseEdges: Edge[] = [];
+
+    // Repopulate the abstract-definition name set from the graph so makePartNode can render
+    // abstract def boxes with an italic name (SysML v2). Cleared when there is no graph.
+    ABSTRACT_DEF_NAMES = new Set(
+      (graph?.nodes ?? []).filter(n => n.isAbstract && n.label && n.label !== n.type).map(n => n.label),
+    );
 
     // Build a lookup: "EMFType:label" → graph node id, for embedding graphId in selections.
     // Prefer nodes with source ranges so the extension can reveal them.
