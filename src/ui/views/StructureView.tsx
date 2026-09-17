@@ -203,13 +203,34 @@ function StructureLegend() {
     }}>
       <div style={{ fontSize: 9, color: '#475569', letterSpacing: '0.5px', marginBottom: 1 }}>NOTATION</div>
 
-      {/* FeatureTyping: solid line + hollow closed triangle (spec §8.2.3.6) */}
+      {/* The three specialization-kind relationships share the hollow-triangle notation
+          (SysML v2 §8.2.3.6) and are told apart by colour: FeatureTyping (grey),
+          Specialization/Subclassification (indigo), Subsetting (violet). */}
+      {/* FeatureTyping: solid line + hollow closed triangle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
         <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
           <line x1="2" y1="6" x2="22" y2="6" stroke={FT_STROKE} strokeWidth="1.2" />
           <path d="M 22,2 L 34,6 L 22,10 Z" fill="none" stroke={FT_STROKE} strokeWidth="1.3" strokeLinejoin="round" />
         </svg>
-        <span>FeatureTyping  (usage → type)</span>
+        <span>FeatureTyping  (usage <code>:</code> type)</span>
+      </div>
+
+      {/* Specialization / Subclassification: def :> def, indigo hollow triangle at the general */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <line x1="2" y1="6" x2="22" y2="6" stroke="#818cf8" strokeWidth="1.2" />
+          <path d="M 22,2 L 34,6 L 22,10 Z" fill="none" stroke="#818cf8" strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+        <span>Specialization  (def <code>:&gt;</code> general)</span>
+      </div>
+
+      {/* Subsetting: usage :>> usage, violet hollow triangle at the superset */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 9.5, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+        <svg width="36" height="12" style={{ flexShrink: 0, overflow: 'visible' }}>
+          <line x1="2" y1="6" x2="22" y2="6" stroke="#a78bfa" strokeWidth="1.2" />
+          <path d="M 22,2 L 34,6 L 22,10 Z" fill="none" stroke="#a78bfa" strokeWidth="1.3" strokeLinejoin="round" />
+        </svg>
+        <span>Subsetting  (usage <code>:&gt;</code> superset)</span>
       </div>
 
       {/* Connection: solid line + small open arrowhead */}
